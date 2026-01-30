@@ -16,6 +16,7 @@
 #include "sai.h"
 
 #include "FreeRTOS.h"  // for xPortGetFreeHeapSize
+#include "cmsis_os2.h"
 
 #include "ak4619.h"
 #include "adau1466.h"
@@ -225,6 +226,26 @@ uint8_t get_current_xfA_position(void)
 uint8_t get_current_xfB_position(void)
 {
     return current_xfB_position;
+}
+
+int16_t get_current_ch1_db(void)
+{
+    return (int16_t) convert_pot2dB(pot_val[6]);
+}
+
+int16_t get_current_ch2_db(void)
+{
+    return (int16_t) convert_pot2dB(pot_val[4]);
+}
+
+int16_t get_current_master_db(void)
+{
+    return (int16_t) convert_pot2dB(pot_val[5]);
+}
+
+int16_t get_current_dry_wet(void)
+{
+    return (int16_t) ((double) pot_val[7] / 1023.0 * 100.0);
 }
 
 //--------------------------------------------------------------------+
@@ -966,21 +987,6 @@ void ui_control_task(void)
             default:
                 break;
             }
-
-            char msg[32];
-            ssd1306_Fill(Black);
-            ssd1306_SetCursor(0, 0);
-            sprintf(msg, "C2:%ddB Mst:%ddB", (int16_t) convert_pot2dB(pot_val[4]), (int16_t) convert_pot2dB(pot_val[5]));
-            ssd1306_WriteString(msg, Font_7x10, White);
-
-            ssd1306_SetCursor(0, 11);
-            sprintf(msg, "C1:%ddB D/W:%d%%", (int16_t) convert_pot2dB(pot_val[6]), (int16_t) ((double) pot_val[7] / 1023.0 * 100.0));
-            ssd1306_WriteString(msg, Font_7x10, White);
-            // ssd1306_UpdateScreen();
-
-            ssd1306_SetCursor(0, 22);
-            ssd1306_WriteString("A:C1(Ln)  B:C2(Ph)", Font_7x10, White);
-            ssd1306_UpdateScreen();
         }
 
         pot_val_prev[pot_ch][1] = pot_val_prev[pot_ch][0];
@@ -1292,7 +1298,7 @@ void start_sai(void)
     hsai_BlockA2.Instance->CR1 |= SAI_xCR1_DMAEN;  // ← ここが「DMAリクエスト有効化」
     __HAL_SAI_ENABLE(&hsai_BlockA2);
 
-    HAL_Delay(500);
+    osDelay(500);
     HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, 1);
     HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, 1);
     HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, 0);
@@ -1779,13 +1785,15 @@ void audio_task(void)
         // 1秒ごとにリングバッファ状態をログ出力
         if (s_streaming_out)
         {
-            // 最初の8サンプルをダンプ (4ch x 2frames)
+#if 0  // RTTログを一時無効化
+       // 最初の8サンプルをダンプ (4ch x 2frames)
             SEGGER_RTT_printf(0, "spk=%d [%08X %08X %08X %08X]\n", spk_data_size, usb_in_buf[0], usb_in_buf[1], usb_in_buf[2], usb_in_buf[3]);
             // TX側のデバッグ情報
             int32_t tx_used = (int32_t) (sai_tx_rng_buf_index - sai_transmit_index);
             SEGGER_RTT_printf(0, "  tx: half=%d cplt=%d fill=%d under=%d copied=%d used=%d\n", dbg_tx_half_count, dbg_tx_cplt_count, dbg_fill_tx_count, dbg_fill_underrun, dbg_fill_copied, tx_used);
             // SAI TX出力バッファの内容を確認
             SEGGER_RTT_printf(0, "  sai_tx: [%08X %08X %08X %08X]\n", stereo_out_buf[0], stereo_out_buf[1], stereo_out_buf[2], stereo_out_buf[3]);
+#endif
             dbg_tx_half_count = 0;
             dbg_tx_cplt_count = 0;
             dbg_fill_tx_count = 0;
@@ -1794,12 +1802,14 @@ void audio_task(void)
         }
         if (s_streaming_in)
         {
-            // USB書き込み状況をログ出力
+#if 0  // RTTログを一時無効化
+       // USB書き込み状況をログ出力
             SEGGER_RTT_printf(0, "mic: res=%d, total=%d, used=%d\n", current_resolution, dbg_usb_write_total, dbg_last_used);
             SEGGER_RTT_printf(0, "  ret: mount=%d strm=%d ep=%d under=%d w0=%d\n", dbg_ret_not_mounted, dbg_ret_not_streaming, dbg_ret_no_ep, dbg_ret_underrun, dbg_ret_written_zero);
             // SAI RXバッファの内容を確認
             uint32_t idx = sai_receive_index & (SAI_RNG_BUF_SIZE - 1);
             SEGGER_RTT_printf(0, "sai_rx[%d]: %08X %08X %08X %08X\n", idx, sai_rx_rng_buf[idx], sai_rx_rng_buf[(idx + 1) & (SAI_RNG_BUF_SIZE - 1)], sai_rx_rng_buf[(idx + 2) & (SAI_RNG_BUF_SIZE - 1)], sai_rx_rng_buf[(idx + 3) & (SAI_RNG_BUF_SIZE - 1)]);
+#endif
             // カウンタリセット
             dbg_usb_write_partial = 0;
             dbg_usb_write_total   = 0;
@@ -1982,7 +1992,7 @@ void AUDIO_SAI_Reset_ForNewRate(void)
     __HAL_SAI_ENABLE(&hsai_BlockA2);
 
     /* Wait for SAI TX to synchronize with external clock before starting RX */
-    HAL_Delay(10);
+    osDelay(10);
 
     /* Configure and link DMA for SAI1 RX */
     MX_List_GPDMA1_Channel3_Config();

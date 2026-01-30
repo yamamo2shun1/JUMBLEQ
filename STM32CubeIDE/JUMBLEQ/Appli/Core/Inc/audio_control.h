@@ -32,6 +32,10 @@ uint32_t get_tx_blink_interval_ms(void);
 uint32_t get_rx_blink_interval_ms(void);
 uint8_t get_current_xfA_position(void);
 uint8_t get_current_xfB_position(void);
+int16_t get_current_ch1_db(void);
+int16_t get_current_ch2_db(void);
+int16_t get_current_master_db(void);
+int16_t get_current_dry_wet(void);
 
 void AUDIO_Init_AK4619(uint32_t hz);
 void AUDIO_Init_ADAU1466(uint32_t hz);
