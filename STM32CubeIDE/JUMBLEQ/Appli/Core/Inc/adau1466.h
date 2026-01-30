@@ -40,6 +40,8 @@ enum
     XF_ASSIGN_POST_USB,
 };
 
+double convert_pot2dB(uint16_t adc_val);
+
 void AUDIO_Init_ADAU1466(uint32_t hz);
 
 void set_dc_inputA(float xf_pos);
