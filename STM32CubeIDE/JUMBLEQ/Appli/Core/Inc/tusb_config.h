@@ -43,7 +43,7 @@ extern "C"
 #define BOARD_TUD_MAX_SPEED       OPT_MODE_HIGH_SPEED
 #define BOARD_DEVICE_RHPORT_NUM   1
 #define BOARD_TUD_RHPORT          1
-#define CFG_TUSB_RHPORT0_MODE     (OPT_MODE_DEVICE | OPT_MODE_HIGH_SPEED)
+#define CFG_TUSB_RHPORT1_MODE     (OPT_MODE_DEVICE | OPT_MODE_HIGH_SPEED)
 
 // DWC2 DMA mode - SlaveモードはBOUTNAKEFFで無限ループになる問題がある
 #define CFG_TUD_DWC2_SLAVE_ENABLE 0
@@ -114,7 +114,7 @@ extern "C"
 // 注意: CFG_TUSB_MEM_SECTION は空にする（構造体に関数ポインタが含まれるため）
 // DMAバッファは CFG_TUD_MEM_SECTION で別途 noncacheable 領域に配置
 #define CFG_TUSB_MEM_SECTION
-#define CFG_TUSB_MEM_ALIGN   __attribute__((aligned(32)))
+#define CFG_TUSB_MEM_ALIGN __attribute__((aligned(32)))
 
     //--------------------------------------------------------------------
     // DEVICE CONFIGURATION
