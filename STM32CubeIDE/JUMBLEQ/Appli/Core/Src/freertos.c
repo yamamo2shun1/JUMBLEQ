@@ -52,90 +52,86 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
-// FreeRTOSヒープをnoncacheable領域に配置
+// FreeRTOSヒープを通常RAMに配置
 // configAPPLICATION_ALLOCATED_HEAP=1 で有効化
-__attribute__((section("noncacheable_buffer"), aligned(8)))
+__attribute__((aligned(8)))
 uint8_t ucHeap[configTOTAL_HEAP_SIZE];
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
-  .name = "defaultTask",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
+    .name       = "defaultTask",
+    .stack_size = 128 * 4,
+    .priority   = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for usbTask */
 osThreadId_t usbTaskHandle;
 const osThreadAttr_t usbTask_attributes = {
-  .name = "usbTask",
-  .stack_size = 512 * 4,
-  .priority = (osPriority_t) osPriorityHigh,
+    .name       = "usbTask",
+    .stack_size = 512 * 4,
+    .priority   = (osPriority_t) osPriorityHigh,
 };
 /* Definitions for audioTask */
 osThreadId_t audioTaskHandle;
 const osThreadAttr_t audioTask_attributes = {
-  .name = "audioTask",
-  .stack_size = 1024 * 4,
-  .priority = (osPriority_t) osPriorityHigh,
+    .name       = "audioTask",
+    .stack_size = 1024 * 4,
+    .priority   = (osPriority_t) osPriorityHigh,
 };
 /* Definitions for ledTask */
 osThreadId_t ledTaskHandle;
 const osThreadAttr_t ledTask_attributes = {
-  .name = "ledTask",
-  .stack_size = 256 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
+    .name       = "ledTask",
+    .stack_size = 256 * 4,
+    .priority   = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for adcTask */
 osThreadId_t adcTaskHandle;
 const osThreadAttr_t adcTask_attributes = {
-  .name = "adcTask",
-  .stack_size = 512 * 4,
-  .priority = (osPriority_t) osPriorityAboveNormal,
+    .name       = "adcTask",
+    .stack_size = 512 * 4,
+    .priority   = (osPriority_t) osPriorityAboveNormal,
 };
 /* Definitions for oledTask */
 osThreadId_t oledTaskHandle;
 const osThreadAttr_t oledTask_attributes = {
-  .name = "oledTask",
-  .stack_size = 256 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
+    .name       = "oledTask",
+    .stack_size = 256 * 4,
+    .priority   = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for spiMutex */
 osMutexId_t spiMutexHandle;
 const osMutexAttr_t spiMutex_attributes = {
-  .name = "spiMutex"
-};
+    .name = "spiMutex"};
 /* Definitions for i2cMutex */
 osMutexId_t i2cMutexHandle;
 const osMutexAttr_t i2cMutex_attributes = {
-  .name = "i2cMutex"
-};
+    .name = "i2cMutex"};
 /* Definitions for spiTxBinarySem */
 osSemaphoreId_t spiTxBinarySemHandle;
 const osSemaphoreAttr_t spiTxBinarySem_attributes = {
-  .name = "spiTxBinarySem"
-};
+    .name = "spiTxBinarySem"};
 /* Definitions for spiTxRxBinarySem */
 osSemaphoreId_t spiTxRxBinarySemHandle;
 const osSemaphoreAttr_t spiTxRxBinarySem_attributes = {
-  .name = "spiTxRxBinarySem"
-};
+    .name = "spiTxRxBinarySem"};
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
 
 /* USER CODE END FunctionPrototypes */
 
-void StartDefaultTask(void *argument);
-void StartUSBTask(void *argument);
-void StartAudioTask(void *argument);
-void StartLEDTask(void *argument);
-void StartADCTask(void *argument);
-void StartOLEDTask(void *argument);
+void StartDefaultTask(void* argument);
+void StartUSBTask(void* argument);
+void StartAudioTask(void* argument);
+void StartLEDTask(void* argument);
+void StartADCTask(void* argument);
+void StartOLEDTask(void* argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
 /* Hook prototypes */
-void vApplicationStackOverflowHook(xTaskHandle xTask, char *pcTaskName);
+void vApplicationStackOverflowHook(xTaskHandle xTask, char* pcTaskName);
 void vApplicationMallocFailedHook(void);
 
 /* USER CODE BEGIN 4 */
@@ -172,71 +168,71 @@ void vApplicationMallocFailedHook(void)
 /* USER CODE END 5 */
 
 /**
-  * @brief  FreeRTOS initialization
-  * @param  None
-  * @retval None
-  */
-void MX_FREERTOS_Init(void) {
-  /* USER CODE BEGIN Init */
+ * @brief  FreeRTOS initialization
+ * @param  None
+ * @retval None
+ */
+void MX_FREERTOS_Init(void)
+{
+    /* USER CODE BEGIN Init */
 
-  /* USER CODE END Init */
-  /* Create the mutex(es) */
-  /* creation of spiMutex */
-  spiMutexHandle = osMutexNew(&spiMutex_attributes);
+    /* USER CODE END Init */
+    /* Create the mutex(es) */
+    /* creation of spiMutex */
+    spiMutexHandle = osMutexNew(&spiMutex_attributes);
 
-  /* creation of i2cMutex */
-  i2cMutexHandle = osMutexNew(&i2cMutex_attributes);
+    /* creation of i2cMutex */
+    i2cMutexHandle = osMutexNew(&i2cMutex_attributes);
 
-  /* USER CODE BEGIN RTOS_MUTEX */
+    /* USER CODE BEGIN RTOS_MUTEX */
     /* add mutexes, ... */
-  /* USER CODE END RTOS_MUTEX */
+    /* USER CODE END RTOS_MUTEX */
 
-  /* Create the semaphores(s) */
-  /* creation of spiTxBinarySem */
-  spiTxBinarySemHandle = osSemaphoreNew(1, 1, &spiTxBinarySem_attributes);
+    /* Create the semaphores(s) */
+    /* creation of spiTxBinarySem */
+    spiTxBinarySemHandle = osSemaphoreNew(1, 1, &spiTxBinarySem_attributes);
 
-  /* creation of spiTxRxBinarySem */
-  spiTxRxBinarySemHandle = osSemaphoreNew(1, 1, &spiTxRxBinarySem_attributes);
+    /* creation of spiTxRxBinarySem */
+    spiTxRxBinarySemHandle = osSemaphoreNew(1, 1, &spiTxRxBinarySem_attributes);
 
-  /* USER CODE BEGIN RTOS_SEMAPHORES */
+    /* USER CODE BEGIN RTOS_SEMAPHORES */
     /* add semaphores, ... */
-  /* USER CODE END RTOS_SEMAPHORES */
+    /* USER CODE END RTOS_SEMAPHORES */
 
-  /* USER CODE BEGIN RTOS_TIMERS */
+    /* USER CODE BEGIN RTOS_TIMERS */
     /* start timers, add new ones, ... */
-  /* USER CODE END RTOS_TIMERS */
+    /* USER CODE END RTOS_TIMERS */
 
-  /* USER CODE BEGIN RTOS_QUEUES */
+    /* USER CODE BEGIN RTOS_QUEUES */
     /* add queues, ... */
-  /* USER CODE END RTOS_QUEUES */
+    /* USER CODE END RTOS_QUEUES */
 
-  /* Create the thread(s) */
-  /* creation of defaultTask */
-  defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+    /* Create the thread(s) */
+    /* creation of defaultTask */
+    defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
-  /* creation of usbTask */
-  usbTaskHandle = osThreadNew(StartUSBTask, NULL, &usbTask_attributes);
+    /* creation of usbTask */
+    usbTaskHandle = osThreadNew(StartUSBTask, NULL, &usbTask_attributes);
 
-  /* creation of audioTask */
-  audioTaskHandle = osThreadNew(StartAudioTask, NULL, &audioTask_attributes);
+    /* creation of audioTask */
+    audioTaskHandle = osThreadNew(StartAudioTask, NULL, &audioTask_attributes);
 
-  /* creation of ledTask */
-  ledTaskHandle = osThreadNew(StartLEDTask, NULL, &ledTask_attributes);
+    /* creation of ledTask */
+    ledTaskHandle = osThreadNew(StartLEDTask, NULL, &ledTask_attributes);
 
-  /* creation of adcTask */
-  adcTaskHandle = osThreadNew(StartADCTask, NULL, &adcTask_attributes);
+    /* creation of adcTask */
+    adcTaskHandle = osThreadNew(StartADCTask, NULL, &adcTask_attributes);
 
-  /* creation of oledTask */
-  oledTaskHandle = osThreadNew(StartOLEDTask, NULL, &oledTask_attributes);
+    /* creation of oledTask */
+    oledTaskHandle = osThreadNew(StartOLEDTask, NULL, &oledTask_attributes);
 
-  /* USER CODE BEGIN RTOS_THREADS */
+    /* USER CODE BEGIN RTOS_THREADS */
     /* add threads, ... */
-  /* USER CODE END RTOS_THREADS */
+    /* USER CODE END RTOS_THREADS */
 
-  /* USER CODE BEGIN RTOS_EVENTS */
+    /* USER CODE BEGIN RTOS_EVENTS */
     /* add events, ... */
-  /* USER CODE END RTOS_EVENTS */
-
+    /* USER CODE END RTOS_EVENTS */
 }
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -258,9 +254,9 @@ volatile uint32_t dbg_min_usb_stack      = 0xFFFFFFFF;  // USB最小スタック
 volatile uint32_t dbg_min_audio_stack    = 0xFFFFFFFF;  // Audio最小スタック残量
 
 /* USER CODE END Header_StartDefaultTask */
-void StartDefaultTask(void *argument)
+void StartDefaultTask(void* argument)
 {
-  /* USER CODE BEGIN StartDefaultTask */
+    /* USER CODE BEGIN StartDefaultTask */
     /* Infinite loop */
     for (;;)
     {
@@ -293,7 +289,7 @@ void StartDefaultTask(void *argument)
         update_color_state();
         osDelay(1000);
     }
-  /* USER CODE END StartDefaultTask */
+    /* USER CODE END StartDefaultTask */
 }
 
 /* USER CODE BEGIN Header_StartUSBTask */
@@ -312,9 +308,9 @@ extern volatile uint32_t dbg_usb_isr_msp_min;
 extern volatile uint32_t dbg_usb_isr_msp_start;
 
 /* USER CODE END Header_StartUSBTask */
-void StartUSBTask(void *argument)
+void StartUSBTask(void* argument)
 {
-  /* USER CODE BEGIN StartUSBTask */
+    /* USER CODE BEGIN StartUSBTask */
     (void) argument;
 
     tusb_rhport_init_t dev_init = {
@@ -330,7 +326,7 @@ void StartUSBTask(void *argument)
         tud_task();  //_ext(10, false);  // 10msタイムアウト
         // osDelay(1) は不要（tud_task_ext内で待機するため）
     }
-  /* USER CODE END StartUSBTask */
+    /* USER CODE END StartUSBTask */
 }
 
 /* USER CODE BEGIN Header_StartAudioTask */
@@ -340,9 +336,9 @@ void StartUSBTask(void *argument)
  * @retval None
  */
 /* USER CODE END Header_StartAudioTask */
-void StartAudioTask(void *argument)
+void StartAudioTask(void* argument)
 {
-  /* USER CODE BEGIN StartAudioTask */
+    /* USER CODE BEGIN StartAudioTask */
     (void) argument;
 
     HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, 0);
@@ -382,7 +378,7 @@ void StartAudioTask(void *argument)
         audio_task();
         osDelay(1);  // 毎回1ms待機してUSBとAudioのバランスを取る
     }
-  /* USER CODE END StartAudioTask */
+    /* USER CODE END StartAudioTask */
 }
 
 /* USER CODE BEGIN Header_StartLEDTask */
@@ -392,9 +388,9 @@ void StartAudioTask(void *argument)
  * @retval None
  */
 /* USER CODE END Header_StartLEDTask */
-void StartLEDTask(void *argument)
+void StartLEDTask(void* argument)
 {
-  /* USER CODE BEGIN StartLEDTask */
+    /* USER CODE BEGIN StartLEDTask */
     reset_led_buffer();
 
     set_led_color(0, 0, 0, 0);
@@ -409,7 +405,7 @@ void StartLEDTask(void *argument)
         rgb_led_task();
         osDelay(10);  // LED更新は10ms間隔で十分
     }
-  /* USER CODE END StartLEDTask */
+    /* USER CODE END StartLEDTask */
 }
 
 /* USER CODE BEGIN Header_StartADCTask */
@@ -419,9 +415,9 @@ void StartLEDTask(void *argument)
  * @retval None
  */
 /* USER CODE END Header_StartADCTask */
-void StartADCTask(void *argument)
+void StartADCTask(void* argument)
 {
-  /* USER CODE BEGIN StartADCTask */
+    /* USER CODE BEGIN StartADCTask */
 
     /* Infinite loop */
     for (;;)
@@ -429,7 +425,7 @@ void StartADCTask(void *argument)
         ui_control_task();
         osDelay(1);
     }
-  /* USER CODE END StartADCTask */
+    /* USER CODE END StartADCTask */
 }
 
 /* USER CODE BEGIN Header_StartOLEDTask */
@@ -439,9 +435,9 @@ void StartADCTask(void *argument)
  * @retval None
  */
 /* USER CODE END Header_StartOLEDTask */
-void StartOLEDTask(void *argument)
+void StartOLEDTask(void* argument)
 {
-  /* USER CODE BEGIN StartOLEDTask */
+    /* USER CODE BEGIN StartOLEDTask */
     (void) argument;
 
     OLED_Init();
@@ -452,11 +448,10 @@ void StartOLEDTask(void *argument)
         OLED_UpdateTask();
         osDelay(20);
     }
-  /* USER CODE END StartOLEDTask */
+    /* USER CODE END StartOLEDTask */
 }
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
 
 /* USER CODE END Application */
-

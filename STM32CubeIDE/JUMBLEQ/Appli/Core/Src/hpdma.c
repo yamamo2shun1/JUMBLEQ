@@ -35,7 +35,7 @@ void MX_HPDMA1_Init(void)
   /* USER CODE END HPDMA1_Init 0 */
 
   /* USER CODE BEGIN HPDMA1_Init 1 */
-  HAL_NVIC_SetPriority(HPDMA1_Channel0_IRQn, 5, 0);
+  HAL_NVIC_SetPriority(HPDMA1_Channel0_IRQn, 8, 0);  // ADCは時間制約が緩いため最低優先度
   HAL_NVIC_EnableIRQ(HPDMA1_Channel0_IRQn);
   /* USER CODE END HPDMA1_Init 1 */
   handle_HPDMA1_Channel0.Instance = HPDMA1_Channel0;
