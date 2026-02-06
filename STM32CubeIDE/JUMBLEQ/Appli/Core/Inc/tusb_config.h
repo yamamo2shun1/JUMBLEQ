@@ -37,6 +37,8 @@ extern "C"
 //--------------------------------------------------------------------+
 // Board Specific Configuration
 //--------------------------------------------------------------------+
+#define CFG_TUSB_DEBUG 0
+
 #define CFG_TUSB_MCU              OPT_MCU_STM32H7RS
 #define CFG_TUSB_OS               OPT_OS_FREERTOS
 #define BOARD_DEVICE_RHPORT_SPEED OPT_MODE_HIGH_SPEED
@@ -45,7 +47,7 @@ extern "C"
 #define BOARD_TUD_RHPORT          1
 #define CFG_TUSB_RHPORT1_MODE     (OPT_MODE_DEVICE | OPT_MODE_HIGH_SPEED)
 
-// DWC2 DMA mode - SlaveモードはBOUTNAKEFFで無限ループになる問題がある
+// DWC2 DMAモード
 #define CFG_TUD_DWC2_SLAVE_ENABLE 0
 #define CFG_TUD_DWC2_DMA_ENABLE   1
 
@@ -60,7 +62,7 @@ extern "C"
 // noncacheable_buffer領域をuncached regionsに追加
 // TinyUSBのDCacheメンテナンスをスキップするための設定
 #define CFG_DWC2_MEM_UNCACHED_REGIONS \
-    {.start = 0x24040000, .end = 0x24080000},
+    {.start = 0x24040000, .end = 0x24072000},
 
 // #define CFG_TUSB_RHPORT1_MODE (OPT_MODE_DEVICE | OPT_MODE_HIGH_SPEED)
 // #define TUD_AUDIO_PREFER_RING_BUFFER 1
