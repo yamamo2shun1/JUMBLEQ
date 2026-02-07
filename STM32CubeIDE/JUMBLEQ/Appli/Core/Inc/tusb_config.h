@@ -62,13 +62,7 @@ extern "C"
 // noncacheable_buffer領域をuncached regionsに追加
 // TinyUSBのDCacheメンテナンスをスキップするための設定
 #define CFG_DWC2_MEM_UNCACHED_REGIONS \
-    {.start = 0x24040000, .end = 0x24072000},
-
-// #define CFG_TUSB_RHPORT1_MODE (OPT_MODE_DEVICE | OPT_MODE_HIGH_SPEED)
-// #define TUD_AUDIO_PREFER_RING_BUFFER 1
-// #define CFG_TUSB_DEBUG        0
-// #define CFG_TUD_LOG_LEVEL     0
-// #define CFG_TUSB_DEBUG_PRINTF my_printf
+    {.start = 0x24040000, .end = 0x24071FFF},
 
 // RHPort number used for device can be defined by board.mk, default to port 0
 #ifndef BOARD_TUD_RHPORT
