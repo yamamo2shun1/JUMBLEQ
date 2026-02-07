@@ -111,22 +111,22 @@ Parameter Data :
 Module Name			= Ln_Pn_SW_1
 Parameter Name		= Index_Channel0
 Parameter Address	= 98
-Parameter Value		= 0
+Parameter Value		= 1
 Data Memory			= DM0
 Mem Page			= 0
 Parameter Data :
-0x00, 0x00, 0x00, 0x00, 
+0x01, 0x00, 0x00, 0x00, 
 
 
 
 Module Name			= Ln_Pn_SW_1
 Parameter Name		= Index_Channel1
 Parameter Address	= 99
-Parameter Value		= 1
+Parameter Value		= 0
 Data Memory			= DM0
 Mem Page			= 0
 Parameter Data :
-0x01, 0x00, 0x00, 0x00, 
+0x00, 0x00, 0x00, 0x00, 
 
 
 
