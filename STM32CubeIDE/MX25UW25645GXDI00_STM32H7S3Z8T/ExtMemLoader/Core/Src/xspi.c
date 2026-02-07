@@ -40,7 +40,7 @@ void MX_XSPI1_Init(void)
 
   /* USER CODE END XSPI1_Init 1 */
   hxspi1.Instance = XSPI1;
-  hxspi1.Init.FifoThresholdByte = 1;
+  hxspi1.Init.FifoThresholdByte = 4;
   hxspi1.Init.MemoryMode = HAL_XSPI_SINGLE_MEM;
   hxspi1.Init.MemoryType = HAL_XSPI_MEMTYPE_MACRONIX;
   hxspi1.Init.MemorySize = HAL_XSPI_SIZE_256MB;
@@ -51,16 +51,16 @@ void MX_XSPI1_Init(void)
   hxspi1.Init.ClockPrescaler = 0;
   hxspi1.Init.SampleShifting = HAL_XSPI_SAMPLE_SHIFT_NONE;
   hxspi1.Init.ChipSelectBoundary = HAL_XSPI_BONDARYOF_NONE;
-  hxspi1.Init.MaxTran = 0;
+  hxspi1.Init.MaxTran = 22;
   hxspi1.Init.Refresh = 0;
   hxspi1.Init.MemorySelect = HAL_XSPI_CSSEL_NCS1;
   if (HAL_XSPI_Init(&hxspi1) != HAL_OK)
   {
     Error_Handler();
   }
-  sXspiManagerCfg.nCSOverride = HAL_XSPI_CSSEL_OVR_NCS1;
+  sXspiManagerCfg.nCSOverride = HAL_XSPI_CSSEL_OVR_DISABLED;
   sXspiManagerCfg.IOPort = HAL_XSPIM_IOPORT_1;
-  sXspiManagerCfg.Req2AckTime = 1;
+  sXspiManagerCfg.Req2AckTime = 10;
   if (HAL_XSPIM_Config(&hxspi1, &sXspiManagerCfg, HAL_XSPI_TIMEOUT_DEFAULT_VALUE) != HAL_OK)
   {
     Error_Handler();

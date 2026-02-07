@@ -68,11 +68,12 @@ void MX_EXTMEM_MANAGER_Init(void)
   /* EXTMEMORY_1 */
   extmem_list_config[0].MemType = EXTMEM_NOR_SFDP;
   extmem_list_config[0].Handle = (void*)&hxspi1;
-  extmem_list_config[0].ConfigType = EXTMEM_LINK_CONFIG_8LINES;
+  extmem_list_config[0].ConfigType = EXTMEM_LINK_CONFIG_1LINE;
 
   EXTMEM_Init(EXTMEMORY_1, HAL_RCCEx_GetPeriphCLKFreq(RCC_PERIPHCLK_XSPI1));
 
   /* USER CODE BEGIN MX_EXTMEM_Init_PostTreatment */
-
+  extmem_list_config[0].ConfigType = EXTMEM_LINK_CONFIG_8LINES;
+  EXTMEM_Init(EXTMEMORY_1, HAL_RCCEx_GetPeriphCLKFreq(RCC_PERIPHCLK_XSPI1));
   /* USER CODE END MX_EXTMEM_Init_PostTreatment */
 }
