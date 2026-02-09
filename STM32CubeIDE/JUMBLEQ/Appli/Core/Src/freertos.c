@@ -209,7 +209,7 @@ void MX_FREERTOS_Init(void)
 
     /* Create the thread(s) */
     /* creation of defaultTask */
-    defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+    // defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
     /* creation of usbTask */
     usbTaskHandle = osThreadNew(StartUSBTask, NULL, &usbTask_attributes);
@@ -242,17 +242,6 @@ void MX_FREERTOS_Init(void)
  * @retval None
  */
 
-// スタック監視情報（デバッガのWatchウィンドウで確認可能）
-volatile uint32_t dbg_free_heap          = 0;
-volatile uint32_t dbg_min_free_heap      = 0xFFFFFFFF;  // ヒープ最小空き容量
-volatile uint32_t dbg_usb_stack_free     = 0;
-volatile uint32_t dbg_audio_stack_free   = 0;
-volatile uint32_t dbg_led_stack_free     = 0;
-volatile uint32_t dbg_adc_stack_free     = 0;
-volatile uint32_t dbg_default_stack_free = 0;
-volatile uint32_t dbg_min_usb_stack      = 0xFFFFFFFF;  // USB最小スタック残量
-volatile uint32_t dbg_min_audio_stack    = 0xFFFFFFFF;  // Audio最小スタック残量
-
 /* USER CODE END Header_StartDefaultTask */
 void StartDefaultTask(void* argument)
 {
@@ -260,32 +249,6 @@ void StartDefaultTask(void* argument)
     /* Infinite loop */
     for (;;)
     {
-        dbg_free_heap = xPortGetFreeHeapSize();
-        if (dbg_free_heap < dbg_min_free_heap)
-        {
-            dbg_min_free_heap = dbg_free_heap;
-        }
-
-        // 各タスクのスタック残量を監視（High Water Mark）
-        dbg_usb_stack_free     = uxTaskGetStackHighWaterMark(usbTaskHandle) * 4;
-        dbg_audio_stack_free   = uxTaskGetStackHighWaterMark(audioTaskHandle) * 4;
-        dbg_led_stack_free     = uxTaskGetStackHighWaterMark(ledTaskHandle) * 4;
-        dbg_adc_stack_free     = uxTaskGetStackHighWaterMark(adcTaskHandle) * 4;
-        dbg_default_stack_free = uxTaskGetStackHighWaterMark(NULL) * 4;
-
-        // 最小値を記録（問題発生時の最悪ケースを追跡）
-        if (dbg_usb_stack_free < dbg_min_usb_stack)
-        {
-            dbg_min_usb_stack = dbg_usb_stack_free;
-        }
-        if (dbg_audio_stack_free < dbg_min_audio_stack)
-        {
-            dbg_min_audio_stack = dbg_audio_stack_free;
-        }
-
-        // デバッガのWatchウィンドウまたはLive Expressionsで監視
-        // SWOが動作しない環境ではprintfを使わない
-
         update_color_state();
         osDelay(1000);
     }
@@ -298,15 +261,6 @@ void StartDefaultTask(void* argument)
  * @param argument: Not used
  * @retval None
  */
-// デバッグ用カウンタ
-volatile uint32_t dbg_usb_task_count   = 0;
-volatile uint32_t dbg_audio_task_count = 0;
-
-// stm32h7rsxx_it.cで定義されたUSB ISRカウンタとMSPモニター
-extern volatile uint32_t dbg_usb_isr_count;
-extern volatile uint32_t dbg_usb_isr_msp_min;
-extern volatile uint32_t dbg_usb_isr_msp_start;
-
 /* USER CODE END Header_StartUSBTask */
 void StartUSBTask(void* argument)
 {
@@ -321,10 +275,8 @@ void StartUSBTask(void* argument)
     /* Infinite loop */
     for (;;)
     {
-        dbg_usb_task_count++;
-        // 短いタイムアウトを使用して無限ブロックを防ぐ
-        tud_task();  //_ext(10, false);  // 10msタイムアウト
-        // osDelay(1) は不要（tud_task_ext内で待機するため）
+        tud_task();
+        osDelay(1);
     }
     /* USER CODE END StartUSBTask */
 }
@@ -374,9 +326,8 @@ void StartAudioTask(void* argument)
     /* Infinite loop */
     for (;;)
     {
-        dbg_audio_task_count++;
         audio_task();
-        osDelay(1);  // 毎回1ms待機してUSBとAudioのバランスを取る
+        osDelay(1);
     }
     /* USER CODE END StartAudioTask */
 }
@@ -395,7 +346,6 @@ void StartLEDTask(void* argument)
 
     set_led_color(0, 0, 0, 0);
     renew();
-    osDelay(100);
 
     /* Infinite loop */
     for (;;)
@@ -403,7 +353,7 @@ void StartLEDTask(void* argument)
         led_tx_blinking_task();
         led_rx_blinking_task();
         rgb_led_task();
-        osDelay(10);  // LED更新は10ms間隔で十分
+        osDelay(10);
     }
     /* USER CODE END StartLEDTask */
 }
@@ -423,7 +373,7 @@ void StartADCTask(void* argument)
     for (;;)
     {
         ui_control_task();
-        osDelay(1);
+        osDelay(2);
     }
     /* USER CODE END StartADCTask */
 }
