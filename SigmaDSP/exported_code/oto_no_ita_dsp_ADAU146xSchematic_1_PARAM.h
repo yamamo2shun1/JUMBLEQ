@@ -1,6 +1,6 @@
 /* 
  * File:	C:\Users\shuni\JUMBLEQ\SigmaDSP\exported_code\oto_no_ita_dsp_ADAU146xSchematic_1_PARAM.h
- * Created:	Wednesday, 21 January 2026 14:41 PM
+ * Created:	Friday, 06 February 2026 17:45 PM
  * Description:	ADAU146xSchematic_1 parameter RAM definitions.
  * 
  * This software is distributed in the hope that it will be useful, 
@@ -74,16 +74,16 @@
 #define MOD_LN_PN_SW_1_COUNT                         2
 #define MOD_LN_PN_SW_1_SCHEMATIC                     "ADAU146xSchematic_1"
 #define MOD_LN_PN_SW_1_INDEX_CHANNEL0_ADDR           98
-#define MOD_LN_PN_SW_1_INDEX_CHANNEL0_FIXPT          0x00000000
-#define MOD_LN_PN_SW_1_INDEX_CHANNEL0_VALUE          SIGMASTUDIOTYPE_8_24_CONVERT(0)
+#define MOD_LN_PN_SW_1_INDEX_CHANNEL0_FIXPT          0x01000000
+#define MOD_LN_PN_SW_1_INDEX_CHANNEL0_VALUE          SIGMASTUDIOTYPE_8_24_CONVERT(1)
 #define MOD_LN_PN_SW_1_INDEX_CHANNEL0_TYPE           SIGMASTUDIOTYPE_8_24
 #define MOD_LN_PN_SW_1_INDEX_CHANNEL0_DATA_MEMORY    "DM0"
 #define MOD_LN_PN_SW_1_INDEX_CHANNEL0_MEM_PAGE       0
 #define MOD_LN_PN_SW_1_INDEX_CHANNEL0_DATA_MEMORY    "DM0"
 #define MOD_LN_PN_SW_1_INDEX_CHANNEL0_MEM_PAGE       0
 #define MOD_LN_PN_SW_1_INDEX_CHANNEL1_ADDR           99
-#define MOD_LN_PN_SW_1_INDEX_CHANNEL1_FIXPT          0x01000000
-#define MOD_LN_PN_SW_1_INDEX_CHANNEL1_VALUE          SIGMASTUDIOTYPE_8_24_CONVERT(1)
+#define MOD_LN_PN_SW_1_INDEX_CHANNEL1_FIXPT          0x00000000
+#define MOD_LN_PN_SW_1_INDEX_CHANNEL1_VALUE          SIGMASTUDIOTYPE_8_24_CONVERT(0)
 #define MOD_LN_PN_SW_1_INDEX_CHANNEL1_TYPE           SIGMASTUDIOTYPE_8_24
 #define MOD_LN_PN_SW_1_INDEX_CHANNEL1_DATA_MEMORY    "DM0"
 #define MOD_LN_PN_SW_1_INDEX_CHANNEL1_MEM_PAGE       0

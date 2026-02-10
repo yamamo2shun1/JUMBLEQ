@@ -490,22 +490,7 @@ void I2C3_ER_IRQHandler(void)
 void OTG_HS_IRQHandler(void)
 {
   /* USER CODE BEGIN OTG_HS_IRQn 0 */
-  dbg_usb_isr_count++;
-
-  // ISR開始時のMSP（メインスタック）を記録
-  uint32_t msp_val;
-  __asm volatile ("MRS %0, msp" : "=r" (msp_val));
-  dbg_usb_isr_msp_start = msp_val;
-
-  // TinyUSB割り込みハンドラ呼び出し
   tusb_int_handler(BOARD_TUD_RHPORT, true);
-
-  // ISR終了時のMSP最小値を更新（デバッグ用）
-  __asm volatile ("MRS %0, msp" : "=r" (msp_val));
-  if (msp_val < dbg_usb_isr_msp_min) {
-    dbg_usb_isr_msp_min = msp_val;
-  }
-
   return;
   /* USER CODE END OTG_HS_IRQn 0 */
   HAL_PCD_IRQHandler(&hpcd_USB_OTG_HS);
