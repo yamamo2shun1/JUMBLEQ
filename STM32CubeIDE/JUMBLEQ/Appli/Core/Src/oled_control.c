@@ -26,11 +26,11 @@ void OLED_UpdateTask(void)
 
     ssd1306_Fill(Black);
     ssd1306_SetCursor(0, 0);
-    sprintf(msg, "C2:%ddB Mst:%ddB", get_current_ch2_db(), get_current_master_db());
+    snprintf(msg, sizeof(msg), "C2:%ddB Mst:%ddB", get_current_ch2_db(), get_current_master_db());
     ssd1306_WriteString(msg, Font_7x10, White);
 
     ssd1306_SetCursor(0, 11);
-    sprintf(msg, "C1:%ddB D/W:%d%%", get_current_ch1_db(), get_current_dry_wet());
+    snprintf(msg, sizeof(msg), "C1:%ddB D/W:%d%%", get_current_ch1_db(), get_current_dry_wet());
     ssd1306_WriteString(msg, Font_7x10, White);
 
     ssd1306_SetCursor(0, 22);

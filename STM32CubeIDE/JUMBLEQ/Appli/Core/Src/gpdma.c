@@ -39,7 +39,6 @@ void MX_GPDMA1_Init(void)
   __HAL_RCC_GPDMA1_CLK_ENABLE();
 
   /* GPDMA1 interrupt Init */
-    // SAI DMA: 優先度6 (FreeRTOS閾値5からマージン確保)
     HAL_NVIC_SetPriority(GPDMA1_Channel2_IRQn, 6, 0);
     HAL_NVIC_EnableIRQ(GPDMA1_Channel2_IRQn);
     HAL_NVIC_SetPriority(GPDMA1_Channel3_IRQn, 6, 0);
