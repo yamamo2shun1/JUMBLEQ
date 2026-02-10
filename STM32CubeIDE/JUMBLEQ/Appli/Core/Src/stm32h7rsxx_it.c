@@ -88,6 +88,7 @@ extern ADC_HandleTypeDef hadc1;
 extern DMA_HandleTypeDef handle_GPDMA1_Channel3;
 extern DMA_HandleTypeDef handle_GPDMA1_Channel2;
 extern DMA_HandleTypeDef handle_HPDMA1_Channel0;
+extern I2C_HandleTypeDef hi2c2;
 extern I2C_HandleTypeDef hi2c3;
 extern SAI_HandleTypeDef hsai_BlockA1;
 extern SAI_HandleTypeDef hsai_BlockA2;
@@ -454,6 +455,34 @@ void SAI2_A_IRQHandler(void)
   /* USER CODE BEGIN SAI2_A_IRQn 1 */
 
   /* USER CODE END SAI2_A_IRQn 1 */
+}
+
+/**
+  * @brief This function handles I2C2 event interrupt.
+  */
+void I2C2_EV_IRQHandler(void)
+{
+  /* USER CODE BEGIN I2C2_EV_IRQn 0 */
+
+  /* USER CODE END I2C2_EV_IRQn 0 */
+  HAL_I2C_EV_IRQHandler(&hi2c2);
+  /* USER CODE BEGIN I2C2_EV_IRQn 1 */
+
+  /* USER CODE END I2C2_EV_IRQn 1 */
+}
+
+/**
+  * @brief This function handles I2C2 error interrupt.
+  */
+void I2C2_ER_IRQHandler(void)
+{
+  /* USER CODE BEGIN I2C2_ER_IRQn 0 */
+
+  /* USER CODE END I2C2_ER_IRQn 0 */
+  HAL_I2C_ER_IRQHandler(&hi2c2);
+  /* USER CODE BEGIN I2C2_ER_IRQn 1 */
+
+  /* USER CODE END I2C2_ER_IRQn 1 */
 }
 
 /**
