@@ -54,18 +54,7 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-// デバッグ用 - Watchウィンドウで確認するためのextern宣言
-extern volatile uint32_t dbg_usb_task_count;
-extern volatile uint32_t dbg_audio_task_count;
-extern volatile uint32_t dbg_tx_half_count;
-extern volatile uint32_t dbg_tx_cplt_count;
-extern volatile uint32_t dbg_fill_tx_count;
-extern volatile uint32_t dbg_usb2ring_bytes;
-extern volatile int32_t dbg_ring_used;
-extern volatile uint32_t dbg_fill_underrun;
-extern volatile uint32_t dbg_fill_copied;
-extern volatile uint32_t dbg_usb2ring_count;
-extern volatile uint32_t dbg_usb2ring_total;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/

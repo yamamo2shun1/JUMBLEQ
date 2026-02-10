@@ -90,17 +90,6 @@ static volatile uint8_t tx_pending_mask = 0;      // bit0: first-half, bit1: sec
 static volatile uint8_t rx_pending_mask = 0;      // bit0: first-half, bit1: second-half
 static volatile bool usb_tx_pending     = false;  // USB TX送信要求フラグ (ISR→Task通知用)
 
-// Debug counters for DMA callbacks (staticを外してデバッガから見えるようにする)
-volatile uint32_t dbg_tx_half_count  = 0;
-volatile uint32_t dbg_tx_cplt_count  = 0;
-volatile uint32_t dbg_fill_tx_count  = 0;
-volatile uint32_t dbg_usb2ring_bytes = 0;  // copybuf_usb2ringでコピーされたバイト数
-volatile int32_t dbg_ring_used       = 0;  // リングバッファの使用量
-volatile uint32_t dbg_fill_underrun  = 0;  // データ不足でスキップした回数
-volatile uint32_t dbg_fill_copied    = 0;  // 正常にコピーできた回数
-volatile uint32_t dbg_usb2ring_count = 0;  // copybuf_usb2ring呼び出し回数
-volatile uint32_t dbg_usb2ring_total = 0;  // USBから読んだ累積バイト数
-
 bool s_streaming_out = false;
 bool s_streaming_in  = false;
 
@@ -130,20 +119,6 @@ uint8_t current_resolution;
 // Current states
 int8_t mute[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX + 1];     // +1 for master channel 0
 int16_t volume[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX + 1];  // +1 for master channel 0
-
-// デバッグ用：USB書き込み状況
-static volatile uint32_t dbg_usb_write_partial   = 0;  // 部分書き込み発生回数
-static volatile uint32_t dbg_usb_write_total     = 0;  // 書き込み試行回数
-static volatile uint16_t dbg_usb_write_last_want = 0;
-static volatile uint16_t dbg_usb_write_last_got  = 0;
-
-// デバッグ用：早期リターン原因追跡
-static volatile uint32_t dbg_ret_not_mounted   = 0;  // tud_audio_mounted() == false
-static volatile uint32_t dbg_ret_not_streaming = 0;  // s_streaming_in == false
-static volatile uint32_t dbg_ret_no_ep         = 0;  // EP NULL
-static volatile uint32_t dbg_ret_underrun      = 0;  // リングバッファ不足
-static volatile uint32_t dbg_ret_written_zero  = 0;  // written == 0
-static volatile int32_t dbg_last_used          = 0;  // 最後のused値
 
 void control_input_from_usb_gain(uint8_t ch, int16_t db);
 
@@ -1222,14 +1197,12 @@ static void dma_sai2_tx_half(DMA_HandleTypeDef* hdma)
 {
     (void) hdma;
     tx_pending_mask |= 0x01;
-    dbg_tx_half_count++;
     __DMB();
 }
 static void dma_sai2_tx_cplt(DMA_HandleTypeDef* hdma)
 {
     (void) hdma;
     tx_pending_mask |= 0x02;
-    dbg_tx_cplt_count++;
     __DMB();
 }
 
@@ -1246,14 +1219,8 @@ static void dma_sai1_rx_cplt(DMA_HandleTypeDef* hdma)
     __DMB();
 }
 
-// DMAエラーコールバック（デバッグ用）
-static volatile uint32_t dbg_dma_error_count = 0;
-static volatile uint32_t dbg_dma_last_error  = 0;
-
 static void dma_sai_error(DMA_HandleTypeDef* hdma)
 {
-    dbg_dma_error_count++;
-    dbg_dma_last_error = hdma->ErrorCode;
     SEGGER_RTT_printf(0, "DMA ERR! code=%08X\n", hdma->ErrorCode);
 }
 
@@ -1336,14 +1303,9 @@ void start_sai(void)
 
 void copybuf_usb2ring(void)
 {
-    dbg_usb2ring_count++;  // 呼び出し回数カウント
-
     // SEGGER_RTT_printf(0, "st = %d, sb_index = %d -> ", sai_transmit_index, sai_tx_rng_buf_index);
 
-    dbg_usb2ring_total += spk_data_size;  // USBから読んだ累積バイト数
-
     int32_t used  = (int32_t) (sai_tx_rng_buf_index - sai_transmit_index);
-    dbg_ring_used = used;  // デバッグ用
 
     if (used < 0)
     {
@@ -1400,14 +1362,11 @@ void copybuf_usb2ring(void)
         }
     }
 
-    dbg_usb2ring_bytes = sai_words * sizeof(int32_t);  // コピーしたバイト数（SAI側は常に32bit）
-
     // SEGGER_RTT_printf(0, " %d\n", sai_tx_rng_buf_index);
 }
 
 static inline void fill_tx_half(uint32_t index0)
 {
-    dbg_fill_tx_count++;
     const uint32_t n = (SAI_TX_BUF_SIZE / 2);
 
     // index0のバウンドチェック
@@ -1429,7 +1388,6 @@ static inline void fill_tx_half(uint32_t index0)
     // リセットしない：バッファが溜まるのを待つ
     if (used < (int32_t) n)
     {
-        dbg_fill_underrun++;  // アンダーラン発生
         memset(stereo_out_buf + index0, 0, n * sizeof(int32_t));
         // リセットしない - バッファが溜まるのを待つ
         return;
@@ -1454,7 +1412,6 @@ static inline void fill_tx_half(uint32_t index0)
         memcpy(stereo_out_buf + index0 + first, sai_tx_rng_buf, (n - first) * sizeof(int32_t));
 
     sai_transmit_index += n;
-    dbg_fill_copied++;  // 正常にコピー完了
 }
 
 void copybuf_ring2sai(void)
@@ -1571,20 +1528,17 @@ static void copybuf_ring2usb_and_send(void)
 {
     if (!tud_audio_mounted())
     {
-        dbg_ret_not_mounted++;
         return;
     }
 
     // IN(録音)側が streaming していないなら送らない
     if (!s_streaming_in)
     {
-        dbg_ret_not_streaming++;
         return;
     }
 
     if (tud_audio_get_ep_in_ff() == NULL)
     {
-        dbg_ret_no_ep++;
         return;
     }
 
@@ -1592,16 +1546,13 @@ static void copybuf_ring2usb_and_send(void)
     const uint32_t sai_words = frames * 2;             // SAIは2ch
 
     int32_t used  = (int32_t) (sai_rx_rng_buf_index - sai_receive_index);
-    dbg_last_used = used;  // デバッグ用
     if (used < 0)
     {
         sai_receive_index = sai_rx_rng_buf_index;
-        dbg_ret_underrun++;
         return;
     }
     if (used < (int32_t) sai_words)
     {
-        dbg_ret_underrun++;
         return;  // 足りないなら今回は送らない
     }
 
@@ -1644,16 +1595,8 @@ static void copybuf_ring2usb_and_send(void)
         // ISRコンテキストから呼ばれるので通常版を使用
         written = tud_audio_write(usb_out_buf, (uint16_t) usb_bytes);
 
-        // デバッグ用カウンタ更新
-        dbg_usb_write_total++;
-        dbg_usb_write_last_want = (uint16_t) usb_bytes;
-        dbg_usb_write_last_got  = written;
-        if (written < usb_bytes)
-            dbg_usb_write_partial++;
-
         if (written == 0)
         {
-            dbg_ret_written_zero++;
             return;
         }
 
@@ -1689,16 +1632,8 @@ static void copybuf_ring2usb_and_send(void)
         // ISRコンテキストから呼ばれるので通常版を使用
         written = tud_audio_write(usb_out_buf, (uint16_t) usb_bytes);
 
-        // デバッグ用カウンタ更新
-        dbg_usb_write_total++;
-        dbg_usb_write_last_want = (uint16_t) usb_bytes;
-        dbg_usb_write_last_got  = written;
-        if (written < usb_bytes)
-            dbg_usb_write_partial++;
-
         if (written == 0)
         {
-            dbg_ret_written_zero++;
             return;
         }
 
@@ -1757,13 +1692,6 @@ static volatile uint32_t audio_task_call_count = 0;
 static volatile uint32_t audio_task_last_tick  = 0;
 static volatile uint32_t audio_task_frequency  = 0;  // 呼び出し回数/秒
 
-// デバッグ用：無音化時の状態を保存
-static volatile uint16_t dbg_last_avail = 0;
-static volatile uint16_t dbg_last_read  = 0;
-static volatile uint32_t dbg_zero_count = 0;  // avail=0の連続回数
-static volatile bool dbg_streaming_out  = false;
-static volatile bool dbg_mounted        = false;
-
 void audio_task(void)
 {
     // 呼び出し頻度計測
@@ -1774,51 +1702,6 @@ void audio_task(void)
         audio_task_frequency  = audio_task_call_count;
         audio_task_call_count = 0;
         audio_task_last_tick  = now;
-
-#if 0
-        // ヒープ残量を監視
-        size_t freeHeap = xPortGetFreeHeapSize();
-        size_t minHeap  = xPortGetMinimumEverFreeHeapSize();
-        SEGGER_RTT_printf(0, "heap: free=%d, min=%d\n", freeHeap, minHeap);
-#endif
-
-        // 1秒ごとにリングバッファ状態をログ出力
-        if (s_streaming_out)
-        {
-#if 0  // RTTログを一時無効化
-       // 最初の8サンプルをダンプ (4ch x 2frames)
-            SEGGER_RTT_printf(0, "spk=%d [%08X %08X %08X %08X]\n", spk_data_size, usb_in_buf[0], usb_in_buf[1], usb_in_buf[2], usb_in_buf[3]);
-            // TX側のデバッグ情報
-            int32_t tx_used = (int32_t) (sai_tx_rng_buf_index - sai_transmit_index);
-            SEGGER_RTT_printf(0, "  tx: half=%d cplt=%d fill=%d under=%d copied=%d used=%d\n", dbg_tx_half_count, dbg_tx_cplt_count, dbg_fill_tx_count, dbg_fill_underrun, dbg_fill_copied, tx_used);
-            // SAI TX出力バッファの内容を確認
-            SEGGER_RTT_printf(0, "  sai_tx: [%08X %08X %08X %08X]\n", stereo_out_buf[0], stereo_out_buf[1], stereo_out_buf[2], stereo_out_buf[3]);
-#endif
-            dbg_tx_half_count = 0;
-            dbg_tx_cplt_count = 0;
-            dbg_fill_tx_count = 0;
-            dbg_fill_underrun = 0;
-            dbg_fill_copied   = 0;
-        }
-        if (s_streaming_in)
-        {
-#if 0  // RTTログを一時無効化
-       // USB書き込み状況をログ出力
-            SEGGER_RTT_printf(0, "mic: res=%d, total=%d, used=%d\n", current_resolution, dbg_usb_write_total, dbg_last_used);
-            SEGGER_RTT_printf(0, "  ret: mount=%d strm=%d ep=%d under=%d w0=%d\n", dbg_ret_not_mounted, dbg_ret_not_streaming, dbg_ret_no_ep, dbg_ret_underrun, dbg_ret_written_zero);
-            // SAI RXバッファの内容を確認
-            uint32_t idx = sai_receive_index & (SAI_RNG_BUF_SIZE - 1);
-            SEGGER_RTT_printf(0, "sai_rx[%d]: %08X %08X %08X %08X\n", idx, sai_rx_rng_buf[idx], sai_rx_rng_buf[(idx + 1) & (SAI_RNG_BUF_SIZE - 1)], sai_rx_rng_buf[(idx + 2) & (SAI_RNG_BUF_SIZE - 1)], sai_rx_rng_buf[(idx + 3) & (SAI_RNG_BUF_SIZE - 1)]);
-#endif
-            // カウンタリセット
-            dbg_usb_write_partial = 0;
-            dbg_usb_write_total   = 0;
-            dbg_ret_not_mounted   = 0;
-            dbg_ret_not_streaming = 0;
-            dbg_ret_no_ep         = 0;
-            dbg_ret_underrun      = 0;
-            dbg_ret_written_zero  = 0;
-        }
     }
 
     if (is_sr_changed)
@@ -1830,10 +1713,6 @@ void audio_task(void)
     }
     else
     {
-        // デバッグ情報を更新
-        dbg_streaming_out = s_streaming_out;
-        dbg_mounted       = tud_audio_mounted();
-
         // FIFOから読み取り - バッファ全体を使用
         spk_data_size = tud_audio_read_usb_locked(usb_in_buf, sizeof(usb_in_buf));
 
