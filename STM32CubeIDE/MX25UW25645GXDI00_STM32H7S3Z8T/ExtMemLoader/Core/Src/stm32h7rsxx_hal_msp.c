@@ -106,6 +106,8 @@ RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   /* high speed low voltage config */
   HAL_SBS_EnableIOSpeedOptimize(SBS_IO_XSPI1_HSLV);
 
+  HAL_PWREx_EnableUSBHSregulator();
+
   /* USER CODE BEGIN MspInit 1 */
 
   /* USER CODE END MspInit 1 */

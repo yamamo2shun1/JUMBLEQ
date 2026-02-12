@@ -83,6 +83,13 @@ RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   /* Enable the XSPIM_P1 interface */
   HAL_PWREx_EnableXSPIM1();
 
+  /* Enable USB Voltage detector */
+  if(HAL_PWREx_EnableUSBVoltageDetector() != HAL_OK)
+  {
+   /* Initialization error */
+   Error_Handler();
+  }
+
   /* The CSI is used by the compensation cells and must be enabled before enabling the
      compensation cells.
      For more details refer to RM0477 [SBS I/O compensation cell management] chapter.
@@ -105,6 +112,8 @@ RCC_OscInitTypeDef RCC_OscInitStruct = {0};
 
   /* high speed low voltage config */
   HAL_SBS_EnableIOSpeedOptimize(SBS_IO_XSPI1_HSLV);
+
+  HAL_PWREx_EnableUSBHSregulator();
 
   /* USER CODE BEGIN MspInit 1 */
 

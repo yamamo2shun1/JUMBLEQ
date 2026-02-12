@@ -18,13 +18,19 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "crc.h"
 #include "extmem_manager.h"
 #include "sbs.h"
+#include "usb_otg.h"
 #include "xspi.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "boot_mode.h"
+#include "led_status.h"
+#include "uf2.h"
+#include "uf2_msc.h"
 
 /* USER CODE END Includes */
 
@@ -103,8 +109,45 @@ int main(void)
   MX_GPIO_Init();
   MX_SBS_Init();
   MX_XSPI1_Init();
+  MX_CRC_Init();
+  MX_USB_OTG_HS_PCD_Init();
   MX_EXTMEM_MANAGER_Init();
   /* USER CODE BEGIN 2 */
+  bool sw2_pressed = boot_mode_sw2_pressed();
+
+  if (sw2_pressed)
+  {
+    led_status_set(LED_STATUS_UF2_IDLE);
+    uf2_init();
+    uf2_msc_init();
+
+    while (1)
+    {
+      uf2_msc_task();
+      led_status_tick(HAL_GetTick());
+
+      if (uf2_is_complete())
+      {
+        led_status_set(LED_STATUS_VERIFY);
+        if (uf2_finalize())
+        {
+          led_status_set(LED_STATUS_VERIFY_OK);
+          HAL_Delay(250);
+          if (BOOT_OK != BOOT_Application())
+          {
+            Error_Handler();
+          }
+        }
+        else
+        {
+          led_status_set(LED_STATUS_ERROR);
+          uf2_init();
+        }
+      }
+    }
+  }
+
+  led_status_set(LED_STATUS_BOOT_JUMP);
 
   /* USER CODE END 2 */
 

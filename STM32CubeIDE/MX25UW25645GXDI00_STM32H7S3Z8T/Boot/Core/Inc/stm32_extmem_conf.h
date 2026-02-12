@@ -50,6 +50,7 @@
 #include "boot/stm32_boot_xip.h"
 
 /* USER CODE BEGIN INCLUDE */
+#include "boot_config.h"
 
 /* USER CODE END INCLUDE */
 /* Private variables ---------------------------------------------------------*/
@@ -73,6 +74,8 @@ enum {
 #define EXTMEM_MEMORY_BOOTXIP  EXTMEMORY_1
 
 /* USER CODE BEGIN EC */
+#define EXTMEM_XIP_IMAGE_OFFSET  BOOT_APP_OFFSET
+#define EXTMEM_HEADER_OFFSET     0u
 
 /* USER CODE END EC */
 
