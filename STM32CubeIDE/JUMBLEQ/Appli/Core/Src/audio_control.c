@@ -1305,7 +1305,7 @@ void copybuf_usb2ring(void)
 {
     // SEGGER_RTT_printf(0, "st = %d, sb_index = %d -> ", sai_transmit_index, sai_tx_rng_buf_index);
 
-    int32_t used  = (int32_t) (sai_tx_rng_buf_index - sai_transmit_index);
+    int32_t used = (int32_t) (sai_tx_rng_buf_index - sai_transmit_index);
 
     if (used < 0)
     {
@@ -1545,7 +1545,7 @@ static void copybuf_ring2usb_and_send(void)
     const uint32_t frames    = audio_frames_per_ms();  // 48 or 96 frames/ms
     const uint32_t sai_words = frames * 2;             // SAIは2ch
 
-    int32_t used  = (int32_t) (sai_rx_rng_buf_index - sai_receive_index);
+    int32_t used = (int32_t) (sai_rx_rng_buf_index - sai_receive_index);
     if (used < 0)
     {
         sai_receive_index = sai_rx_rng_buf_index;
@@ -1664,21 +1664,6 @@ bool tud_audio_tx_done_isr(uint8_t rhport, uint16_t n_bytes_sent, uint8_t func_i
 
 #define USB_IRQn OTG_HS_IRQn
 
-static inline uint16_t tud_audio_read_usb_locked(void* buf, uint16_t len)
-{
-    // 4バイト境界にアライメント
-    len &= (uint16_t) ~3u;
-
-    if (len == 0)
-    {
-        return 0;
-    }
-
-    // TinyUSB FIFOは内部でスレッドセーフな実装
-    // USB IRQ禁止はエンドポイントの状態遷移を妨げるため使用しない
-    return tud_audio_read(buf, len);
-}
-
 static inline uint16_t tud_audio_available_usb_locked(void)
 {
     uint32_t en = usb_irq_save();
@@ -1714,7 +1699,7 @@ void audio_task(void)
     else
     {
         // FIFOから読み取り - バッファ全体を使用
-        spk_data_size = tud_audio_read_usb_locked(usb_in_buf, sizeof(usb_in_buf));
+        spk_data_size = tud_audio_read(usb_in_buf, sizeof(usb_in_buf));
 
         // USB -> SAI
         copybuf_usb2ring();
