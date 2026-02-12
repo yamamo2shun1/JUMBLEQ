@@ -137,7 +137,7 @@ uint8_t const* tud_descriptor_device_cb(void)
 uint8_t const desc_uac1_configuration[] =
     {
         // Config number, interface count, string index, total length, attribute, power in mA
-        TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_UAC1_TOTAL_LEN, 0x00, 200),
+        TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_UAC1_TOTAL_LEN, 0x00, 500),
 
         // Interface number, string index OUT, string index IN, bytes per sample RX/TX, bits used per sample RX/TX, EP Out & EP In address, EP sizes, sample rate
         TUD_AUDIO10_AUDIOIF_STEREO_DESCRIPTOR(ITF_NUM_AUDIO_CONTROL, STRID_AUDIO_OUT, STRID_AUDIO_IN, CFG_TUD_AUDIO_FUNC_1_FORMAT_1_N_BYTES_PER_SAMPLE_RX, CFG_TUD_AUDIO_FUNC_1_FORMAT_1_RESOLUTION_RX, CFG_TUD_AUDIO_FUNC_1_FORMAT_1_N_BYTES_PER_SAMPLE_TX, CFG_TUD_AUDIO_FUNC_1_FORMAT_1_RESOLUTION_TX, EPNUM_AUDIO_OUT, CFG_TUD_AUDIO10_FUNC_1_FORMAT_1_EP_SZ_OUT, EPNUM_AUDIO_IN | 0x80, CFG_TUD_AUDIO10_FUNC_1_FORMAT_1_EP_SZ_IN, 48000, 96000),
@@ -159,7 +159,7 @@ TU_VERIFY_STATIC(sizeof(desc_uac1_configuration) == CONFIG_UAC1_TOTAL_LEN, "Inco
 uint8_t const desc_uac2_configuration[] =
     {
         // Config number, interface count, string index, total length, attribute, power in mA
-        TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_UAC2_TOTAL_LEN, 0x00, 200),
+        TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_UAC2_TOTAL_LEN, 0x00, 500),
 
         // String index OUT, String index IN, EP Out & EP In address, EP Interrupt address
         TUD_AUDIO20_AUDIOIF_STEREO_DESCRIPTOR(STRID_AUDIO_OUT, STRID_AUDIO_IN, EPNUM_AUDIO_OUT, EPNUM_AUDIO_IN | 0x80, EPNUM_AUDIO_INT | 0x80),

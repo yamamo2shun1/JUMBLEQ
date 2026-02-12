@@ -37,11 +37,11 @@ extern "C"
 #include "tusb.h"
 #include "usb_descriptors.h"
 
-#include "ssd1306.h"
+#include "main_oled.h"
+#include "sub_oled.h"
 #include "ssd1306_fonts.h"
 
 #include "SEGGER_RTT.h"
-#include "my_log.h"
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
@@ -87,6 +87,8 @@ extern "C"
 #define LED1_GPIO_Port        GPIOD
 #define LED0_Pin              GPIO_PIN_2
 #define LED0_GPIO_Port        GPIOD
+#define UCPD_PWR_EN_Pin       GPIO_PIN_9
+#define UCPD_PWR_EN_GPIO_Port GPIOM
 
     /* USER CODE BEGIN Private defines */
 

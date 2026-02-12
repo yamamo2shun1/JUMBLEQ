@@ -40,7 +40,7 @@ void MX_XSPI1_Init(void)
 
   /* USER CODE END XSPI1_Init 1 */
   hxspi1.Instance = XSPI1;
-  hxspi1.Init.FifoThresholdByte = 1;
+  hxspi1.Init.FifoThresholdByte = 4;
   hxspi1.Init.MemoryMode = HAL_XSPI_SINGLE_MEM;
   hxspi1.Init.MemoryType = HAL_XSPI_MEMTYPE_MACRONIX;
   hxspi1.Init.MemorySize = HAL_XSPI_SIZE_256MB;
@@ -48,7 +48,7 @@ void MX_XSPI1_Init(void)
   hxspi1.Init.FreeRunningClock = HAL_XSPI_FREERUNCLK_DISABLE;
   hxspi1.Init.ClockMode = HAL_XSPI_CLOCK_MODE_0;
   hxspi1.Init.WrapSize = HAL_XSPI_WRAP_NOT_SUPPORTED;
-  hxspi1.Init.ClockPrescaler = 0;
+  hxspi1.Init.ClockPrescaler = 3;
   hxspi1.Init.SampleShifting = HAL_XSPI_SAMPLE_SHIFT_NONE;
   hxspi1.Init.ChipSelectBoundary = HAL_XSPI_BONDARYOF_NONE;
   hxspi1.Init.MaxTran = 0;

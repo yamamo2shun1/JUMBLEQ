@@ -913,7 +913,7 @@ const SSD1306_Font_t Font_16x24 = {16, 24, Font16x24, NULL};
 #endif
 
 #ifdef SSD1306_INCLUDE_FONT_16x15
-/** Generated Roboto Thin 15 
+/** Generated Roboto Thin 15
  * @copyright Google https://github.com/googlefonts/roboto
  * @license This font is licensed under the Apache License, Version 2.0.
 */

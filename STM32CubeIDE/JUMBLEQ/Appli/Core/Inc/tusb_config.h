@@ -34,43 +34,35 @@ extern "C"
 
 #include "usb_descriptors.h"
 
-#include "my_log.h"
-
 //--------------------------------------------------------------------+
 // Board Specific Configuration
 //--------------------------------------------------------------------+
+#define CFG_TUSB_DEBUG 0
+
 #define CFG_TUSB_MCU              OPT_MCU_STM32H7RS
 #define CFG_TUSB_OS               OPT_OS_FREERTOS
 #define BOARD_DEVICE_RHPORT_SPEED OPT_MODE_HIGH_SPEED
 #define BOARD_TUD_MAX_SPEED       OPT_MODE_HIGH_SPEED
 #define BOARD_DEVICE_RHPORT_NUM   1
 #define BOARD_TUD_RHPORT          1
-#define CFG_TUSB_RHPORT0_MODE     (OPT_MODE_DEVICE | OPT_MODE_HIGH_SPEED)
+#define CFG_TUSB_RHPORT1_MODE     (OPT_MODE_DEVICE | OPT_MODE_HIGH_SPEED)
 
-// DWC2 DMA mode - DMAモードを有効化
-// バッファをnoncacheable領域に配置してDCache coherency問題を解決
+// DWC2 DMAモード
 #define CFG_TUD_DWC2_SLAVE_ENABLE 0
 #define CFG_TUD_DWC2_DMA_ENABLE   1
 
-// DCache有効、TinyUSBバッファはnoncacheable領域に配置
+// DMAモードではDCacheメンテナンスを有効化
 #define CFG_TUD_MEM_DCACHE_ENABLE    1
 #define CFG_TUD_MEM_DCACHE_LINE_SIZE 32
 
-// TinyUSB内部のバッファをnoncacheable領域に配置
+// DMAバッファをnoncacheable領域に配置
 #define CFG_TUD_MEM_SECTION __attribute__((section("noncacheable_buffer"), aligned(32)))
 #define CFG_TUD_MEM_ALIGN   TU_ATTR_ALIGNED(32)
 
 // noncacheable_buffer領域をuncached regionsに追加
-// リンカースクリプトに基づく: 0x24040000 - 0x24072000 (200KB)
 // TinyUSBのDCacheメンテナンスをスキップするための設定
 #define CFG_DWC2_MEM_UNCACHED_REGIONS \
-    {.start = 0x24040000, .end = 0x24080000},
-
-// #define CFG_TUSB_RHPORT1_MODE (OPT_MODE_DEVICE | OPT_MODE_HIGH_SPEED)
-// #define TUD_AUDIO_PREFER_RING_BUFFER 1
-// #define CFG_TUSB_DEBUG        0
-// #define CFG_TUD_LOG_LEVEL     0
-// #define CFG_TUSB_DEBUG_PRINTF my_printf
+    {.start = 0x24040000, .end = 0x24071FFF},
 
 // RHPort number used for device can be defined by board.mk, default to port 0
 #ifndef BOARD_TUD_RHPORT
@@ -115,7 +107,8 @@ extern "C"
  * - CFG_TUSB_MEM SECTION : __attribute__ (( section(".usb_ram") ))
  * - CFG_TUSB_MEM_ALIGN   : __attribute__ ((aligned(4)))
  */
-// DMAモードでも通常RAMを使用（noncacheableは他のDMAに影響する）
+// 注意: CFG_TUSB_MEM_SECTION は空にする（構造体に関数ポインタが含まれるため）
+// DMAバッファは CFG_TUD_MEM_SECTION で別途 noncacheable 領域に配置
 #define CFG_TUSB_MEM_SECTION
 #define CFG_TUSB_MEM_ALIGN __attribute__((aligned(32)))
 
@@ -181,7 +174,6 @@ extern "C"
 
 // Tx flow control needs buffer size >= 4* EP size to work correctly
 // Example write FIFO every 1ms (8 HS frames), so buffer size should be 8 times larger for HS device
-// 低レイテンシー設定: 32倍 → 8倍 に削減（約1/4のレイテンシー）
 #define CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ TU_MAX(4 * CFG_TUD_AUDIO10_FUNC_1_FORMAT_1_EP_SZ_IN, 8 * CFG_TUD_AUDIO20_FUNC_1_FORMAT_1_EP_SZ_IN)
 
 // EP and buffer size - for isochronous EP´s, the buffer and EP size are equal (different sizes would not make sense)
@@ -198,7 +190,6 @@ extern "C"
 
 // Rx flow control needs buffer size >= 4* EP size to work correctly
 // Example read FIFO every 1ms (8 HS frames), so buffer size should be 8 times larger for HS device
-// 低レイテンシー設定: 32倍 → 8倍 に削減（約1/4のレイテンシー）
 #define CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ TU_MAX(4 * CFG_TUD_AUDIO10_FUNC_1_FORMAT_1_EP_SZ_OUT, 8 * CFG_TUD_AUDIO20_FUNC_1_FORMAT_1_EP_SZ_OUT)
 
 #ifdef __cplusplus
