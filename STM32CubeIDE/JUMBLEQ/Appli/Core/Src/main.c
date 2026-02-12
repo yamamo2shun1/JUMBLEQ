@@ -78,6 +78,14 @@ static void DWT_Init(void)
     DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
 }
 
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+    if (GPIO_Pin == UCPD_FLG_n_Pin)
+    {
+        HAL_GPIO_WritePin(UCPD_PWR_EN_GPIO_Port, UCPD_PWR_EN_Pin, GPIO_PIN_RESET);
+    }
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -129,6 +137,7 @@ int main(void)
     MX_SAI2_Init();
     MX_ADC1_Init();
     MX_I2C2_Init();
+    MX_ADC2_Init();
     /* USER CODE BEGIN 2 */
 
     /* USER CODE END 2 */

@@ -13,9 +13,9 @@ void AUDIO_Init_AK4619(uint32_t hz)
 
     // AK4619 HW Reset
     HAL_GPIO_WritePin(CODEC_RESET_GPIO_Port, CODEC_RESET_Pin, 0);
-    HAL_Delay(10);
+    osDelay(10);
     HAL_GPIO_WritePin(CODEC_RESET_GPIO_Port, CODEC_RESET_Pin, 1);
-    HAL_Delay(500);
+    osDelay(500);
 
     // Power Management
     // sndData[0] = 0x36;  // 00 11 0 11 0
