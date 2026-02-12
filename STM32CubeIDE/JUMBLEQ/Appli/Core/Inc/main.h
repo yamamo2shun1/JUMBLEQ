@@ -87,6 +87,9 @@ extern "C"
 #define LED1_GPIO_Port        GPIOD
 #define LED0_Pin              GPIO_PIN_2
 #define LED0_GPIO_Port        GPIOD
+#define UCPD_FLG_n_Pin        GPIO_PIN_8
+#define UCPD_FLG_n_GPIO_Port  GPIOM
+#define UCPD_FLG_n_EXTI_IRQn  EXTI8_IRQn
 #define UCPD_PWR_EN_Pin       GPIO_PIN_9
 #define UCPD_PWR_EN_GPIO_Port GPIOM
 

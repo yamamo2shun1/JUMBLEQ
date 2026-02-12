@@ -54,18 +54,7 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-// デバッグ用 - Watchウィンドウで確認するためのextern宣言
-extern volatile uint32_t dbg_usb_task_count;
-extern volatile uint32_t dbg_audio_task_count;
-extern volatile uint32_t dbg_tx_half_count;
-extern volatile uint32_t dbg_tx_cplt_count;
-extern volatile uint32_t dbg_fill_tx_count;
-extern volatile uint32_t dbg_usb2ring_bytes;
-extern volatile int32_t dbg_ring_used;
-extern volatile uint32_t dbg_fill_underrun;
-extern volatile uint32_t dbg_fill_copied;
-extern volatile uint32_t dbg_usb2ring_count;
-extern volatile uint32_t dbg_usb2ring_total;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -87,6 +76,14 @@ static void DWT_Init(void)
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
     DWT->CYCCNT = 0;
     DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+}
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+    if (GPIO_Pin == UCPD_FLG_n_Pin)
+    {
+        HAL_GPIO_WritePin(UCPD_PWR_EN_GPIO_Port, UCPD_PWR_EN_Pin, GPIO_PIN_RESET);
+    }
 }
 
 /* USER CODE END 0 */
@@ -140,6 +137,7 @@ int main(void)
     MX_SAI2_Init();
     MX_ADC1_Init();
     MX_I2C2_Init();
+    MX_ADC2_Init();
     /* USER CODE BEGIN 2 */
 
     /* USER CODE END 2 */

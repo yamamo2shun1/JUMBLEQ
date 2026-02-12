@@ -47,12 +47,12 @@ void AUDIO_Init_ADAU1466(uint32_t hz)
 {
     // ADAU1466 HW Reset
     HAL_GPIO_WritePin(DSP_RESET_GPIO_Port, DSP_RESET_Pin, 0);
-    HAL_Delay(10);
+    osDelay(10);
     HAL_GPIO_WritePin(DSP_RESET_GPIO_Port, DSP_RESET_Pin, 1);
-    HAL_Delay(500);
+    osDelay(500);
 #if RESET_FROM_FW
     default_download_ADAU146XSCHEMATIC_1();
-    HAL_Delay(100);
+    osDelay(100);
 #endif
 
     if (hz == 48000)
@@ -66,7 +66,7 @@ void AUDIO_Init_ADAU1466(uint32_t hz)
         SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, 0xF005, 2, Mode0_1); /* MCLK_OUT */
         SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, 0xF003, 2, Mode0_2); /* PLL_ENABLE */
         __DSB();
-        HAL_Delay(100);
+        osDelay(100);
         SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, 0xF003, 2, Mode0_3); /* PLL_ENABLE */
     }
     else if (hz == 96000)
@@ -80,11 +80,11 @@ void AUDIO_Init_ADAU1466(uint32_t hz)
         SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, 0xF005, 2, Mode1_1); /* MCLK_OUT */
         SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, 0xF003, 2, Mode1_2); /* PLL_ENABLE */
         __DSB();
-        HAL_Delay(100);
+        osDelay(100);
         SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, 0xF003, 2, Mode1_3); /* PLL_ENABLE */
     }
 
-    HAL_Delay(50);  // Wait for PLL to lock and stabilize
+    osDelay(50);  // Wait for PLL to lock and stabilize
     __DSB();
 }
 
