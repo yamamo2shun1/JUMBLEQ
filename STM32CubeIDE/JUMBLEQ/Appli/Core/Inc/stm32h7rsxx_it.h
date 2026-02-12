@@ -61,6 +61,10 @@ void SPI5_IRQHandler(void);
 void HPDMA1_Channel0_IRQHandler(void);
 void SAI1_A_IRQHandler(void);
 void SAI2_A_IRQHandler(void);
+void I2C2_EV_IRQHandler(void);
+void I2C2_ER_IRQHandler(void);
+void I2C3_EV_IRQHandler(void);
+void I2C3_ER_IRQHandler(void);
 void OTG_HS_IRQHandler(void);
 /* USER CODE BEGIN EFP */
 

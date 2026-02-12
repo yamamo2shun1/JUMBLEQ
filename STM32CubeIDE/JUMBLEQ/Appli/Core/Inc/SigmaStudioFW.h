@@ -51,6 +51,12 @@ typedef unsigned char ADI_REG_TYPE;
 void SIGMA_WRITE_REGISTER_BLOCK(uint8_t devAddress, uint16_t address, uint16_t length, uint8_t* pData);
 void SIGMA_WRITE_REGISTER_BLOCK_IT(uint8_t devAddress, uint16_t address, uint16_t length, uint8_t* pData);
 
+/*
+ * Initialize SPI synchronization primitives for FreeRTOS
+ * Must be called after FreeRTOS scheduler is started
+ */
+void SIGMA_SPI_Init(void);
+
 void SIGMA_SAFELOAD_WRITE_DATA(uint8_t devAddress, uint16_t dataAddress, uint16_t length, uint8_t* pData);
 
 /*

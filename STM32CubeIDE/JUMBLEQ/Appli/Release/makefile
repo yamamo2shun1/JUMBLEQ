@@ -59,6 +59,7 @@ RM := rm -rf
 -include tinyusb/src/class/bth/subdir.mk
 -include tinyusb/src/class/audio/subdir.mk
 -include tinyusb/src/subdir.mk
+-include stm32-ssd1306/ssd1306/subdir.mk
 -include Middlewares/Third_Party/FreeRTOS/subdir.mk
 -include Drivers/STM32H7RSxx_HAL_Driver/subdir.mk
 -include Core/Startup/subdir.mk

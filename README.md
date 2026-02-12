@@ -16,7 +16,7 @@
 I’m developing JUMBLEQ as a solo project. I can’t realistically develop both an ASIO driver and the necessary firmware support on my own. If you’re using this device on Windows, please use [ASIO4ALL](https://asio4all.org/)—even if you’d prefer a dedicated ASIO driver.
 
 ## Block Diagram
-<img width="1217" height="842" alt="block_diagram" src="https://github.com/user-attachments/assets/05a23b76-daef-4675-8531-006a5432ee58" />
+<img width="1217" height="842" alt="JUMBLEQ drawio" src="https://github.com/user-attachments/assets/cbeb1f4e-1354-4cfa-bd1b-a0ead0e7d694" />
 
 ## Prototype 1
 ![DSCF6165-2](https://github.com/user-attachments/assets/813ef216-b056-449b-9184-85f06c5ffc14)

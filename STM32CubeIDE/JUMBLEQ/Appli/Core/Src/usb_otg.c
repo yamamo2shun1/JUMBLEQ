@@ -42,12 +42,12 @@ void MX_USB_OTG_HS_PCD_Init(void)
   hpcd_USB_OTG_HS.Init.dev_endpoints = 9;
   hpcd_USB_OTG_HS.Init.speed = PCD_SPEED_HIGH;
   hpcd_USB_OTG_HS.Init.phy_itface = USB_OTG_HS_EMBEDDED_PHY;
-  hpcd_USB_OTG_HS.Init.dma_enable = ENABLE;   // DMAモード（noncacheable設定済み）
-  hpcd_USB_OTG_HS.Init.Sof_enable = DISABLE;  // SOF無効（スタックオーバーフロー防止）
+  hpcd_USB_OTG_HS.Init.dma_enable = ENABLE;
+  hpcd_USB_OTG_HS.Init.Sof_enable = DISABLE;
   hpcd_USB_OTG_HS.Init.low_power_enable = DISABLE;
   hpcd_USB_OTG_HS.Init.lpm_enable = DISABLE;
   hpcd_USB_OTG_HS.Init.use_dedicated_ep1 = DISABLE;
-  hpcd_USB_OTG_HS.Init.vbus_sensing_enable = DISABLE;
+  hpcd_USB_OTG_HS.Init.vbus_sensing_enable = DISABLE;//ENABLE;
   if (HAL_PCD_Init(&hpcd_USB_OTG_HS) != HAL_OK)
   {
     Error_Handler();
@@ -61,6 +61,7 @@ void MX_USB_OTG_HS_PCD_Init(void)
 void HAL_PCD_MspInit(PCD_HandleTypeDef* pcdHandle)
 {
 
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
   RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
   if(pcdHandle->Instance==USB_OTG_HS)
   {
@@ -81,14 +82,21 @@ void HAL_PCD_MspInit(PCD_HandleTypeDef* pcdHandle)
   */
     HAL_PWREx_EnableUSBVoltageDetector();
 
+    __HAL_RCC_GPIOM_CLK_ENABLE();
+    /**USB_OTG_HS GPIO Configuration
+    PM8     ------> USB_OTG_HS_VBUS
+    */
+    GPIO_InitStruct.Pin = GPIO_PIN_8;
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(GPIOM, &GPIO_InitStruct);
+
     /* USB_OTG_HS clock enable */
     __HAL_RCC_USB_OTG_HS_CLK_ENABLE();
     __HAL_RCC_USBPHYC_CLK_ENABLE();
 
     /* USB_OTG_HS interrupt Init */
-    // 優先度を5に設定（configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITYと同じ）
-    // これにより、FreeRTOS APIを安全に呼び出せる範囲内の最高優先度になる
-    HAL_NVIC_SetPriority(OTG_HS_IRQn, 5, 0);
+    HAL_NVIC_SetPriority(OTG_HS_IRQn, 7, 0);
     HAL_NVIC_EnableIRQ(OTG_HS_IRQn);
   /* USER CODE BEGIN USB_OTG_HS_MspInit 1 */
 
@@ -107,6 +115,11 @@ void HAL_PCD_MspDeInit(PCD_HandleTypeDef* pcdHandle)
     /* Peripheral clock disable */
     __HAL_RCC_USB_OTG_HS_CLK_DISABLE();
     __HAL_RCC_USBPHYC_CLK_DISABLE();
+
+    /**USB_OTG_HS GPIO Configuration
+    PM8     ------> USB_OTG_HS_VBUS
+    */
+    HAL_GPIO_DeInit(GPIOM, GPIO_PIN_8);
 
     /* USB_OTG_HS interrupt Deinit */
     HAL_NVIC_DisableIRQ(OTG_HS_IRQn);

@@ -2906,7 +2906,7 @@
                         },
                         "Angle": 0.0,
                         "Position": {
-                          "X": 3613.333333333333,
+                          "X": 3613.0,
                           "Y": -574.0
                         },
                         "Size": {
@@ -2942,8 +2942,8 @@
                         },
                         "Angle": 0.0,
                         "Position": {
-                          "X": 3613.333333333333,
-                          "Y": -479.99999999999994
+                          "X": 3613.0,
+                          "Y": -480.0
                         },
                         "Size": {
                           "Height": 64.0,
@@ -2975,7 +2975,7 @@
                           "FS": 48000,
                           "Link": false,
                           "UserText": "SDATA_IN0\r\n(Ch.0-15)\r\nfrom STM32",
-                          "ResetSize": false,
+                          "ResetSize": true,
                           "RestrictResize": true
                         },
                         "Angle": 0.0,
@@ -3013,7 +3013,7 @@
                           "FS": 48000,
                           "Link": false,
                           "UserText": "SDATA_IN1\r\n(Ch.16-31)\r\nfrom AK4619",
-                          "ResetSize": true,
+                          "ResetSize": false,
                           "RestrictResize": true
                         },
                         "Angle": 0.0,
@@ -3051,7 +3051,7 @@
                           "FS": 48000,
                           "Link": false,
                           "UserText": "SDATA_OUT0\r\n(Ch.0-15)\r\nto STM32",
-                          "ResetSize": true,
+                          "ResetSize": false,
                           "RestrictResize": true
                         },
                         "Angle": 0.0,
@@ -3089,12 +3089,12 @@
                           "FS": 48000,
                           "Link": false,
                           "UserText": "SDATA_OUT1\r\n(Ch.16-31)\r\nto AK4619",
-                          "ResetSize": false,
+                          "ResetSize": true,
                           "RestrictResize": true
                         },
                         "Angle": 0.0,
                         "Position": {
-                          "X": 3613.333333333333,
+                          "X": 3613.0,
                           "Y": -646.0
                         },
                         "Size": {
@@ -3130,8 +3130,8 @@
                         },
                         "Angle": 0.0,
                         "Position": {
-                          "X": 3615.333333333333,
-                          "Y": -308.99999999999994
+                          "X": 3615.0,
+                          "Y": -309.0
                         },
                         "Size": {
                           "Height": 64.0,
@@ -3166,8 +3166,8 @@
                         },
                         "Angle": 0.0,
                         "Position": {
-                          "X": 3615.333333333333,
-                          "Y": -215.99999999999994
+                          "X": 3615.0,
+                          "Y": -216.0
                         },
                         "Size": {
                           "Height": 64.0,
@@ -3238,7 +3238,7 @@
                           "BlockSizeOut": 64,
                           "ExcludeExport": false,
                           "NumStereoChannels": 2,
-                          "SelectedVal": 1,
+                          "SelectedVal": 0,
                           "CustomSlew": 8330,
                           "SetTunable": false,
                           "SlewType": "No Slew"
@@ -3465,8 +3465,8 @@
                           "BlockSizeOut": 64,
                           "ExcludeExport": false,
                           "NumChannels": 2,
-                          "Gain": 36.0,
-                          "GainMax": 40.0,
+                          "Gain": 48.0,
+                          "GainMax": 60.0,
                           "GainMin": 0.0,
                           "GainResolution": 1,
                           "IsDBChosen": true,
@@ -3508,12 +3508,12 @@
                           "BlockSizeOut": 64,
                           "ExcludeExport": false,
                           "NumChannels": 2,
-                          "SlewType1": 0,
-                          "SlewType2": 0,
+                          "SlewType1": 2,
+                          "SlewType2": 2,
                           "Index1": 8,
                           "Index2": 8,
-                          "IndexMax1": 15.0,
-                          "IndexMax2": 15.0,
+                          "IndexMax1": 63.0,
+                          "IndexMax2": 63.0,
                           "SetTunable": false
                         },
                         "Angle": 0.0,
@@ -3590,12 +3590,12 @@
                           "BlockSizeOut": 64,
                           "ExcludeExport": false,
                           "NumChannels": 2,
-                          "SlewType1": 0,
-                          "SlewType2": 0,
+                          "SlewType1": 2,
+                          "SlewType2": 2,
                           "Index1": 8,
                           "Index2": 8,
-                          "IndexMax1": 15.0,
-                          "IndexMax2": 15.0,
+                          "IndexMax1": 63.0,
+                          "IndexMax2": 63.0,
                           "SetTunable": false
                         },
                         "Angle": 0.0,
@@ -3636,8 +3636,8 @@
                         },
                         "Angle": 0.0,
                         "Position": {
-                          "X": 2875.333333333333,
-                          "Y": -410.99999999999994
+                          "X": 2875.0,
+                          "Y": -411.0
                         },
                         "Size": {
                           "Height": 62.0,
@@ -3672,8 +3672,8 @@
                         },
                         "Angle": 0.0,
                         "Position": {
-                          "X": 2875.333333333333,
-                          "Y": -255.99999999999994
+                          "X": 2875.0,
+                          "Y": -256.0
                         },
                         "Size": {
                           "Height": 62.0,
@@ -3748,12 +3748,12 @@
                           "FS": 48000,
                           "Link": false,
                           "UserText": "SDATA_OUT1\r\n(Ch.16-31)\r\nto AK4619",
-                          "ResetSize": false,
+                          "ResetSize": true,
                           "RestrictResize": true
                         },
                         "Angle": 0.0,
                         "Position": {
-                          "X": 3609.333333333333,
+                          "X": 3609.0,
                           "Y": -374.0
                         },
                         "Size": {
@@ -3796,8 +3796,8 @@
                         },
                         "Angle": 0.0,
                         "Position": {
-                          "X": 2988.333333333333,
-                          "Y": -463.99999999999994
+                          "X": 2988.0,
+                          "Y": -464.0
                         },
                         "Size": {
                           "Height": 252.0,
@@ -4055,8 +4055,8 @@
                           "BlockSizeOut": 64,
                           "ExcludeExport": false,
                           "NumChannels": 2,
-                          "Gain": 36.0,
-                          "GainMax": 40.0,
+                          "Gain": 48.0,
+                          "GainMax": 60.0,
                           "GainMin": 0.0,
                           "GainResolution": 1,
                           "IsDBChosen": true,
@@ -4151,7 +4151,7 @@
                         },
                         "Angle": 0.0,
                         "Position": {
-                          "X": 3257.333333333333,
+                          "X": 3257.0,
                           "Y": -521.0
                         },
                         "Size": {
@@ -4193,8 +4193,8 @@
                         },
                         "Angle": 0.0,
                         "Position": {
-                          "X": 3257.333333333333,
-                          "Y": -294.99999999999994
+                          "X": 3257.0,
+                          "Y": -295.0
                         },
                         "Size": {
                           "Height": 167.0,
@@ -4893,8 +4893,8 @@
                         },
                         "Angle": 0.0,
                         "Position": {
-                          "X": 2295.8333333333339,
-                          "Y": 111.83333333333349
+                          "X": 2296.0,
+                          "Y": 112.0
                         },
                         "Size": {
                           "Height": 24.0,
@@ -4975,7 +4975,7 @@
                         },
                         "Angle": 0.0,
                         "Position": {
-                          "X": 2294.7700000000009,
+                          "X": 2295.0,
                           "Y": 183.0
                         },
                         "Size": {
@@ -5628,8 +5628,8 @@
                         },
                         "Angle": 0.0,
                         "Position": {
-                          "X": 2327.3099999999995,
-                          "Y": -591.66666666666652
+                          "X": 2327.0,
+                          "Y": -592.0
                         },
                         "Size": {
                           "Height": 24.0,
@@ -5711,7 +5711,7 @@
                         },
                         "Angle": 0.0,
                         "Position": {
-                          "X": 2325.2033333333329,
+                          "X": 2325.0,
                           "Y": -535.0
                         },
                         "Size": {
@@ -5833,7 +5833,7 @@
                         },
                         "Angle": 0.0,
                         "Position": {
-                          "X": 2327.3099999999995,
+                          "X": 2327.0,
                           "Y": -225.0
                         },
                         "Size": {
@@ -5916,7 +5916,7 @@
                         },
                         "Angle": 0.0,
                         "Position": {
-                          "X": 2326.2466666666664,
+                          "X": 2326.0,
                           "Y": -152.0
                         },
                         "Size": {
@@ -6162,8 +6162,8 @@
                         },
                         "Angle": 0.0,
                         "Position": {
-                          "X": 2684.3333333333339,
-                          "Y": -372.99999999999994
+                          "X": 2684.0,
+                          "Y": -373.0
                         },
                         "Size": {
                           "Height": 24.0,
@@ -6244,8 +6244,8 @@
                         },
                         "Angle": 0.0,
                         "Position": {
-                          "X": 2690.333333333333,
-                          "Y": -174.99999999999994
+                          "X": 2690.0,
+                          "Y": -175.0
                         },
                         "Size": {
                           "Height": 24.0,
@@ -7181,7 +7181,7 @@
                         },
                         "Angle": 0.0,
                         "Position": {
-                          "X": 2280.833333333333,
+                          "X": 2281.0,
                           "Y": -400.0
                         },
                         "Size": {
@@ -7213,17 +7213,17 @@
                           "BlockSizeOut": 64,
                           "ExcludeExport": false,
                           "NumChannels": 2,
-                          "SlewType1": 0,
-                          "SlewType2": 0,
+                          "SlewType1": 2,
+                          "SlewType2": 2,
                           "Index1": 8,
                           "Index2": 8,
-                          "IndexMax1": 15.0,
-                          "IndexMax2": 15.0,
+                          "IndexMax1": 63.0,
+                          "IndexMax2": 63.0,
                           "SetTunable": false
                         },
                         "Angle": 0.0,
                         "Position": {
-                          "X": 2418.833333333333,
+                          "X": 2419.0,
                           "Y": -291.0
                         },
                         "Size": {
@@ -7263,8 +7263,8 @@
                         },
                         "Angle": 0.0,
                         "Position": {
-                          "X": 2295.8333333333335,
-                          "Y": -63.166666666666515
+                          "X": 2296.0,
+                          "Y": -63.0
                         },
                         "Size": {
                           "Height": 143.0,
@@ -7295,18 +7295,18 @@
                           "BlockSizeOut": 64,
                           "ExcludeExport": false,
                           "NumChannels": 2,
-                          "SlewType1": 0,
-                          "SlewType2": 0,
+                          "SlewType1": 2,
+                          "SlewType2": 2,
                           "Index1": 8,
                           "Index2": 8,
-                          "IndexMax1": 15.0,
-                          "IndexMax2": 15.0,
+                          "IndexMax1": 63.0,
+                          "IndexMax2": 63.0,
                           "SetTunable": false
                         },
                         "Angle": 0.0,
                         "Position": {
-                          "X": 2433.8333333333335,
-                          "Y": 45.833333333333485
+                          "X": 2434.0,
+                          "Y": 46.0
                         },
                         "Size": {
                           "Height": 156.0,
@@ -7345,8 +7345,8 @@
                         },
                         "Angle": 0.0,
                         "Position": {
-                          "X": 2295.3333333333335,
-                          "Y": -766.66666666666652
+                          "X": 2295.0,
+                          "Y": -767.0
                         },
                         "Size": {
                           "Height": 143.0,
@@ -7377,18 +7377,18 @@
                           "BlockSizeOut": 64,
                           "ExcludeExport": false,
                           "NumChannels": 2,
-                          "SlewType1": 0,
-                          "SlewType2": 0,
+                          "SlewType1": 2,
+                          "SlewType2": 2,
                           "Index1": 8,
                           "Index2": 8,
-                          "IndexMax1": 15.0,
-                          "IndexMax2": 15.0,
+                          "IndexMax1": 63.0,
+                          "IndexMax2": 63.0,
                           "SetTunable": false
                         },
                         "Angle": 0.0,
                         "Position": {
-                          "X": 2433.3333333333335,
-                          "Y": -657.66666666666652
+                          "X": 2433.0,
+                          "Y": -658.0
                         },
                         "Size": {
                           "Height": 156.0,
