@@ -69,7 +69,7 @@ osThreadId_t usbTaskHandle;
 const osThreadAttr_t usbTask_attributes = {
     .name       = "usbTask",
     .stack_size = 512 * 4,
-    .priority   = (osPriority_t) osPriorityHigh,
+    .priority   = (osPriority_t) osPriorityRealtime,
 };
 /* Definitions for audioTask */
 osThreadId_t audioTaskHandle;
@@ -272,11 +272,53 @@ void StartUSBTask(void* argument)
         .speed = TUSB_SPEED_HIGH};
     tusb_init(BOARD_TUD_RHPORT, &dev_init);
 
+    uint32_t usb_loop_count      = 0;
+    uint32_t usb_ready_count     = 0;
+    uint32_t usb_not_ready_count = 0;
+    uint32_t usb_lag_count       = 0;
+    uint32_t usb_max_gap_ms      = 0;
+    uint32_t log_last_tick       = HAL_GetTick();
+    uint32_t prev_tick           = log_last_tick;
+
     /* Infinite loop */
     for (;;)
     {
-        tud_task();
-        osDelay(1);
+        uint32_t now = HAL_GetTick();
+        uint32_t dt  = now - prev_tick;
+        prev_tick    = now;
+
+        if (dt > usb_max_gap_ms)
+        {
+            usb_max_gap_ms = dt;
+        }
+        if (dt >= 3)
+        {
+            usb_lag_count++;
+        }
+
+        if (tud_task_event_ready())
+        {
+            usb_ready_count++;
+        }
+        else
+        {
+            usb_not_ready_count++;
+        }
+
+        tud_task_ext(1, false);
+        usb_loop_count++;
+
+        if (0 && (now - log_last_tick >= 1000))
+        {
+            SEGGER_RTT_printf(0, "[USB] loop=%lu ready=%lu idle=%lu lag=%lu max_gap=%lu\r\n", (unsigned long) usb_loop_count, (unsigned long) usb_ready_count, (unsigned long) usb_not_ready_count, (unsigned long) usb_lag_count, (unsigned long) usb_max_gap_ms);
+
+            usb_loop_count      = 0;
+            usb_ready_count     = 0;
+            usb_not_ready_count = 0;
+            usb_lag_count       = 0;
+            usb_max_gap_ms      = 0;
+            log_last_tick       = now;
+        }
     }
     /* USER CODE END StartUSBTask */
 }
@@ -311,9 +353,6 @@ void StartAudioTask(void* argument)
     HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, 1);
     HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, 0);
     HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, 0);
-
-    start_adc();
-    osDelay(100);
 
     start_sai();
     start_audio_control();
@@ -368,6 +407,10 @@ void StartLEDTask(void* argument)
 void StartADCTask(void* argument)
 {
     /* USER CODE BEGIN StartADCTask */
+    (void) argument;
+
+    start_adc();
+    osDelay(100);
 
     /* Infinite loop */
     for (;;)

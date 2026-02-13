@@ -1,3 +1,6 @@
 [submodule "STM32CubeIDE/JUMBLEQ/Appli/tinyusb"]
 	path = STM32CubeIDE/JUMBLEQ/Appli/tinyusb
 	url = https://github.com/hathach/tinyusb
+[submodule "STM32CubeIDE/MX25UW25645GXDI00_STM32H7S3Z8T/Boot/tinyusb"]
+	path = STM32CubeIDE/MX25UW25645GXDI00_STM32H7S3Z8T/Boot/tinyusb
+	url = https://github.com/hathach/tinyusb

@@ -59,4 +59,16 @@ void Error_Handler(void);
 
 /* USER CODE END Private defines */
 
+#define SW2_Pin GPIO_PIN_14
+#define SW2_GPIO_Port GPIOD
+#define SW1_Pin GPIO_PIN_15
+#define SW1_GPIO_Port GPIOD
+#define LED2_Pin GPIO_PIN_0
+#define LED2_GPIO_Port GPIOD
+#define LED1_Pin GPIO_PIN_1
+#define LED1_GPIO_Port GPIOD
+#define LED0_Pin GPIO_PIN_2
+#define LED0_GPIO_Port GPIOD
+#define UCPD_PWR_EN_Pin GPIO_PIN_9
+#define UCPD_PWR_EN_GPIO_Port GPIOM
 #endif /* EXTMEMLOADER_INIT_H */

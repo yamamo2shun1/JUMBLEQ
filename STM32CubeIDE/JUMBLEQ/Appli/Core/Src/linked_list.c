@@ -61,6 +61,9 @@ HAL_StatusTypeDef MX_List_GPDMA1_Channel2_Config(void)
   /* DMA node configuration declaration */
   DMA_NodeConfTypeDef pNodeConfig;
 
+  /* Rebuilding the queue is required when sample-rate switch reconfigures DMA multiple times. */
+  ret |= HAL_DMAEx_List_ResetQ(&List_GPDMA1_Channel2);
+
   /* Set node configuration ################################################*/
   pNodeConfig.NodeType = DMA_GPDMA_LINEAR_NODE;
   pNodeConfig.Init.Request = GPDMA1_REQUEST_SAI2_A;
@@ -104,6 +107,9 @@ HAL_StatusTypeDef MX_List_GPDMA1_Channel3_Config(void)
   /* DMA node configuration declaration */
   DMA_NodeConfTypeDef pNodeConfig;
 
+  /* Rebuilding the queue is required when sample-rate switch reconfigures DMA multiple times. */
+  ret |= HAL_DMAEx_List_ResetQ(&List_GPDMA1_Channel3);
+
   /* Set node configuration ################################################*/
   pNodeConfig.NodeType = DMA_GPDMA_LINEAR_NODE;
   pNodeConfig.Init.Request = GPDMA1_REQUEST_SAI1_A;
@@ -146,6 +152,9 @@ HAL_StatusTypeDef MX_List_HPDMA1_Channel0_Config(void)
   HAL_StatusTypeDef ret = HAL_OK;
   /* DMA node configuration declaration */
   DMA_NodeConfTypeDef pNodeConfig;
+
+  /* Rebuilding the queue is required when sample-rate switch reconfigures DMA multiple times. */
+  ret |= HAL_DMAEx_List_ResetQ(&List_HPDMA1_Channel0);
 
   /* Set node configuration ################################################*/
   pNodeConfig.NodeType = DMA_HPDMA_LINEAR_NODE;
