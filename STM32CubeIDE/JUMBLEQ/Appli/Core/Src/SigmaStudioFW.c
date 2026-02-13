@@ -20,6 +20,11 @@ extern osSemaphoreId_t spiTxRxBinarySemHandle;
 // 静的バッファ（IT転送中にスコープ外にならないようにするため）
 static uint8_t spi_tx_buf[16];
 
+volatile uint32_t sigma_spi_it_write_calls          = 0;
+volatile uint32_t sigma_spi_it_write_errors         = 0;
+volatile uint32_t sigma_spi_it_write_timeouts       = 0;
+volatile uint32_t sigma_spi_it_mutex_timeouts       = 0;
+
 void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef* hspi)
 {
     if (hspi == &hspi5)
@@ -67,9 +72,12 @@ void SIGMA_WRITE_REGISTER_BLOCK(uint8_t devAddress, uint16_t address, uint16_t l
 
 void SIGMA_WRITE_REGISTER_BLOCK_IT(uint8_t devAddress, uint16_t address, uint16_t length, uint8_t* pData)
 {
+    sigma_spi_it_write_calls++;
+
     if (spiMutexHandle == NULL || spiTxBinarySemHandle == NULL)
     {
         SEGGER_RTT_printf(0, "[%X] spi not initialized\n", address);
+        sigma_spi_it_write_errors++;
         return;
     }
 
@@ -93,11 +101,13 @@ void SIGMA_WRITE_REGISTER_BLOCK_IT(uint8_t devAddress, uint16_t address, uint16_
             if (osSemaphoreAcquire(spiTxBinarySemHandle, pdMS_TO_TICKS(100)) != osOK)
             {
                 SEGGER_RTT_printf(0, "[%X] spi write timeout\n", address);
+                sigma_spi_it_write_timeouts++;
             }
         }
         else
         {
             SEGGER_RTT_printf(0, "[%X] spi write error\n", address);
+            sigma_spi_it_write_errors++;
         }
 
         osMutexRelease(spiMutexHandle);
@@ -105,6 +115,7 @@ void SIGMA_WRITE_REGISTER_BLOCK_IT(uint8_t devAddress, uint16_t address, uint16_
     else
     {
         SEGGER_RTT_printf(0, "[%X] spi mutex timeout\n", address);
+        sigma_spi_it_mutex_timeouts++;
     }
 }
 
