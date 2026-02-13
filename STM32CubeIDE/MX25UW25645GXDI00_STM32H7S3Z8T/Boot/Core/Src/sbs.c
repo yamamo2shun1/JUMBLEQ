@@ -29,7 +29,25 @@ void MX_SBS_Init(void)
 {
 
   /* USER CODE BEGIN SBS_Init 0 */
+  /* Configure the compensation cell */
+  HAL_SBS_ConfigCompensationCell(SBS_IO_XSPI1_CELL, SBS_IO_CELL_CODE, 0U, 0U);
 
+  /* Enable compensation cell */
+  HAL_SBS_EnableCompensationCell(SBS_IO_XSPI1_CELL);
+
+  /* wait ready before enabled IO */
+  while(HAL_SBS_GetCompensationCellReadyStatus(SBS_IO_XSPI1_CELL_READY) != 1U);
+
+  uint32_t code1, nmos1, pmos1;
+
+  HAL_SBS_GetCompensationCell(SBS_IO_XSPI1_CELL, &code1, &nmos1, &pmos1);
+
+  HAL_SBS_ConfigCompensationCell(SBS_IO_XSPI1_CELL, SBS_IO_REGISTER_CODE, nmos1, pmos1);
+
+  HAL_SBS_DisableCompensationCell(SBS_IO_XSPI1_CELL);
+
+  /* high speed low voltage config */
+  HAL_SBS_EnableIOSpeedOptimize(SBS_IO_XSPI1_HSLV);
   /* USER CODE END SBS_Init 0 */
 
   /* USER CODE BEGIN SBS_Init 1 */

@@ -23,7 +23,8 @@
 #define __MAIN_H
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 /* Includes ------------------------------------------------------------------*/
@@ -36,7 +37,8 @@ extern "C" {
 #include "tusb.h"
 #include "usb_descriptors.h"
 
-#include "ssd1306.h"
+#include "main_oled.h"
+#include "sub_oled.h"
 #include "ssd1306_fonts.h"
 
 #include "SEGGER_RTT.h"
@@ -55,42 +57,45 @@ extern "C" {
 /* Exported macro ------------------------------------------------------------*/
 /* USER CODE BEGIN EM */
 #define RESET_FROM_FW 1  // SigmaStudio+からのリセットを有効にする場合は0に設定
-/* USER CODE END EM */
+    /* USER CODE END EM */
 
-/* Exported functions prototypes ---------------------------------------------*/
-void Error_Handler(void);
+    /* Exported functions prototypes ---------------------------------------------*/
+    void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
 
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define DSP_RESET_Pin GPIO_PIN_1
-#define DSP_RESET_GPIO_Port GPIOH
-#define S0_Pin GPIO_PIN_8
-#define S0_GPIO_Port GPIOD
-#define S1_Pin GPIO_PIN_9
-#define S1_GPIO_Port GPIOD
-#define S2_Pin GPIO_PIN_10
-#define S2_GPIO_Port GPIOD
-#define CODEC_RESET_Pin GPIO_PIN_13
+#define DSP_RESET_Pin         GPIO_PIN_1
+#define DSP_RESET_GPIO_Port   GPIOH
+#define S0_Pin                GPIO_PIN_8
+#define S0_GPIO_Port          GPIOD
+#define S1_Pin                GPIO_PIN_9
+#define S1_GPIO_Port          GPIOD
+#define S2_Pin                GPIO_PIN_10
+#define S2_GPIO_Port          GPIOD
+#define CODEC_RESET_Pin       GPIO_PIN_13
 #define CODEC_RESET_GPIO_Port GPIOB
-#define SW2_Pin GPIO_PIN_14
-#define SW2_GPIO_Port GPIOD
-#define SW1_Pin GPIO_PIN_15
-#define SW1_GPIO_Port GPIOD
-#define LED2_Pin GPIO_PIN_0
-#define LED2_GPIO_Port GPIOD
-#define LED1_Pin GPIO_PIN_1
-#define LED1_GPIO_Port GPIOD
-#define LED0_Pin GPIO_PIN_2
-#define LED0_GPIO_Port GPIOD
-#define UCPD_PWR_EN_Pin GPIO_PIN_9
+#define SW2_Pin               GPIO_PIN_14
+#define SW2_GPIO_Port         GPIOD
+#define SW1_Pin               GPIO_PIN_15
+#define SW1_GPIO_Port         GPIOD
+#define LED2_Pin              GPIO_PIN_0
+#define LED2_GPIO_Port        GPIOD
+#define LED1_Pin              GPIO_PIN_1
+#define LED1_GPIO_Port        GPIOD
+#define LED0_Pin              GPIO_PIN_2
+#define LED0_GPIO_Port        GPIOD
+#define UCPD_FLG_n_Pin        GPIO_PIN_8
+#define UCPD_FLG_n_GPIO_Port  GPIOM
+#define UCPD_FLG_n_EXTI_IRQn  EXTI8_IRQn
+#define UCPD_PWR_EN_Pin       GPIO_PIN_9
 #define UCPD_PWR_EN_GPIO_Port GPIOM
 
-/* USER CODE BEGIN Private defines */
+    /* USER CODE BEGIN Private defines */
 
-/* USER CODE END Private defines */
+    /* USER CODE END Private defines */
 
 #ifdef __cplusplus
 }

@@ -86,9 +86,7 @@ void HAL_PCD_MspInit(PCD_HandleTypeDef* pcdHandle)
     __HAL_RCC_USBPHYC_CLK_ENABLE();
 
     /* USB_OTG_HS interrupt Init */
-    /* 優先度6に設定（configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY=5より大きい値）
-       これによりFreeRTOS APIをISRから安全に呼び出せる */
-    HAL_NVIC_SetPriority(OTG_HS_IRQn, 7, 0);  // SAI DMA(6)より低い優先度
+    HAL_NVIC_SetPriority(OTG_HS_IRQn, 7, 0);
     HAL_NVIC_EnableIRQ(OTG_HS_IRQn);
   /* USER CODE BEGIN USB_OTG_HS_MspInit 1 */
 

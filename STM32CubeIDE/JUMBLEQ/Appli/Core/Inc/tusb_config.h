@@ -37,6 +37,8 @@ extern "C"
 //--------------------------------------------------------------------+
 // Board Specific Configuration
 //--------------------------------------------------------------------+
+#define CFG_TUSB_DEBUG 0
+
 #define CFG_TUSB_MCU              OPT_MCU_STM32H7RS
 #define CFG_TUSB_OS               OPT_OS_FREERTOS
 #define BOARD_DEVICE_RHPORT_SPEED OPT_MODE_HIGH_SPEED
@@ -45,7 +47,7 @@ extern "C"
 #define BOARD_TUD_RHPORT          1
 #define CFG_TUSB_RHPORT1_MODE     (OPT_MODE_DEVICE | OPT_MODE_HIGH_SPEED)
 
-// DWC2 DMA mode - SlaveモードはBOUTNAKEFFで無限ループになる問題がある
+// DWC2 DMAモード
 #define CFG_TUD_DWC2_SLAVE_ENABLE 0
 #define CFG_TUD_DWC2_DMA_ENABLE   1
 
@@ -60,13 +62,7 @@ extern "C"
 // noncacheable_buffer領域をuncached regionsに追加
 // TinyUSBのDCacheメンテナンスをスキップするための設定
 #define CFG_DWC2_MEM_UNCACHED_REGIONS \
-    {.start = 0x24040000, .end = 0x24080000},
-
-// #define CFG_TUSB_RHPORT1_MODE (OPT_MODE_DEVICE | OPT_MODE_HIGH_SPEED)
-// #define TUD_AUDIO_PREFER_RING_BUFFER 1
-// #define CFG_TUSB_DEBUG        0
-// #define CFG_TUD_LOG_LEVEL     0
-// #define CFG_TUSB_DEBUG_PRINTF my_printf
+    {.start = 0x24040000, .end = 0x24071FFF},
 
 // RHPort number used for device can be defined by board.mk, default to port 0
 #ifndef BOARD_TUD_RHPORT
@@ -178,11 +174,13 @@ extern "C"
 
 // Tx flow control needs buffer size >= 4* EP size to work correctly
 // Example write FIFO every 1ms (8 HS frames), so buffer size should be 8 times larger for HS device
-// 安定性優先: 32倍のバッファでオーバーランを防止
-#define CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ TU_MAX(4 * CFG_TUD_AUDIO10_FUNC_1_FORMAT_1_EP_SZ_IN, 32 * CFG_TUD_AUDIO20_FUNC_1_FORMAT_1_EP_SZ_IN)
+#define CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ TU_MAX(4 * CFG_TUD_AUDIO10_FUNC_1_FORMAT_1_EP_SZ_IN, 8 * CFG_TUD_AUDIO20_FUNC_1_FORMAT_1_EP_SZ_IN)
 
 // EP and buffer size - for isochronous EP´s, the buffer and EP size are equal (different sizes would not make sense)
 #define CFG_TUD_AUDIO_ENABLE_EP_OUT 1
+
+// Enable explicit feedback EP for UAC2 asynchronous OUT stream
+#define CFG_TUD_AUDIO_ENABLE_FEEDBACK_EP 1
 
 // UAC1 (Full-Speed) Endpoint size calculation
 #define CFG_TUD_AUDIO10_FUNC_1_FORMAT_1_EP_SZ_OUT TUD_AUDIO_EP_SIZE(false, CFG_TUD_AUDIO_FUNC_1_MAX_SAMPLE_RATE, CFG_TUD_AUDIO_FUNC_1_FORMAT_1_N_BYTES_PER_SAMPLE_RX, CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX)
@@ -195,8 +193,7 @@ extern "C"
 
 // Rx flow control needs buffer size >= 4* EP size to work correctly
 // Example read FIFO every 1ms (8 HS frames), so buffer size should be 8 times larger for HS device
-// 安定性優先: 32倍のバッファでオーバーランを防止
-#define CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ TU_MAX(4 * CFG_TUD_AUDIO10_FUNC_1_FORMAT_1_EP_SZ_OUT, 32 * CFG_TUD_AUDIO20_FUNC_1_FORMAT_1_EP_SZ_OUT)
+#define CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ TU_MAX(4 * CFG_TUD_AUDIO10_FUNC_1_FORMAT_1_EP_SZ_OUT, 8 * CFG_TUD_AUDIO20_FUNC_1_FORMAT_1_EP_SZ_OUT)
 
 #ifdef __cplusplus
 }

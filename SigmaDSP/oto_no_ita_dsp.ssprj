@@ -3238,7 +3238,7 @@
                           "BlockSizeOut": 64,
                           "ExcludeExport": false,
                           "NumStereoChannels": 2,
-                          "SelectedVal": 1,
+                          "SelectedVal": 0,
                           "CustomSlew": 8330,
                           "SetTunable": false,
                           "SlewType": "No Slew"
