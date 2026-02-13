@@ -1334,7 +1334,7 @@ void start_sai(void)
     // 無音データを事前に投入しておく
     // 96kHzではデータレートが2倍なのでプリフィルも2倍必要
     // ========================================
-    uint32_t prefill_size = (current_sample_rate == 96000) ? (SAI_TX_BUF_SIZE * 2) : SAI_TX_BUF_SIZE;
+    uint32_t prefill_size = SAI_TX_BUF_SIZE;
     memset(sai_tx_rng_buf, 0, prefill_size * sizeof(int32_t));
     sai_tx_rng_buf_index = prefill_size;
     sai_transmit_index   = 0;
@@ -1552,7 +1552,7 @@ static inline void fill_tx_half(uint32_t index0)
 
     // 長時間再生時の USB/SAI クロック差を吸収するため、
     // リング水位に応じて 1 frame だけ消費量を増減する。
-    const int32_t target_level = (int32_t) (SAI_RNG_BUF_SIZE / 2);
+    const int32_t target_level = (int32_t) SAI_TX_TARGET_LEVEL_WORDS;
     const int32_t high_thr     = target_level + (int32_t) (SAI_TX_BUF_SIZE / 2);
     const int32_t low_thr      = target_level - (int32_t) (SAI_TX_BUF_SIZE / 2);
 
@@ -2114,7 +2114,12 @@ void AUDIO_SAI_Reset_ForNewRate(void)
 
     AUDIO_Init_AK4619(96000);
 #if RESET_FROM_FW
-    AUDIO_Init_ADAU1466(new_hz);
+    if (!AUDIO_Update_ADAU1466_SampleRate(new_hz))
+    {
+        SEGGER_RTT_printf(0, "[SAI] ADAU1466 sample-rate update failed (%lu Hz)\n", (unsigned long) new_hz);
+        SEGGER_RTT_printf(0, "[SAI] fallback to ADAU1466 HW re-init\n");
+        AUDIO_Init_ADAU1466(new_hz);
+    }
 #endif
 
     /* Re-init DMA channels (linked-list mode) */
@@ -2158,14 +2163,7 @@ void AUDIO_SAI_Reset_ForNewRate(void)
     /* Prefill TX ring buffer with silence (already zeroed above) */
     /* Set write index ahead to provide initial data for DMA */
     /* 96kHz needs larger prefill due to higher data rate */
-    if (new_hz == 96000)
-    {
-        sai_tx_rng_buf_index = SAI_TX_BUF_SIZE * 2;
-    }
-    else
-    {
-        sai_tx_rng_buf_index = SAI_TX_BUF_SIZE;
-    }
+    sai_tx_rng_buf_index = SAI_TX_BUF_SIZE;
     sai_transmit_index = 0;
 
     /* Configure and link DMA for SAI2 TX */
