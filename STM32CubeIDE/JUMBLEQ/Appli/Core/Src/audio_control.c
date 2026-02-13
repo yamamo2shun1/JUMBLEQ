@@ -1368,6 +1368,8 @@ void copybuf_usb2ring(void)
 static inline void fill_tx_half(uint32_t index0)
 {
     const uint32_t n = (SAI_TX_BUF_SIZE / 2);
+    const uint32_t frame_words = 4;  // 4ch x 32bit = 1 frame
+    uint32_t pull_words = n;
 
     // index0のバウンドチェック
     if (index0 >= SAI_TX_BUF_SIZE)
@@ -1384,13 +1386,21 @@ static inline void fill_tx_half(uint32_t index0)
         used               = 0;
     }
 
-    // データ不足ならノイズより「無音」を優先
-    // リセットしない：バッファが溜まるのを待つ
+    // データ不足時は可能な分だけ再生し、残りは末尾フレーム保持で埋める。
+    // いきなり全無音にせずクリック感を抑える。
     if (used < (int32_t) n)
     {
-        memset(stereo_out_buf + index0, 0, n * sizeof(int32_t));
-        // リセットしない - バッファが溜まるのを待つ
-        return;
+        if (used <= 0)
+        {
+            memset(stereo_out_buf + index0, 0, n * sizeof(int32_t));
+            return;
+        }
+        pull_words = ((uint32_t) used / frame_words) * frame_words;
+        if (pull_words == 0)
+        {
+            memset(stereo_out_buf + index0, 0, n * sizeof(int32_t));
+            return;
+        }
     }
 
     // usedが大きすぎる場合も異常（オーバーフロー等）
@@ -1402,16 +1412,61 @@ static inline void fill_tx_half(uint32_t index0)
         return;
     }
 
+    // 長時間再生時の USB/SAI クロック差を吸収するため、
+    // リング水位に応じて 1 frame だけ消費量を増減する。
+    const int32_t target_level = (int32_t) (SAI_RNG_BUF_SIZE / 2);
+    const int32_t high_thr     = target_level + (int32_t) (SAI_TX_BUF_SIZE / 2);
+    const int32_t low_thr      = target_level - (int32_t) (SAI_TX_BUF_SIZE / 2);
+
+    if (used >= (int32_t) n && used > high_thr && used >= (int32_t) (n + frame_words))
+    {
+        // バッファ過多 -> 1 frame 余分に消費して追従
+        pull_words = n + frame_words;
+    }
+    else if (used >= (int32_t) n && used < low_thr && n > frame_words)
+    {
+        // バッファ不足傾向 -> 1 frame 少なく消費して追従
+        pull_words = n - frame_words;
+    }
+
+    // 安全ガード
+    if ((int32_t) pull_words > used)
+    {
+        pull_words = (uint32_t) used;
+    }
+    pull_words = (pull_words / frame_words) * frame_words;
+
+    if (pull_words == 0)
+    {
+        memset(stereo_out_buf + index0, 0, n * sizeof(int32_t));
+        return;
+    }
+
     const uint32_t index1 = sai_transmit_index & (SAI_RNG_BUF_SIZE - 1);
     uint32_t first        = SAI_RNG_BUF_SIZE - index1;
-    if (first > n)
-        first = n;
+    if (first > pull_words)
+        first = pull_words;
 
     memcpy(stereo_out_buf + index0, sai_tx_rng_buf + index1, first * sizeof(int32_t));
-    if (first < n)
-        memcpy(stereo_out_buf + index0 + first, sai_tx_rng_buf, (n - first) * sizeof(int32_t));
+    if (first < pull_words)
+        memcpy(stereo_out_buf + index0 + first, sai_tx_rng_buf, (pull_words - first) * sizeof(int32_t));
 
-    sai_transmit_index += n;
+    if (pull_words < n)
+    {
+        // 不足分は最後の1frameを繰り返してクリックノイズを抑える
+        uint32_t* dst = (uint32_t*) (stereo_out_buf + index0 + pull_words);
+        uint32_t* src = (uint32_t*) (stereo_out_buf + index0 + pull_words - frame_words);
+        for (uint32_t i = pull_words; i < n; i += frame_words)
+        {
+            dst[0] = src[0];
+            dst[1] = src[1];
+            dst[2] = src[2];
+            dst[3] = src[3];
+            dst += frame_words;
+        }
+    }
+
+    sai_transmit_index += pull_words;
 }
 
 void copybuf_ring2sai(void)
@@ -1810,6 +1865,10 @@ void AUDIO_SAI_Reset_ForNewRate(void)
     {
         Error_Handler();
     }
+    if (HAL_DMA_ConfigChannelAttributes(&handle_GPDMA1_Channel2, DMA_CHANNEL_NPRIV) != HAL_OK)
+    {
+        Error_Handler();
+    }
 
     handle_GPDMA1_Channel3.Instance                         = GPDMA1_Channel3;
     handle_GPDMA1_Channel3.InitLinkedList.Priority          = DMA_LOW_PRIORITY_HIGH_WEIGHT;
@@ -1818,6 +1877,10 @@ void AUDIO_SAI_Reset_ForNewRate(void)
     handle_GPDMA1_Channel3.InitLinkedList.TransferEventMode = DMA_TCEM_LAST_LL_ITEM_TRANSFER;
     handle_GPDMA1_Channel3.InitLinkedList.LinkedListMode    = DMA_LINKEDLIST_CIRCULAR;
     if (HAL_DMAEx_List_Init(&handle_GPDMA1_Channel3) != HAL_OK)
+    {
+        Error_Handler();
+    }
+    if (HAL_DMA_ConfigChannelAttributes(&handle_GPDMA1_Channel3, DMA_CHANNEL_NPRIV) != HAL_OK)
     {
         Error_Handler();
     }
