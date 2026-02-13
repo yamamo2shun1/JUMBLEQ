@@ -179,6 +179,9 @@ extern "C"
 // EP and buffer size - for isochronous EP´s, the buffer and EP size are equal (different sizes would not make sense)
 #define CFG_TUD_AUDIO_ENABLE_EP_OUT 1
 
+// Enable explicit feedback EP for UAC2 asynchronous OUT stream
+#define CFG_TUD_AUDIO_ENABLE_FEEDBACK_EP 1
+
 // UAC1 (Full-Speed) Endpoint size calculation
 #define CFG_TUD_AUDIO10_FUNC_1_FORMAT_1_EP_SZ_OUT TUD_AUDIO_EP_SIZE(false, CFG_TUD_AUDIO_FUNC_1_MAX_SAMPLE_RATE, CFG_TUD_AUDIO_FUNC_1_FORMAT_1_N_BYTES_PER_SAMPLE_RX, CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX)
 

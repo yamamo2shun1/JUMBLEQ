@@ -51,6 +51,12 @@ typedef unsigned char ADI_REG_TYPE;
 void SIGMA_WRITE_REGISTER_BLOCK(uint8_t devAddress, uint16_t address, uint16_t length, uint8_t* pData);
 void SIGMA_WRITE_REGISTER_BLOCK_IT(uint8_t devAddress, uint16_t address, uint16_t length, uint8_t* pData);
 
+// Diagnostics for runtime DSP parameter write path (IT mode)
+extern volatile uint32_t sigma_spi_it_write_calls;
+extern volatile uint32_t sigma_spi_it_write_errors;
+extern volatile uint32_t sigma_spi_it_write_timeouts;
+extern volatile uint32_t sigma_spi_it_mutex_timeouts;
+
 /*
  * Initialize SPI synchronization primitives for FreeRTOS
  * Must be called after FreeRTOS scheduler is started

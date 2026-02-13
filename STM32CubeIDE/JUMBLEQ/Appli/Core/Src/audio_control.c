@@ -20,8 +20,10 @@
 
 #include "ak4619.h"
 #include "adau1466.h"
+#include "SigmaStudioFW.h"
 
 #define N_SAMPLE_RATES TU_ARRAY_SIZE(sample_rates)
+#define AUDIO_DIAG_LOG  1
 
 extern DMA_QListTypeDef List_GPDMA1_Channel2;
 extern DMA_QListTypeDef List_GPDMA1_Channel3;
@@ -89,6 +91,28 @@ volatile uint32_t sai_receive_index    = 0;
 static volatile uint8_t tx_pending_mask = 0;      // bit0: first-half, bit1: second-half
 static volatile uint8_t rx_pending_mask = 0;      // bit0: first-half, bit1: second-half
 static volatile bool usb_tx_pending     = false;  // USB TX送信要求フラグ (ISR→Task通知用)
+
+#if AUDIO_DIAG_LOG
+static volatile uint32_t dbg_tx_used_min            = 0xFFFFFFFFu;
+static volatile uint32_t dbg_tx_used_max            = 0u;
+static volatile uint32_t dbg_tx_underrun_events     = 0u;
+static volatile uint32_t dbg_tx_partial_fill_events = 0u;
+static volatile uint32_t dbg_tx_drift_up_events     = 0u;
+static volatile uint32_t dbg_tx_drift_dn_events     = 0u;
+static volatile uint32_t dbg_usb_read_zero_events   = 0u;
+static volatile uint32_t dbg_usb_read_bytes         = 0u;
+static volatile uint32_t dbg_dma_err_events         = 0u;
+static volatile uint32_t dbg_sai_tx_err_events      = 0u;
+static volatile uint32_t dbg_sai_rx_err_events      = 0u;
+static volatile uint32_t dbg_sai_tx_last_err        = 0u;
+static volatile uint32_t dbg_sai_rx_last_err        = 0u;
+static volatile uint32_t dbg_sai_tx_sr_flags        = 0u;
+static volatile uint32_t dbg_sai_rx_sr_flags        = 0u;
+static uint32_t dbg_sigma_calls_prev                = 0u;
+static uint32_t dbg_sigma_err_prev                  = 0u;
+static uint32_t dbg_sigma_to_prev                   = 0u;
+static uint32_t dbg_sigma_mto_prev                  = 0u;
+#endif
 
 bool s_streaming_out = false;
 bool s_streaming_in  = false;
@@ -753,6 +777,22 @@ bool tud_audio_set_itf_cb(uint8_t rhport, tusb_control_request_t const* p_reques
     return true;
 }
 
+#if CFG_TUD_AUDIO_ENABLE_EP_OUT && CFG_TUD_AUDIO_ENABLE_FEEDBACK_EP
+void tud_audio_feedback_params_cb(uint8_t func_id, uint8_t alt_itf, audio_feedback_params_t* feedback_param)
+{
+    (void) func_id;
+    (void) alt_itf;
+
+    // Use TinyUSB's FIFO-count based feedback so host OUT packet rate follows
+    // this device's effective consume rate and suppresses long-term drift.
+    feedback_param->method      = AUDIO_FEEDBACK_METHOD_FIFO_COUNT;
+    feedback_param->sample_freq = current_sample_rate;
+
+    // Keep FIFO around the middle to balance jitter tolerance and latency.
+    feedback_param->fifo_count.fifo_threshold = (uint16_t) (CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ / 2U);
+}
+#endif
+
 static void dma_adc_cplt(DMA_HandleTypeDef* hdma)
 {
     (void) hdma;
@@ -827,6 +867,12 @@ void send_note(uint8_t note, uint8_t velocity, uint8_t channel)
 
 void ui_control_task(void)
 {
+#if !ENABLE_DSP_RUNTIME_CONTROL
+    // A/B diagnosis mode: disable runtime DSP control updates.
+    // This keeps USB/SAI audio path active while stopping parameter writes.
+    return;
+#endif
+
     if (!is_started_audio_control() || !is_adc_complete)
     {
         return;
@@ -1222,6 +1268,31 @@ static void dma_sai1_rx_cplt(DMA_HandleTypeDef* hdma)
 static void dma_sai_error(DMA_HandleTypeDef* hdma)
 {
     SEGGER_RTT_printf(0, "DMA ERR! code=%08X\n", hdma->ErrorCode);
+#if AUDIO_DIAG_LOG
+    (void) hdma;
+    dbg_dma_err_events++;
+#endif
+}
+
+void HAL_SAI_ErrorCallback(SAI_HandleTypeDef* hsai)
+{
+#if AUDIO_DIAG_LOG
+    uint32_t sr = hsai->Instance->SR;
+    if (hsai == &hsai_BlockA2)
+    {
+        dbg_sai_tx_err_events++;
+        dbg_sai_tx_last_err = HAL_SAI_GetError(hsai);
+        dbg_sai_tx_sr_flags |= (sr & (SAI_xSR_OVRUDR | SAI_xSR_WCKCFG | SAI_xSR_CNRDY | SAI_xSR_AFSDET | SAI_xSR_LFSDET));
+    }
+    else if (hsai == &hsai_BlockA1)
+    {
+        dbg_sai_rx_err_events++;
+        dbg_sai_rx_last_err = HAL_SAI_GetError(hsai);
+        dbg_sai_rx_sr_flags |= (sr & (SAI_xSR_OVRUDR | SAI_xSR_WCKCFG | SAI_xSR_CNRDY | SAI_xSR_AFSDET | SAI_xSR_LFSDET));
+    }
+#else
+    (void) hsai;
+#endif
 }
 
 void start_sai(void)
@@ -1238,6 +1309,24 @@ void start_sai(void)
     sai_tx_rng_buf_index = prefill_size;
     sai_transmit_index   = 0;
     tx_pending_mask      = 0;
+
+#if AUDIO_DIAG_LOG
+    dbg_tx_used_min            = 0xFFFFFFFFu;
+    dbg_tx_used_max            = 0u;
+    dbg_tx_underrun_events     = 0u;
+    dbg_tx_partial_fill_events = 0u;
+    dbg_tx_drift_up_events     = 0u;
+    dbg_tx_drift_dn_events     = 0u;
+    dbg_usb_read_zero_events   = 0u;
+    dbg_usb_read_bytes         = 0u;
+    dbg_dma_err_events         = 0u;
+    dbg_sai_tx_err_events      = 0u;
+    dbg_sai_rx_err_events      = 0u;
+    dbg_sai_tx_last_err        = 0u;
+    dbg_sai_rx_last_err        = 0u;
+    dbg_sai_tx_sr_flags        = 0u;
+    dbg_sai_rx_sr_flags        = 0u;
+#endif
 
     // SAI2 -> Slave Transmit
     // USB -> STM32 -(SAI)-> ADAU1466
@@ -1379,6 +1468,16 @@ static inline void fill_tx_half(uint32_t index0)
     }
 
     int32_t used = (int32_t) (sai_tx_rng_buf_index - sai_transmit_index);
+#if AUDIO_DIAG_LOG
+    if (used >= 0)
+    {
+        uint32_t u = (uint32_t) used;
+        if (u < dbg_tx_used_min)
+            dbg_tx_used_min = u;
+        if (u > dbg_tx_used_max)
+            dbg_tx_used_max = u;
+    }
+#endif
     if (used < 0)
     {
         // 同期ズレは捨てて合わせ直す
@@ -1390,6 +1489,9 @@ static inline void fill_tx_half(uint32_t index0)
     // いきなり全無音にせずクリック感を抑える。
     if (used < (int32_t) n)
     {
+#if AUDIO_DIAG_LOG
+        dbg_tx_underrun_events++;
+#endif
         if (used <= 0)
         {
             memset(stereo_out_buf + index0, 0, n * sizeof(int32_t));
@@ -1422,11 +1524,17 @@ static inline void fill_tx_half(uint32_t index0)
     {
         // バッファ過多 -> 1 frame 余分に消費して追従
         pull_words = n + frame_words;
+#if AUDIO_DIAG_LOG
+        dbg_tx_drift_up_events++;
+#endif
     }
     else if (used >= (int32_t) n && used < low_thr && n > frame_words)
     {
         // バッファ不足傾向 -> 1 frame 少なく消費して追従
         pull_words = n - frame_words;
+#if AUDIO_DIAG_LOG
+        dbg_tx_drift_dn_events++;
+#endif
     }
 
     // 安全ガード
@@ -1453,6 +1561,9 @@ static inline void fill_tx_half(uint32_t index0)
 
     if (pull_words < n)
     {
+#if AUDIO_DIAG_LOG
+        dbg_tx_partial_fill_events++;
+#endif
         // 不足分は最後の1frameを繰り返してクリックノイズを抑える
         uint32_t* dst = (uint32_t*) (stereo_out_buf + index0 + pull_words);
         uint32_t* src = (uint32_t*) (stereo_out_buf + index0 + pull_words - frame_words);
@@ -1563,6 +1674,19 @@ static uint32_t audio_frames_per_ms(void)
 {
     // 例: 48kHz -> 48 frames/ms
     return current_sample_rate / 1000u;
+}
+
+static uint16_t audio_out_bytes_per_ms(void)
+{
+    // Host -> Device (speaker OUT) stream bytes per 1ms
+    // 48/96kHz are integer frames per ms in this project.
+    uint32_t bytes_per_sample = (current_resolution == 16) ? 2u : 4u;
+    uint32_t bytes            = audio_frames_per_ms() * CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX * bytes_per_sample;
+    if (bytes > sizeof(usb_in_buf))
+    {
+        bytes = sizeof(usb_in_buf);
+    }
+    return (uint16_t) bytes;
 }
 
 // USB IRQ個別制御から、全割り込み禁止に変更
@@ -1742,6 +1866,60 @@ void audio_task(void)
         audio_task_frequency  = audio_task_call_count;
         audio_task_call_count = 0;
         audio_task_last_tick  = now;
+
+#if AUDIO_DIAG_LOG
+        if (s_streaming_out)
+        {
+            int32_t tx_used_now = (int32_t) (sai_tx_rng_buf_index - sai_transmit_index);
+            uint32_t sigma_calls = sigma_spi_it_write_calls;
+            uint32_t sigma_err   = sigma_spi_it_write_errors;
+            uint32_t sigma_to    = sigma_spi_it_write_timeouts;
+            uint32_t sigma_mto   = sigma_spi_it_mutex_timeouts;
+            SEGGER_RTT_printf(0,
+                              "[AUD][TX] sr=%lu used_now=%ld used_min=%lu used_max=%lu und=%lu part=%lu drift+%lu drift-%lu usb0=%lu usbB=%lu dmae=%lu txe=%lu rxe=%lu txer=0x%08lX rxer=0x%08lX txsr=0x%08lX rxsr=0x%08lX spiC=%lu spiE=%lu spiT=%lu spiM=%lu task_hz=%lu\r\n",
+                              (unsigned long) current_sample_rate,
+                              (long) tx_used_now,
+                              (unsigned long) ((dbg_tx_used_min == 0xFFFFFFFFu) ? 0u : dbg_tx_used_min),
+                              (unsigned long) dbg_tx_used_max,
+                              (unsigned long) dbg_tx_underrun_events,
+                              (unsigned long) dbg_tx_partial_fill_events,
+                              (unsigned long) dbg_tx_drift_up_events,
+                              (unsigned long) dbg_tx_drift_dn_events,
+                              (unsigned long) dbg_usb_read_zero_events,
+                              (unsigned long) dbg_usb_read_bytes,
+                              (unsigned long) dbg_dma_err_events,
+                              (unsigned long) dbg_sai_tx_err_events,
+                              (unsigned long) dbg_sai_rx_err_events,
+                              (unsigned long) dbg_sai_tx_last_err,
+                              (unsigned long) dbg_sai_rx_last_err,
+                              (unsigned long) dbg_sai_tx_sr_flags,
+                              (unsigned long) dbg_sai_rx_sr_flags,
+                              (unsigned long) (sigma_calls - dbg_sigma_calls_prev),
+                              (unsigned long) (sigma_err - dbg_sigma_err_prev),
+                              (unsigned long) (sigma_to - dbg_sigma_to_prev),
+                              (unsigned long) (sigma_mto - dbg_sigma_mto_prev),
+                              (unsigned long) audio_task_frequency);
+            dbg_sigma_calls_prev = sigma_calls;
+            dbg_sigma_err_prev   = sigma_err;
+            dbg_sigma_to_prev    = sigma_to;
+            dbg_sigma_mto_prev   = sigma_mto;
+        }
+        dbg_tx_used_min            = 0xFFFFFFFFu;
+        dbg_tx_used_max            = 0u;
+        dbg_tx_underrun_events     = 0u;
+        dbg_tx_partial_fill_events = 0u;
+        dbg_tx_drift_up_events     = 0u;
+        dbg_tx_drift_dn_events     = 0u;
+        dbg_usb_read_zero_events   = 0u;
+        dbg_usb_read_bytes         = 0u;
+        dbg_dma_err_events         = 0u;
+        dbg_sai_tx_err_events      = 0u;
+        dbg_sai_rx_err_events      = 0u;
+        dbg_sai_tx_last_err        = 0u;
+        dbg_sai_rx_last_err        = 0u;
+        dbg_sai_tx_sr_flags        = 0u;
+        dbg_sai_rx_sr_flags        = 0u;
+#endif
     }
 
     if (is_sr_changed)
@@ -1753,8 +1931,16 @@ void audio_task(void)
     }
     else
     {
-        // FIFOから読み取り - バッファ全体を使用
-        spk_data_size = tud_audio_read(usb_in_buf, sizeof(usb_in_buf));
+        // Feedback EPがFIFO水位を使って送信レート制御するため、
+        // 毎msで「必要量だけ」読む。全量吸い出しは水位制御を壊す。
+        spk_data_size = tud_audio_read(usb_in_buf, audio_out_bytes_per_ms());
+#if AUDIO_DIAG_LOG
+        dbg_usb_read_bytes += spk_data_size;
+        if (s_streaming_out && spk_data_size == 0)
+        {
+            dbg_usb_read_zero_events++;
+        }
+#endif
 
         // USB -> SAI
         copybuf_usb2ring();
@@ -1836,6 +2022,24 @@ void AUDIO_SAI_Reset_ForNewRate(void)
     sai_receive_index    = 0;
     tx_pending_mask      = 0;
     rx_pending_mask      = 0;
+
+#if AUDIO_DIAG_LOG
+    dbg_tx_used_min            = 0xFFFFFFFFu;
+    dbg_tx_used_max            = 0u;
+    dbg_tx_underrun_events     = 0u;
+    dbg_tx_partial_fill_events = 0u;
+    dbg_tx_drift_up_events     = 0u;
+    dbg_tx_drift_dn_events     = 0u;
+    dbg_usb_read_zero_events   = 0u;
+    dbg_usb_read_bytes         = 0u;
+    dbg_dma_err_events         = 0u;
+    dbg_sai_tx_err_events      = 0u;
+    dbg_sai_rx_err_events      = 0u;
+    dbg_sai_tx_last_err        = 0u;
+    dbg_sai_rx_last_err        = 0u;
+    dbg_sai_tx_sr_flags        = 0u;
+    dbg_sai_rx_sr_flags        = 0u;
+#endif
 
     /* Clear all audio buffers to avoid noise from stale data */
     memset(sai_tx_rng_buf, 0, sizeof(sai_tx_rng_buf));
