@@ -2114,7 +2114,12 @@ void AUDIO_SAI_Reset_ForNewRate(void)
 
     AUDIO_Init_AK4619(96000);
 #if RESET_FROM_FW
-    AUDIO_Init_ADAU1466(new_hz);
+    if (!AUDIO_Update_ADAU1466_SampleRate(new_hz))
+    {
+        SEGGER_RTT_printf(0, "[SAI] ADAU1466 sample-rate update failed (%lu Hz)\n", (unsigned long) new_hz);
+        SEGGER_RTT_printf(0, "[SAI] fallback to ADAU1466 HW re-init\n");
+        AUDIO_Init_ADAU1466(new_hz);
+    }
 #endif
 
     /* Re-init DMA channels (linked-list mode) */
