@@ -808,7 +808,10 @@ static void dma_adc_cplt(DMA_HandleTypeDef* hdma)
 
 void start_adc(void)
 {
-    MX_List_HPDMA1_Channel0_Config();
+    if (MX_List_HPDMA1_Channel0_Config() != HAL_OK)
+    {
+        Error_Handler();
+    }
     if (HAL_DMAEx_List_LinkQ(&handle_HPDMA1_Channel0, &List_HPDMA1_Channel0) != HAL_OK)
     {
         /* Linking error */
@@ -1366,7 +1369,10 @@ void start_sai(void)
 
     // SAI2 -> Slave Transmit
     // USB -> STM32 -(SAI)-> ADAU1466
-    MX_List_GPDMA1_Channel2_Config();
+    if (MX_List_GPDMA1_Channel2_Config() != HAL_OK)
+    {
+        Error_Handler();
+    }
     if (HAL_DMAEx_List_LinkQ(&handle_GPDMA1_Channel2, &List_GPDMA1_Channel2) != HAL_OK)
     {
         /* DMA link list error */
@@ -1397,7 +1403,10 @@ void start_sai(void)
 
     // SAI1 -> Slave Receize
     // ADAU1466 -(SAI)-> STM32 -> USB
-    MX_List_GPDMA1_Channel3_Config();
+    if (MX_List_GPDMA1_Channel3_Config() != HAL_OK)
+    {
+        Error_Handler();
+    }
     if (HAL_DMAEx_List_LinkQ(&handle_GPDMA1_Channel3, &List_GPDMA1_Channel3) != HAL_OK)
     {
         /* DMA link list error */
@@ -2167,7 +2176,10 @@ void AUDIO_SAI_Reset_ForNewRate(void)
     sai_transmit_index = 0;
 
     /* Configure and link DMA for SAI2 TX */
-    MX_List_GPDMA1_Channel2_Config();
+    if (MX_List_GPDMA1_Channel2_Config() != HAL_OK)
+    {
+        Error_Handler();
+    }
     if (HAL_DMAEx_List_LinkQ(&handle_GPDMA1_Channel2, &List_GPDMA1_Channel2) != HAL_OK)
     {
         Error_Handler();
@@ -2186,7 +2198,10 @@ void AUDIO_SAI_Reset_ForNewRate(void)
     osDelay(10);
 
     /* Configure and link DMA for SAI1 RX */
-    MX_List_GPDMA1_Channel3_Config();
+    if (MX_List_GPDMA1_Channel3_Config() != HAL_OK)
+    {
+        Error_Handler();
+    }
     if (HAL_DMAEx_List_LinkQ(&handle_GPDMA1_Channel3, &List_GPDMA1_Channel3) != HAL_OK)
     {
         Error_Handler();
@@ -2202,7 +2217,10 @@ void AUDIO_SAI_Reset_ForNewRate(void)
     __HAL_SAI_ENABLE(&hsai_BlockA1);
 
     /* Restart ADC DMA after sample rate change is complete */
-    MX_List_HPDMA1_Channel0_Config();
+    if (MX_List_HPDMA1_Channel0_Config() != HAL_OK)
+    {
+        Error_Handler();
+    }
     if (HAL_DMAEx_List_LinkQ(&handle_HPDMA1_Channel0, &List_HPDMA1_Channel0) != HAL_OK)
     {
         Error_Handler();
