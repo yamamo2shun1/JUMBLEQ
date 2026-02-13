@@ -109,6 +109,7 @@ typedef struct
 void main_oled_Init(void);
 void main_oled_Fill(SSD1306_COLOR color);
 void main_oled_UpdateScreen(void);
+void main_oled_UpdateScreenPages(uint8_t start_page, uint8_t end_page);
 void main_oled_DrawPixel(uint8_t x, uint8_t y, SSD1306_COLOR color);
 char main_oled_WriteChar(char ch, SSD1306_Font_t Font, SSD1306_COLOR color);
 char main_oled_WriteString(char* str, SSD1306_Font_t Font, SSD1306_COLOR color);

@@ -235,6 +235,36 @@ void main_oled_UpdateScreen(void)
     }
 }
 
+void main_oled_UpdateScreenPages(uint8_t start_page, uint8_t end_page)
+{
+    uint8_t max_page = (uint8_t) (MAIN_OLED_HEIGHT / 8U);
+    if (max_page == 0U)
+    {
+        return;
+    }
+
+    if (start_page >= max_page)
+    {
+        return;
+    }
+    if (end_page >= max_page)
+    {
+        end_page = (uint8_t) (max_page - 1U);
+    }
+    if (start_page > end_page)
+    {
+        return;
+    }
+
+    for (uint8_t i = start_page; i <= end_page; i++)
+    {
+        main_oled_WriteCommand(0xB0 + i);  // Set the current RAM page address.
+        main_oled_WriteCommand(0x00 + MAIN_OLED_X_OFFSET_LOWER);
+        main_oled_WriteCommand(0x10 + MAIN_OLED_X_OFFSET_UPPER);
+        main_oled_WriteData(&MAIN_OLED_Buffer[MAIN_OLED_WIDTH * i], MAIN_OLED_WIDTH);
+    }
+}
+
 /*
  * Draw one pixel in the screenbuffer
  * X => X Coordinate
