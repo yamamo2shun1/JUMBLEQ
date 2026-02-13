@@ -16,8 +16,26 @@
 #include <stdio.h>
 #include <string.h>
 
+static bool wait_main_oled_ready(uint32_t timeout_ms)
+{
+    uint32_t start = HAL_GetTick();
+
+    while ((HAL_GetTick() - start) < timeout_ms)
+    {
+        if (HAL_I2C_IsDeviceReady(&MAIN_OLED_I2C_PORT, MAIN_OLED_I2C_ADDR, 2, 20) == HAL_OK)
+        {
+            return true;
+        }
+        osDelay(10);
+    }
+
+    return false;
+}
+
 void OLED_Init(void)
 {
+    // Power-up直後はOLED側I2C応答まで時間がかかる場合があるため、初回のみ待機する
+    (void) wait_main_oled_ready(500);
     main_oled_Init();
     main_oled_Fill(Black);
     main_oled_SetCursor(0, 22);
