@@ -21,8 +21,8 @@
 
 #define POT_CH_SEL_WAIT           1
 #define ADC_NUM                   8
-#define POT_MA_SIZE               8  // 移動平均のサンプル数
-#define MAG_MA_SIZE               4  // 移動平均のサンプル数
+#define POT_MA_SIZE               4  // 移動平均のサンプル数
+#define MAG_MA_SIZE               1  // 移動平均のサンプル数
 #define POT_NUM                   8
 #define MAG_SW_NUM                6
 #define MAG_CALIBRATION_COUNT_MAX 100
