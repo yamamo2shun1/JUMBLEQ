@@ -27,6 +27,11 @@
 #define MAG_XFADE_CUTOFF          16
 #define MAG_XFADE_RANGE           1408
 
+// Runtime DSP parameter update switch for A/B diagnosis.
+// 0: disable ui_control_task() DSP writes (noise root-cause test mode)
+// 1: enable normal runtime control updates
+#define ENABLE_DSP_RUNTIME_CONTROL 1
+
 void reset_audio_buffer(void);
 uint32_t get_tx_blink_interval_ms(void);
 uint32_t get_rx_blink_interval_ms(void);

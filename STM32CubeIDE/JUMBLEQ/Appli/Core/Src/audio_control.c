@@ -23,7 +23,7 @@
 #include "SigmaStudioFW.h"
 
 #define N_SAMPLE_RATES TU_ARRAY_SIZE(sample_rates)
-#define AUDIO_DIAG_LOG  1
+#define AUDIO_DIAG_LOG  0
 
 extern DMA_QListTypeDef List_GPDMA1_Channel2;
 extern DMA_QListTypeDef List_GPDMA1_Channel3;
@@ -112,6 +112,12 @@ static uint32_t dbg_sigma_calls_prev                = 0u;
 static uint32_t dbg_sigma_err_prev                  = 0u;
 static uint32_t dbg_sigma_to_prev                   = 0u;
 static uint32_t dbg_sigma_mto_prev                  = 0u;
+static volatile uint32_t dbg_tx_half_rewrite_events = 0u;
+static volatile uint32_t dbg_tx_cplt_rewrite_events = 0u;
+static volatile uint32_t dbg_rx_half_rewrite_events = 0u;
+static volatile uint32_t dbg_rx_cplt_rewrite_events = 0u;
+static volatile uint16_t dbg_usb_read_size_min      = 0xFFFFu;
+static volatile uint16_t dbg_usb_read_size_max      = 0u;
 #endif
 
 bool s_streaming_out = false;
@@ -1242,12 +1248,24 @@ bool is_started_audio_control(void)
 static void dma_sai2_tx_half(DMA_HandleTypeDef* hdma)
 {
     (void) hdma;
+#if AUDIO_DIAG_LOG
+    if ((tx_pending_mask & 0x01U) != 0U)
+    {
+        dbg_tx_half_rewrite_events++;
+    }
+#endif
     tx_pending_mask |= 0x01;
     __DMB();
 }
 static void dma_sai2_tx_cplt(DMA_HandleTypeDef* hdma)
 {
     (void) hdma;
+#if AUDIO_DIAG_LOG
+    if ((tx_pending_mask & 0x02U) != 0U)
+    {
+        dbg_tx_cplt_rewrite_events++;
+    }
+#endif
     tx_pending_mask |= 0x02;
     __DMB();
 }
@@ -1255,12 +1273,24 @@ static void dma_sai2_tx_cplt(DMA_HandleTypeDef* hdma)
 static void dma_sai1_rx_half(DMA_HandleTypeDef* hdma)
 {
     (void) hdma;
+#if AUDIO_DIAG_LOG
+    if ((rx_pending_mask & 0x01U) != 0U)
+    {
+        dbg_rx_half_rewrite_events++;
+    }
+#endif
     rx_pending_mask |= 0x01;
     __DMB();
 }
 static void dma_sai1_rx_cplt(DMA_HandleTypeDef* hdma)
 {
     (void) hdma;
+#if AUDIO_DIAG_LOG
+    if ((rx_pending_mask & 0x02U) != 0U)
+    {
+        dbg_rx_cplt_rewrite_events++;
+    }
+#endif
     rx_pending_mask |= 0x02;
     __DMB();
 }
@@ -1326,6 +1356,12 @@ void start_sai(void)
     dbg_sai_rx_last_err        = 0u;
     dbg_sai_tx_sr_flags        = 0u;
     dbg_sai_rx_sr_flags        = 0u;
+    dbg_tx_half_rewrite_events = 0u;
+    dbg_tx_cplt_rewrite_events = 0u;
+    dbg_rx_half_rewrite_events = 0u;
+    dbg_rx_cplt_rewrite_events = 0u;
+    dbg_usb_read_size_min      = 0xFFFFu;
+    dbg_usb_read_size_max      = 0u;
 #endif
 
     // SAI2 -> Slave Transmit
@@ -1876,7 +1912,7 @@ void audio_task(void)
             uint32_t sigma_to    = sigma_spi_it_write_timeouts;
             uint32_t sigma_mto   = sigma_spi_it_mutex_timeouts;
             SEGGER_RTT_printf(0,
-                              "[AUD][TX] sr=%lu used_now=%ld used_min=%lu used_max=%lu und=%lu part=%lu drift+%lu drift-%lu usb0=%lu usbB=%lu dmae=%lu txe=%lu rxe=%lu txer=0x%08lX rxer=0x%08lX txsr=0x%08lX rxsr=0x%08lX spiC=%lu spiE=%lu spiT=%lu spiM=%lu task_hz=%lu\r\n",
+                              "[AUD][TX] sr=%lu used_now=%ld used_min=%lu used_max=%lu und=%lu part=%lu drift+%lu drift-%lu usb0=%lu usbB=%lu usbMin=%u usbMax=%u txRw=(%lu,%lu) rxRw=(%lu,%lu) dmae=%lu txe=%lu rxe=%lu txer=0x%08lX rxer=0x%08lX txsr=0x%08lX rxsr=0x%08lX spiC=%lu spiE=%lu spiT=%lu spiM=%lu task_hz=%lu\r\n",
                               (unsigned long) current_sample_rate,
                               (long) tx_used_now,
                               (unsigned long) ((dbg_tx_used_min == 0xFFFFFFFFu) ? 0u : dbg_tx_used_min),
@@ -1887,6 +1923,12 @@ void audio_task(void)
                               (unsigned long) dbg_tx_drift_dn_events,
                               (unsigned long) dbg_usb_read_zero_events,
                               (unsigned long) dbg_usb_read_bytes,
+                              (unsigned int) ((dbg_usb_read_size_min == 0xFFFFu) ? 0u : dbg_usb_read_size_min),
+                              (unsigned int) dbg_usb_read_size_max,
+                              (unsigned long) dbg_tx_half_rewrite_events,
+                              (unsigned long) dbg_tx_cplt_rewrite_events,
+                              (unsigned long) dbg_rx_half_rewrite_events,
+                              (unsigned long) dbg_rx_cplt_rewrite_events,
                               (unsigned long) dbg_dma_err_events,
                               (unsigned long) dbg_sai_tx_err_events,
                               (unsigned long) dbg_sai_rx_err_events,
@@ -1919,6 +1961,12 @@ void audio_task(void)
         dbg_sai_rx_last_err        = 0u;
         dbg_sai_tx_sr_flags        = 0u;
         dbg_sai_rx_sr_flags        = 0u;
+        dbg_tx_half_rewrite_events = 0u;
+        dbg_tx_cplt_rewrite_events = 0u;
+        dbg_rx_half_rewrite_events = 0u;
+        dbg_rx_cplt_rewrite_events = 0u;
+        dbg_usb_read_size_min      = 0xFFFFu;
+        dbg_usb_read_size_max      = 0u;
 #endif
     }
 
@@ -1939,6 +1987,14 @@ void audio_task(void)
         if (s_streaming_out && spk_data_size == 0)
         {
             dbg_usb_read_zero_events++;
+        }
+        if (spk_data_size < dbg_usb_read_size_min)
+        {
+            dbg_usb_read_size_min = spk_data_size;
+        }
+        if (spk_data_size > dbg_usb_read_size_max)
+        {
+            dbg_usb_read_size_max = spk_data_size;
         }
 #endif
 
@@ -2039,6 +2095,12 @@ void AUDIO_SAI_Reset_ForNewRate(void)
     dbg_sai_rx_last_err        = 0u;
     dbg_sai_tx_sr_flags        = 0u;
     dbg_sai_rx_sr_flags        = 0u;
+    dbg_tx_half_rewrite_events = 0u;
+    dbg_tx_cplt_rewrite_events = 0u;
+    dbg_rx_half_rewrite_events = 0u;
+    dbg_rx_cplt_rewrite_events = 0u;
+    dbg_usb_read_size_min      = 0xFFFFu;
+    dbg_usb_read_size_max      = 0u;
 #endif
 
     /* Clear all audio buffers to avoid noise from stale data */
