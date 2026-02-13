@@ -308,7 +308,7 @@ void StartUSBTask(void* argument)
         tud_task_ext(1, false);
         usb_loop_count++;
 
-        if (now - log_last_tick >= 1000)
+        if (0 && (now - log_last_tick >= 1000))
         {
             SEGGER_RTT_printf(0,
                               "[USB] loop=%lu ready=%lu idle=%lu lag=%lu max_gap=%lu\r\n",
