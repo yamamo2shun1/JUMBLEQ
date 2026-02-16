@@ -15,6 +15,14 @@
 ## for Windows User
 I’m developing JUMBLEQ as a solo project. I can’t realistically develop both an ASIO driver and the necessary firmware support on my own. If you’re using this device on Windows, please use [ASIO4ALL](https://asio4all.org/)—even if you’d prefer a dedicated ASIO driver.
 
+## Firmware Update
+JUMBLEQ uses a UF2 bootloader.
+When you connect the USB cable while holding down SW3, it is recognized as a USB flash drive, so you can update the firmware simply by copying app.uf2—created using the procedure below—to the drive.
+```
+> arm-none-eabi-objcopy -O binary JUMBLEQ_Appli.elf app.bin
+> python uf2conv.py -c -b 0x90010000 -f STM32H7RS -o app.uf2 app.bin
+```
+
 ## Block Diagram
 <img width="1217" height="842" alt="JUMBLEQ drawio" src="https://github.com/user-attachments/assets/cbeb1f4e-1354-4cfa-bd1b-a0ead0e7d694" />
 
