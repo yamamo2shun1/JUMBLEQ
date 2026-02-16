@@ -23,7 +23,7 @@
 #include "SigmaStudioFW.h"
 
 #define N_SAMPLE_RATES TU_ARRAY_SIZE(sample_rates)
-#define AUDIO_DIAG_LOG  0
+#define AUDIO_DIAG_LOG 0
 
 extern DMA_QListTypeDef List_GPDMA1_Channel2;
 extern DMA_QListTypeDef List_GPDMA1_Channel3;
@@ -53,9 +53,26 @@ enum
     VOLUME_CTRL_SILENCE = 0x8000,
 };
 
+enum
+{
+    INPUT_SRC_CH1_LN = 0,
+    INPUT_SRC_CH1_PN,
+    INPUT_SRC_CH2_LN,
+    INPUT_SRC_CH2_PN,
+    INPUT_SRC_USB,
+    INPUT_SRC_NONE,
+};
+
 // Audio controls
 static uint32_t tx_blink_interval_ms = BLINK_NOT_MOUNTED;
 static uint32_t rx_blink_interval_ms = BLINK_NOT_MOUNTED;
+
+uint8_t current_ch1_input_type = INPUT_TYPE_LINE;
+uint8_t current_ch2_input_type = INPUT_TYPE_LINE;
+
+uint8_t current_xfA_assign    = INPUT_SRC_CH1_LN;
+uint8_t current_xfB_assign    = INPUT_SRC_CH2_LN;
+uint8_t current_xfpost_assign = INPUT_SRC_USB;
 
 uint8_t current_xfA_position = 127;
 uint8_t current_xfB_position = 127;
@@ -251,6 +268,63 @@ int16_t get_current_master_db(void)
 int16_t get_current_dry_wet(void)
 {
     return (int16_t) ((double) pot_val[7] / 1023.0 * 100.0);
+}
+
+char* get_current_input_srcA_str(void)
+{
+    switch (current_xfA_assign)
+    {
+    case INPUT_SRC_CH1_LN:
+        return "C1(LN)";
+    case INPUT_SRC_CH1_PN:
+        return "C1(PN)";
+    case INPUT_SRC_CH2_LN:
+        return "C2(LN)";
+    case INPUT_SRC_CH2_PN:
+        return "C2(PN)";
+    case INPUT_SRC_USB:
+        return "USB   ";
+    default:
+        return "NONE  ";
+    }
+}
+
+char* get_current_input_srcB_str(void)
+{
+    switch (current_xfB_assign)
+    {
+    case INPUT_SRC_CH1_LN:
+        return "C1(LN)";
+    case INPUT_SRC_CH1_PN:
+        return "C1(PN)";
+    case INPUT_SRC_CH2_LN:
+        return "C2(LN)";
+    case INPUT_SRC_CH2_PN:
+        return "C2(PN)";
+    case INPUT_SRC_USB:
+        return "USB   ";
+    default:
+        return "NONE  ";
+    }
+}
+
+char* get_current_input_srcP_str(void)
+{
+    switch (current_xfpost_assign)
+    {
+    case INPUT_SRC_CH1_LN:
+        return "C1(LN)";
+    case INPUT_SRC_CH1_PN:
+        return "C1(PN)";
+    case INPUT_SRC_CH2_LN:
+        return "C2(LN)";
+    case INPUT_SRC_CH2_PN:
+        return "C2(PN)";
+    case INPUT_SRC_USB:
+        return "USB";
+    default:
+        return "NONE";
+    }
 }
 
 //--------------------------------------------------------------------+
@@ -1179,42 +1253,134 @@ void ui_control_task(void)
             {
             case CH1_LINE:
                 select_input_type(INPUT_CH1, INPUT_TYPE_LINE);
+                current_ch1_input_type = INPUT_TYPE_LINE;
+                if (current_xfA_assign == INPUT_SRC_CH1_PN || current_xfA_assign == INPUT_SRC_CH1_LN)
+                {
+                    current_xfA_assign = INPUT_SRC_CH1_LN;
+                }
+                else if (current_xfB_assign == INPUT_SRC_CH1_PN || current_xfB_assign == INPUT_SRC_CH1_LN)
+                {
+                    current_xfB_assign = INPUT_SRC_CH1_LN;
+                }
                 break;
             case CH1_PHONO:
                 select_input_type(INPUT_CH1, INPUT_TYPE_PHONO);
+                current_ch1_input_type = INPUT_TYPE_PHONO;
+                if (current_xfA_assign == INPUT_SRC_CH1_PN || current_xfA_assign == INPUT_SRC_CH1_LN)
+                {
+                    current_xfA_assign = INPUT_SRC_CH1_PN;
+                }
+                else if (current_xfB_assign == INPUT_SRC_CH1_PN || current_xfB_assign == INPUT_SRC_CH1_LN)
+                {
+                    current_xfB_assign = INPUT_SRC_CH1_PN;
+                }
                 break;
             case CH2_LINE:
                 select_input_type(INPUT_CH2, INPUT_TYPE_LINE);
+                current_ch2_input_type = INPUT_TYPE_LINE;
+                if (current_xfA_assign == INPUT_SRC_CH2_PN || current_xfA_assign == INPUT_SRC_CH2_LN)
+                {
+                    current_xfA_assign = INPUT_SRC_CH2_LN;
+                }
+                else if (current_xfB_assign == INPUT_SRC_CH2_PN || current_xfB_assign == INPUT_SRC_CH2_LN)
+                {
+                    current_xfB_assign = INPUT_SRC_CH2_LN;
+                }
                 break;
             case CH2_PHONO:
                 select_input_type(INPUT_CH2, INPUT_TYPE_PHONO);
+                current_ch2_input_type = INPUT_TYPE_PHONO;
+                if (current_xfA_assign == INPUT_SRC_CH2_PN || current_xfA_assign == INPUT_SRC_CH2_LN)
+                {
+                    current_xfA_assign = INPUT_SRC_CH2_PN;
+                }
+                else if (current_xfB_assign == INPUT_SRC_CH2_PN || current_xfB_assign == INPUT_SRC_CH2_LN)
+                {
+                    current_xfB_assign = INPUT_SRC_CH2_PN;
+                }
                 break;
             case XF_ASSIGN_A_CH1:
                 select_xf_assignA_source(INPUT_CH1);
+                if (current_ch1_input_type == INPUT_TYPE_PHONO)
+                {
+                    current_xfA_assign = INPUT_SRC_CH1_PN;
+                }
+                else
+                {
+                    current_xfA_assign = INPUT_SRC_CH1_LN;
+                }
                 break;
             case XF_ASSIGN_A_CH2:
                 select_xf_assignA_source(INPUT_CH2);
+                if (current_ch2_input_type == INPUT_TYPE_PHONO)
+                {
+
+                    current_xfA_assign = INPUT_SRC_CH2_PN;
+                }
+                else
+                {
+                    current_xfA_assign = INPUT_SRC_CH2_LN;
+                }
                 break;
             case XF_ASSIGN_A_USB:
                 select_xf_assignA_source(INPUT_USB);
+                current_xfA_assign = INPUT_SRC_USB;
                 break;
             case XF_ASSIGN_B_CH1:
                 select_xf_assignB_source(INPUT_CH1);
+                if (current_ch1_input_type == INPUT_TYPE_PHONO)
+                {
+
+                    current_xfB_assign = INPUT_SRC_CH1_PN;
+                }
+                else
+                {
+                    current_xfB_assign = INPUT_SRC_CH1_LN;
+                }
                 break;
             case XF_ASSIGN_B_CH2:
                 select_xf_assignB_source(INPUT_CH2);
+                if (current_ch2_input_type == INPUT_TYPE_PHONO)
+                {
+
+                    current_xfB_assign = INPUT_SRC_CH2_PN;
+                }
+                else
+                {
+                    current_xfB_assign = INPUT_SRC_CH2_LN;
+                }
                 break;
             case XF_ASSIGN_B_USB:
                 select_xf_assignB_source(INPUT_USB);
+                current_xfB_assign = INPUT_SRC_USB;
                 break;
             case XF_ASSIGN_POST_CH1:
                 select_xf_assignPost_source(INPUT_CH1);
+                if (current_ch1_input_type == INPUT_TYPE_PHONO)
+                {
+
+                    current_xfpost_assign = INPUT_SRC_CH1_PN;
+                }
+                else
+                {
+                    current_xfpost_assign = INPUT_SRC_CH1_LN;
+                }
                 break;
             case XF_ASSIGN_POST_CH2:
                 select_xf_assignPost_source(INPUT_CH2);
+                if (current_ch2_input_type == INPUT_TYPE_PHONO)
+                {
+
+                    current_xfpost_assign = INPUT_SRC_CH2_PN;
+                }
+                else
+                {
+                    current_xfpost_assign = INPUT_SRC_CH2_LN;
+                }
                 break;
             case XF_ASSIGN_POST_USB:
                 select_xf_assignPost_source(INPUT_USB);
+                current_xfpost_assign = INPUT_SRC_USB;
                 break;
             default:
                 break;
@@ -1501,9 +1667,9 @@ void copybuf_usb2ring(void)
 
 static inline void fill_tx_half(uint32_t index0)
 {
-    const uint32_t n = (SAI_TX_BUF_SIZE / 2);
+    const uint32_t n           = (SAI_TX_BUF_SIZE / 2);
     const uint32_t frame_words = 4;  // 4ch x 32bit = 1 frame
-    uint32_t pull_words = n;
+    uint32_t pull_words        = n;
 
     // index0のバウンドチェック
     if (index0 >= SAI_TX_BUF_SIZE)
@@ -1915,41 +2081,12 @@ void audio_task(void)
 #if AUDIO_DIAG_LOG
         if (s_streaming_out)
         {
-            int32_t tx_used_now = (int32_t) (sai_tx_rng_buf_index - sai_transmit_index);
+            int32_t tx_used_now  = (int32_t) (sai_tx_rng_buf_index - sai_transmit_index);
             uint32_t sigma_calls = sigma_spi_it_write_calls;
             uint32_t sigma_err   = sigma_spi_it_write_errors;
             uint32_t sigma_to    = sigma_spi_it_write_timeouts;
             uint32_t sigma_mto   = sigma_spi_it_mutex_timeouts;
-            SEGGER_RTT_printf(0,
-                              "[AUD][TX] sr=%lu used_now=%ld used_min=%lu used_max=%lu und=%lu part=%lu drift+%lu drift-%lu usb0=%lu usbB=%lu usbMin=%u usbMax=%u txRw=(%lu,%lu) rxRw=(%lu,%lu) dmae=%lu txe=%lu rxe=%lu txer=0x%08lX rxer=0x%08lX txsr=0x%08lX rxsr=0x%08lX spiC=%lu spiE=%lu spiT=%lu spiM=%lu task_hz=%lu\r\n",
-                              (unsigned long) current_sample_rate,
-                              (long) tx_used_now,
-                              (unsigned long) ((dbg_tx_used_min == 0xFFFFFFFFu) ? 0u : dbg_tx_used_min),
-                              (unsigned long) dbg_tx_used_max,
-                              (unsigned long) dbg_tx_underrun_events,
-                              (unsigned long) dbg_tx_partial_fill_events,
-                              (unsigned long) dbg_tx_drift_up_events,
-                              (unsigned long) dbg_tx_drift_dn_events,
-                              (unsigned long) dbg_usb_read_zero_events,
-                              (unsigned long) dbg_usb_read_bytes,
-                              (unsigned int) ((dbg_usb_read_size_min == 0xFFFFu) ? 0u : dbg_usb_read_size_min),
-                              (unsigned int) dbg_usb_read_size_max,
-                              (unsigned long) dbg_tx_half_rewrite_events,
-                              (unsigned long) dbg_tx_cplt_rewrite_events,
-                              (unsigned long) dbg_rx_half_rewrite_events,
-                              (unsigned long) dbg_rx_cplt_rewrite_events,
-                              (unsigned long) dbg_dma_err_events,
-                              (unsigned long) dbg_sai_tx_err_events,
-                              (unsigned long) dbg_sai_rx_err_events,
-                              (unsigned long) dbg_sai_tx_last_err,
-                              (unsigned long) dbg_sai_rx_last_err,
-                              (unsigned long) dbg_sai_tx_sr_flags,
-                              (unsigned long) dbg_sai_rx_sr_flags,
-                              (unsigned long) (sigma_calls - dbg_sigma_calls_prev),
-                              (unsigned long) (sigma_err - dbg_sigma_err_prev),
-                              (unsigned long) (sigma_to - dbg_sigma_to_prev),
-                              (unsigned long) (sigma_mto - dbg_sigma_mto_prev),
-                              (unsigned long) audio_task_frequency);
+            SEGGER_RTT_printf(0, "[AUD][TX] sr=%lu used_now=%ld used_min=%lu used_max=%lu und=%lu part=%lu drift+%lu drift-%lu usb0=%lu usbB=%lu usbMin=%u usbMax=%u txRw=(%lu,%lu) rxRw=(%lu,%lu) dmae=%lu txe=%lu rxe=%lu txer=0x%08lX rxer=0x%08lX txsr=0x%08lX rxsr=0x%08lX spiC=%lu spiE=%lu spiT=%lu spiM=%lu task_hz=%lu\r\n", (unsigned long) current_sample_rate, (long) tx_used_now, (unsigned long) ((dbg_tx_used_min == 0xFFFFFFFFu) ? 0u : dbg_tx_used_min), (unsigned long) dbg_tx_used_max, (unsigned long) dbg_tx_underrun_events, (unsigned long) dbg_tx_partial_fill_events, (unsigned long) dbg_tx_drift_up_events, (unsigned long) dbg_tx_drift_dn_events, (unsigned long) dbg_usb_read_zero_events, (unsigned long) dbg_usb_read_bytes, (unsigned int) ((dbg_usb_read_size_min == 0xFFFFu) ? 0u : dbg_usb_read_size_min), (unsigned int) dbg_usb_read_size_max, (unsigned long) dbg_tx_half_rewrite_events, (unsigned long) dbg_tx_cplt_rewrite_events, (unsigned long) dbg_rx_half_rewrite_events, (unsigned long) dbg_rx_cplt_rewrite_events, (unsigned long) dbg_dma_err_events, (unsigned long) dbg_sai_tx_err_events, (unsigned long) dbg_sai_rx_err_events, (unsigned long) dbg_sai_tx_last_err, (unsigned long) dbg_sai_rx_last_err, (unsigned long) dbg_sai_tx_sr_flags, (unsigned long) dbg_sai_rx_sr_flags, (unsigned long) (sigma_calls - dbg_sigma_calls_prev), (unsigned long) (sigma_err - dbg_sigma_err_prev), (unsigned long) (sigma_to - dbg_sigma_to_prev), (unsigned long) (sigma_mto - dbg_sigma_mto_prev), (unsigned long) audio_task_frequency);
             dbg_sigma_calls_prev = sigma_calls;
             dbg_sigma_err_prev   = sigma_err;
             dbg_sigma_to_prev    = sigma_to;
@@ -2173,7 +2310,7 @@ void AUDIO_SAI_Reset_ForNewRate(void)
     /* Set write index ahead to provide initial data for DMA */
     /* 96kHz needs larger prefill due to higher data rate */
     sai_tx_rng_buf_index = SAI_TX_BUF_SIZE;
-    sai_transmit_index = 0;
+    sai_transmit_index   = 0;
 
     /* Configure and link DMA for SAI2 TX */
     if (MX_List_GPDMA1_Channel2_Config() != HAL_OK)

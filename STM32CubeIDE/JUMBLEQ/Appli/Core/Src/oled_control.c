@@ -1,6 +1,6 @@
 /*
  * oled_control.c
- *
+*
  *  Created on: 2026/01/26
  *      Author: Shnichi Yamamoto
  */
@@ -54,14 +54,17 @@ void OLED_UpdateTask(void)
 {
     char line1[32];
     char line2[32];
+    char line3[32];
     static char prev_line1[32] = {0};
     static char prev_line2[32] = {0};
+    static char prev_line3[32] = {0};
     bool dirty                 = false;
     uint8_t dirty_start_page   = 0xFF;
     uint8_t dirty_end_page     = 0;
 
     snprintf(line1, sizeof(line1), "C2:%ddB Mst:%ddB", get_current_ch2_db(), get_current_master_db());
     snprintf(line2, sizeof(line2), "C1:%ddB D/W:%d%%", get_current_ch1_db(), get_current_dry_wet());
+    snprintf(line3, sizeof(line3), "A:%s B:%s", get_current_input_srcA_str(), get_current_input_srcB_str());
 
     if (strcmp(prev_line1, line1) != 0)
     {
@@ -70,9 +73,9 @@ void OLED_UpdateTask(void)
         main_oled_WriteString(line1, Font_7x10, White);
         strcpy(prev_line1, line1);
 
-        dirty          = true;
+        dirty            = true;
         dirty_start_page = 0;
-        dirty_end_page = 1;
+        dirty_end_page   = 1;
     }
 
     if (strcmp(prev_line2, line2) != 0)
@@ -100,6 +103,32 @@ void OLED_UpdateTask(void)
         }
         dirty = true;
     }
+
+    if (strcmp(prev_line3, line3) != 0)
+	{
+		main_oled_FillRectangle(0, 22, 127, 32, Black);
+		main_oled_SetCursor(0, 22);
+		main_oled_WriteString(line3, Font_7x10, White);
+		strcpy(prev_line3, line3);
+
+		if (!dirty)
+		{
+			dirty_start_page = 2;
+			dirty_end_page   = 3;
+		}
+		else
+		{
+			if (dirty_start_page > 2)
+			{
+				dirty_start_page = 2;
+			}
+			if (dirty_end_page < 3)
+			{
+				dirty_end_page = 3;
+			}
+		}
+		dirty = true;
+	}
 
     if (dirty)
     {
