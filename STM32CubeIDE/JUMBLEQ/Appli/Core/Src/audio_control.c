@@ -70,8 +70,8 @@ static uint32_t rx_blink_interval_ms = BLINK_NOT_MOUNTED;
 uint8_t current_ch1_input_type = INPUT_TYPE_LINE;
 uint8_t current_ch2_input_type = INPUT_TYPE_LINE;
 
-uint8_t current_xfA_assign    = INPUT_SRC_CH1_LN;
-uint8_t current_xfB_assign    = INPUT_SRC_CH2_LN;
+uint8_t current_xfA_assign    = INPUT_SRC_CH2_LN;
+uint8_t current_xfB_assign    = INPUT_SRC_CH1_LN;
 uint8_t current_xfpost_assign = INPUT_SRC_USB;
 
 uint8_t current_xfA_position = 127;
