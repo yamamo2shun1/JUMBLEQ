@@ -162,7 +162,7 @@ void OLED_UpdateTask(void)
 
     if (strcmp(prev_srcA, srcA) != 0)
     {
-        sub_oled_FillRectangle(0, 5, 63, 14, Black);
+        sub_oled_FillRectangle(0, 5, 55, 14, Black);
         sub_oled_SetCursor(1, 5);
         sub_oled_WriteString((char*) srcA, Font_7x10, White);
         snprintf(prev_srcA, sizeof(prev_srcA), "%s", srcA);
@@ -188,7 +188,7 @@ void OLED_UpdateTask(void)
 
     if (strcmp(prev_srcB, srcB) != 0)
     {
-        sub_oled_FillRectangle(64, 5, 127, 14, Black);
+        sub_oled_FillRectangle(73, 5, 127, 14, Black);
         sub_oled_SetCursor(90, 5);
         sub_oled_WriteString((char*) srcB, Font_7x10, White);
         snprintf(prev_srcB, sizeof(prev_srcB), "%s", srcB);
@@ -214,7 +214,7 @@ void OLED_UpdateTask(void)
 
     if (strcmp(prev_typeA, typeA) != 0)
     {
-        sub_oled_FillRectangle(0, 30, 63, 39, Black);
+        sub_oled_FillRectangle(0, 30, 55, 39, Black);
         sub_oled_SetCursor(1, 30);
         sub_oled_WriteString((char*) typeA, Font_7x10, White);
         snprintf(prev_typeA, sizeof(prev_typeA), "%s", typeA);
@@ -240,7 +240,7 @@ void OLED_UpdateTask(void)
 
     if (strcmp(prev_typeB, typeB) != 0)
     {
-        sub_oled_FillRectangle(64, 30, 127, 39, Black);
+        sub_oled_FillRectangle(73, 30, 127, 39, Black);
         sub_oled_SetCursor(77, 30);
         sub_oled_WriteString((char*) typeB, Font_7x10, White);
         snprintf(prev_typeB, sizeof(prev_typeB), "%s", typeB);
@@ -266,7 +266,8 @@ void OLED_UpdateTask(void)
 
     if (strcmp(prev_srcP, srcP) != 0)
     {
-        sub_oled_FillRectangle(0, 50, 127, 59, Black);
+        sub_oled_FillRectangle(0, 50, 55, 59, Black);
+        sub_oled_FillRectangle(73, 50, 127, 59, Black);
         sub_oled_SetCursor(1, 50);
         sub_oled_WriteString((char*) srcP, Font_7x10, White);
         snprintf(prev_srcP, sizeof(prev_srcP), "%s", srcP);
