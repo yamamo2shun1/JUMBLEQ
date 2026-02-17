@@ -392,7 +392,7 @@ void StartLEDTask(void* argument)
         led_tx_blinking_task();
         led_rx_blinking_task();
         rgb_led_task();
-        osDelay(10);
+        osDelay(5);
     }
     /* USER CODE END StartLEDTask */
 }
