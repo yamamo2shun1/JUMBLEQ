@@ -30,8 +30,6 @@ enum
 {
     AUDIO_MS_PER_SECOND        = 1000u,
     AUDIO_TASK_STATS_PERIOD_MS = 1000u,
-    AUDIO_RESOLUTION_16BIT     = 16u,
-    AUDIO_BYTES_PER_SAMPLE_16  = 2u,
     AUDIO_BYTES_PER_SAMPLE_32  = 4u,
     AUDIO_USB_FRAME_CHANNELS   = 4u,
     AUDIO_RING_FRAME_WORDS     = 4u,
@@ -116,10 +114,6 @@ __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t stereo_in_b
 
 // Speaker data size received in the last frame
 uint16_t spk_data_size;
-// Resolution per format (24bit only)
-const uint8_t resolutions_per_format[CFG_TUD_AUDIO_FUNC_1_N_FORMATS] = {CFG_TUD_AUDIO_FUNC_1_FORMAT_1_RESOLUTION_RX};
-// Current resolution, update on format change
-uint8_t current_resolution;
 
 // Current states
 int8_t mute[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX + 1];     // +1 for master channel 0
@@ -461,12 +455,8 @@ bool tud_audio_set_itf_cb(uint8_t rhport, tusb_control_request_t const* p_reques
         s_streaming_in = true;
     }
 
-    // Clear buffer when streaming format is changed
+    // Clear buffer when streaming is changed
     spk_data_size = 0;
-    if (alt != 0)
-    {
-        current_resolution = resolutions_per_format[alt - 1];
-    }
 
     return true;
 }
@@ -695,44 +685,18 @@ void copybuf_usb2ring(void)
     // USB: [L1][R1][L2][R2][L1][R1][L2][R2]...
     // SAI: [L1][R1][L2][R2][L1][R1][L2][R2]...
 
-    uint32_t sai_words;  // SAIに書くword数�E�Ech刁E��E
+    // 24bit in 32bit slot: 4ch全てそのままコピー
+    uint32_t sai_words = spk_data_size / sizeof(int32_t);  // SAIに書くword数(4ch分)
 
-    if (current_resolution == AUDIO_RESOLUTION_16BIT)
+    if ((int32_t) sai_words > free)
     {
-        // 16bit: USBチE�Eタはint16_tとして詰まってぁE�� (4ch)
-        int16_t* usb_in_buf_16 = (int16_t*) usb_in_buf;
-        uint32_t usb_samples   = spk_data_size / sizeof(int16_t);  // 16bitサンプル数
-        sai_words              = usb_samples;                      // SAIに書ぁEchチE�Eタのword数
-
-        if ((int32_t) sai_words > free)
-        {
-            sai_words = (uint32_t) free;
-        }
-
-        // 4ch全てコピ�E、E6bitↁE2bit左詰め変換
-        for (uint32_t i = 0; i < sai_words; i++)
-        {
-            int32_t sample32                                              = ((int32_t) usb_in_buf_16[i]) << 16;
-            sai_tx_rng_buf[sai_tx_rng_buf_index & (SAI_RNG_BUF_SIZE - 1)] = sample32;
-            sai_tx_rng_buf_index++;
-        }
+        sai_words = (uint32_t) free;
     }
-    else
+
+    for (uint32_t i = 0; i < sai_words; i++)
     {
-        // 24bit in 32bit slot: 4ch全てそ�Eままコピ�E
-        sai_words = spk_data_size / sizeof(int32_t);
-
-        if ((int32_t) sai_words > free)
-        {
-            sai_words = (uint32_t) free;
-        }
-
-        // 4ch全てコピ�E
-        for (uint32_t i = 0; i < sai_words; i++)
-        {
-            sai_tx_rng_buf[sai_tx_rng_buf_index & (SAI_RNG_BUF_SIZE - 1)] = usb_in_buf[i];
-            sai_tx_rng_buf_index++;
-        }
+        sai_tx_rng_buf[sai_tx_rng_buf_index & (SAI_RNG_BUF_SIZE - 1)] = usb_in_buf[i];
+        sai_tx_rng_buf_index++;
     }
 
     // SEGGER_RTT_printf(0, " %d\n", sai_tx_rng_buf_index);
@@ -953,8 +917,7 @@ static uint16_t audio_out_bytes_per_ms(void)
 {
     // Host -> Device (speaker OUT) stream bytes per 1ms
     // 48/96kHz are integer frames per ms in this project.
-    uint32_t bytes_per_sample = (current_resolution == AUDIO_RESOLUTION_16BIT) ? AUDIO_BYTES_PER_SAMPLE_16 : AUDIO_BYTES_PER_SAMPLE_32;
-    uint32_t bytes            = audio_frames_per_ms() * CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX * bytes_per_sample;
+    uint32_t bytes = audio_frames_per_ms() * CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX * AUDIO_BYTES_PER_SAMPLE_32;
     if (bytes > sizeof(usb_in_buf))
     {
         bytes = sizeof(usb_in_buf);
@@ -998,91 +961,40 @@ static void copybuf_ring2usb_and_send(void)
     // SAI: [L1][R1][L2][R2][L1][R1][L2][R2]...
     // USB: [L1][R1][L2][R2][L1][R1][L2][R2]...
 
-    uint32_t usb_bytes;
-    uint16_t written;
+    // 24bit in 32bit slot: SAI(2ch) -> USB(4ch) 変換
+    const uint32_t usb_bytes = frames * AUDIO_USB_FRAME_CHANNELS * sizeof(int32_t);  // 4ch分
 
-    if (current_resolution == AUDIO_RESOLUTION_16BIT)
+    // 安全: usb_out_buf が足りない想定なら絶対に書かない
+    if (usb_bytes > sizeof(usb_out_buf))
+        return;
+
+    for (uint32_t f = 0; f < frames; f++)
     {
-        // 16bit: SAI(32bit 2ch) ↁEUSB(16bit 4ch) 変換
-        usb_bytes = frames * AUDIO_USB_FRAME_CHANNELS * sizeof(int16_t);  // 4ch刁E
-
-        // 安�E: usb_out_buf が足りなぁE��定なら絶対に書かなぁE
-        if (usb_bytes > sizeof(usb_out_buf))
-            return;
-
-        int16_t* usb_out_buf_16 = (int16_t*) usb_out_buf;
-
-        for (uint32_t f = 0; f < frames; f++)
-        {
-            uint32_t r_L1 = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 0) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_R1 = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 1) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_L2 = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 2) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_R2 = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 3) & (SAI_RNG_BUF_SIZE - 1);
-            // 32bit ↁE16bit (上佁E6bitを取り�EぁE
-            // SAIチE�Eタは符号付き32bitなので、算術右シフトで符号を保持
-            int32_t sample_L1         = sai_rx_rng_buf[r_L1];
-            int32_t sample_R1         = sai_rx_rng_buf[r_R1];
-            int32_t sample_L2         = sai_rx_rng_buf[r_L2];
-            int32_t sample_R2         = sai_rx_rng_buf[r_R2];
-            usb_out_buf_16[f * AUDIO_USB_FRAME_CHANNELS + 0] = (int16_t) (sample_L1 >> 16);  // L1
-            usb_out_buf_16[f * AUDIO_USB_FRAME_CHANNELS + 1] = (int16_t) (sample_R1 >> 16);  // R1
-            usb_out_buf_16[f * AUDIO_USB_FRAME_CHANNELS + 2] = (int16_t) (sample_L2 >> 16);  // L2
-            usb_out_buf_16[f * AUDIO_USB_FRAME_CHANNELS + 3] = (int16_t) (sample_R2 >> 16);  // R2
-        }
-
-        // ISRコンチE��ストから呼ばれるので通常版を使用
-        written = tud_audio_write(usb_out_buf, (uint16_t) usb_bytes);
-
-        if (written == 0)
-        {
-            return;
-        }
-
-        // 書けた刁E��け読みポインタを進める
-        uint32_t written_frames = ((uint32_t) written) / (AUDIO_USB_FRAME_CHANNELS * sizeof(int16_t));
-        if (written_frames > frames)
-            written_frames = frames;
-        if (written_frames == 0)
-            return;
-        sai_receive_index += written_frames * AUDIO_RING_FRAME_WORDS;  // SAIは4ch刁E
+        uint32_t r_L1          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 0) & (SAI_RNG_BUF_SIZE - 1);
+        uint32_t r_R1          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 1) & (SAI_RNG_BUF_SIZE - 1);
+        uint32_t r_L2          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 2) & (SAI_RNG_BUF_SIZE - 1);
+        uint32_t r_R2          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 3) & (SAI_RNG_BUF_SIZE - 1);
+        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 0] = sai_rx_rng_buf[r_L1];  // L1
+        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 1] = sai_rx_rng_buf[r_R1];  // R1
+        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 2] = sai_rx_rng_buf[r_L2];  // L2
+        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 3] = sai_rx_rng_buf[r_R2];  // R2
     }
-    else
+
+    // ISRコンテキストから呼ばれるので通常版を使用
+    uint16_t written = tud_audio_write(usb_out_buf, (uint16_t) usb_bytes);
+
+    if (written == 0)
     {
-        // 24bit in 32bit slot: SAI(2ch) ↁEUSB(4ch) 変換
-        usb_bytes = frames * AUDIO_USB_FRAME_CHANNELS * sizeof(int32_t);  // 4ch刁E
-
-        // 安�E: usb_out_buf が足りなぁE��定なら絶対に書かなぁE
-        if (usb_bytes > sizeof(usb_out_buf))
-            return;
-
-        for (uint32_t f = 0; f < frames; f++)
-        {
-            uint32_t r_L1          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 0) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_R1          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 1) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_L2          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 2) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_R2          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 3) & (SAI_RNG_BUF_SIZE - 1);
-            usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 0] = sai_rx_rng_buf[r_L1];  // L1
-            usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 1] = sai_rx_rng_buf[r_R1];  // R1
-            usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 2] = sai_rx_rng_buf[r_L2];  // L2
-            usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 3] = sai_rx_rng_buf[r_R2];  // R2
-        }
-
-        // ISRコンチE��ストから呼ばれるので通常版を使用
-        written = tud_audio_write(usb_out_buf, (uint16_t) usb_bytes);
-
-        if (written == 0)
-        {
-            return;
-        }
-
-        // 書けた刁E��け読みポインタを進める
-        uint32_t written_frames = ((uint32_t) written) / (AUDIO_USB_FRAME_CHANNELS * sizeof(int32_t));
-        if (written_frames > frames)
-            written_frames = frames;
-        if (written_frames == 0)
-            return;
-        sai_receive_index += written_frames * AUDIO_RING_FRAME_WORDS;  // SAIは4ch刁E
+        return;
     }
+
+    // 書けた分だけ読みポインタを進める
+    uint32_t written_frames = ((uint32_t) written) / (AUDIO_USB_FRAME_CHANNELS * sizeof(int32_t));
+    if (written_frames > frames)
+        written_frames = frames;
+    if (written_frames == 0)
+        return;
+    sai_receive_index += written_frames * AUDIO_RING_FRAME_WORDS;  // SAIは4ch分
 }
 
 // TinyUSB TX完亁E��ールバック - USB ISRコンチE��ストで呼ばれる
