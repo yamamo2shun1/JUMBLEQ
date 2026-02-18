@@ -1288,9 +1288,13 @@ void ui_control_task(void)
                 {
                     current_xfA_assign = INPUT_SRC_CH1_LN;
                 }
-                else if (current_xfB_assign == INPUT_SRC_CH1_PN || current_xfB_assign == INPUT_SRC_CH1_LN)
+                if (current_xfB_assign == INPUT_SRC_CH1_PN || current_xfB_assign == INPUT_SRC_CH1_LN)
                 {
                     current_xfB_assign = INPUT_SRC_CH1_LN;
+                }
+                if (current_xfpost_assign == INPUT_SRC_CH1_PN || current_xfpost_assign == INPUT_SRC_CH1_LN)
+                {
+                    current_xfpost_assign = INPUT_SRC_CH1_LN;
                 }
                 break;
             case CH1_PHONO:
@@ -1300,9 +1304,13 @@ void ui_control_task(void)
                 {
                     current_xfA_assign = INPUT_SRC_CH1_PN;
                 }
-                else if (current_xfB_assign == INPUT_SRC_CH1_PN || current_xfB_assign == INPUT_SRC_CH1_LN)
+                if (current_xfB_assign == INPUT_SRC_CH1_PN || current_xfB_assign == INPUT_SRC_CH1_LN)
                 {
                     current_xfB_assign = INPUT_SRC_CH1_PN;
+                }
+                if (current_xfpost_assign == INPUT_SRC_CH1_PN || current_xfpost_assign == INPUT_SRC_CH1_LN)
+                {
+                    current_xfpost_assign = INPUT_SRC_CH1_PN;
                 }
                 break;
             case CH2_LINE:
@@ -1312,9 +1320,13 @@ void ui_control_task(void)
                 {
                     current_xfA_assign = INPUT_SRC_CH2_LN;
                 }
-                else if (current_xfB_assign == INPUT_SRC_CH2_PN || current_xfB_assign == INPUT_SRC_CH2_LN)
+                if (current_xfB_assign == INPUT_SRC_CH2_PN || current_xfB_assign == INPUT_SRC_CH2_LN)
                 {
                     current_xfB_assign = INPUT_SRC_CH2_LN;
+                }
+                if (current_xfpost_assign == INPUT_SRC_CH2_PN || current_xfpost_assign == INPUT_SRC_CH2_LN)
+                {
+                    current_xfpost_assign = INPUT_SRC_CH2_LN;
                 }
                 break;
             case CH2_PHONO:
@@ -1324,9 +1336,13 @@ void ui_control_task(void)
                 {
                     current_xfA_assign = INPUT_SRC_CH2_PN;
                 }
-                else if (current_xfB_assign == INPUT_SRC_CH2_PN || current_xfB_assign == INPUT_SRC_CH2_LN)
+                if (current_xfB_assign == INPUT_SRC_CH2_PN || current_xfB_assign == INPUT_SRC_CH2_LN)
                 {
                     current_xfB_assign = INPUT_SRC_CH2_PN;
+                }
+                if (current_xfpost_assign == INPUT_SRC_CH2_PN || current_xfpost_assign == INPUT_SRC_CH2_LN)
+                {
+                    current_xfpost_assign = INPUT_SRC_CH2_PN;
                 }
                 break;
             case XF_ASSIGN_A_CH1:
