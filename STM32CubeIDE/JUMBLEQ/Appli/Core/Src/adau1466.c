@@ -8,9 +8,73 @@
 #include "adau1466.h"
 
 #include "SigmaStudioFW.h"
-#include "oto_no_ita_dsp_ADAU146xSchematic_1.h"
-#include "oto_no_ita_dsp_ADAU146xSchematic_1_Defines.h"
-#include "oto_no_ita_dsp_ADAU146xSchematic_1_PARAM.h"
+#include "JUMBLEQ_DSP_ADAU146xSchematic_1.h"
+#include "JUMBLEQ_DSP_ADAU146xSchematic_1_Defines.h"
+#include "JUMBLEQ_DSP_ADAU146xSchematic_1_PARAM.h"
+
+#include "cmsis_os2.h"
+
+#define ADAU1466_REG_PLL_ENABLE 0xF003U
+#define ADAU1466_REG_PLL_LOCK   0xF004U
+#define ADAU1466_REG_MCLK_OUT   0xF005U
+#define ADAU1466_REG_CLK_GEN1_M 0xF020U
+
+#define ADAU1466_PLL_LOCK_TIMEOUT_MS 200U
+
+typedef struct
+{
+    uint8_t clk_gen1_m;
+    uint8_t mclk_out;
+} adau1466_sample_rate_cfg_t;
+
+static bool adau1466_get_sample_rate_cfg(uint32_t hz, adau1466_sample_rate_cfg_t* cfg)
+{
+    if (cfg == NULL)
+    {
+        return false;
+    }
+
+    if (hz == 48000U)
+    {
+        cfg->clk_gen1_m = 0x06U;
+        cfg->mclk_out   = 0x05U;
+        return true;
+    }
+
+    if (hz == 96000U)
+    {
+        cfg->clk_gen1_m = 0x03U;
+        cfg->mclk_out   = 0x07U;
+        return true;
+    }
+
+    return false;
+}
+
+static void adau1466_write_reg_u16(uint16_t addr, uint8_t value)
+{
+    uint8_t data[2] = {0x00, value};
+    SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, addr, 2, data);
+}
+
+static bool adau1466_wait_pll_lock(uint32_t timeout_ms)
+{
+    uint8_t pll_lock[2] = {0};
+    uint32_t start_tick = HAL_GetTick();
+
+    while ((HAL_GetTick() - start_tick) < timeout_ms)
+    {
+        SIGMA_READ_REGISTER(DEVICE_ADDR_ADAU146XSCHEMATIC_1, ADAU1466_REG_PLL_LOCK, 2, pll_lock);
+        if ((pll_lock[1] & 0x01U) != 0U)
+        {
+            return true;
+        }
+        osDelay(1);
+    }
+
+    SEGGER_RTT_printf(0, "[ADAU1466] PLL lock timeout\n");
+    return false;
+}
 
 double convert_pot2dB(uint16_t adc_val)
 {
@@ -27,6 +91,31 @@ double convert_pot2dB(uint16_t adc_val)
     return db;
 }
 
+int16_t convert_pot2dB_int(uint16_t adc_val)
+{
+    // Pot end-stop付近のADCノイズで表示/制御値が揺れないように端点デッドゾーンを設ける
+    if (adc_val <= 5U)
+    {
+        return -80;
+    }
+    if (adc_val >= (1023U - 5U))
+    {
+        return 10;
+    }
+
+    double db    = convert_pot2dB(adc_val);
+    int16_t db_i = (int16_t) ((db >= 0.0) ? (db + 0.5) : (db - 0.5));
+    if (db_i < -80)
+    {
+        db_i = -80;
+    }
+    if (db_i > 10)
+    {
+        db_i = 10;
+    }
+    return db_i;
+}
+
 double convert_dB2gain(double db)
 {
     return pow(10.0, db / 20.0);
@@ -35,10 +124,21 @@ double convert_dB2gain(double db)
 void write_q8_24(const uint16_t addr, const double val)
 {
     uint8_t gain_array[4] = {0x00};
-    gain_array[0]         = ((uint32_t) (val * pow(2, 23)) >> 24) & 0x000000FF;
-    gain_array[1]         = ((uint32_t) (val * pow(2, 23)) >> 16) & 0x000000FF;
-    gain_array[2]         = ((uint32_t) (val * pow(2, 23)) >> 8) & 0x000000FF;
-    gain_array[3]         = (uint32_t) (val * pow(2, 23)) & 0x000000FF;
+    int64_t fixed_q8_24   = (int64_t) llround(val * 16777216.0);  // 2^24
+    if (fixed_q8_24 > INT32_MAX)
+    {
+        fixed_q8_24 = INT32_MAX;
+    }
+    else if (fixed_q8_24 < INT32_MIN)
+    {
+        fixed_q8_24 = INT32_MIN;
+    }
+
+    uint32_t raw  = (uint32_t) ((int32_t) fixed_q8_24);
+    gain_array[0] = (uint8_t) ((raw >> 24) & 0xFFU);
+    gain_array[1] = (uint8_t) ((raw >> 16) & 0xFFU);
+    gain_array[2] = (uint8_t) ((raw >> 8) & 0xFFU);
+    gain_array[3] = (uint8_t) (raw & 0xFFU);
 
     SIGMA_WRITE_REGISTER_BLOCK_IT(DEVICE_ADDR_ADAU146XSCHEMATIC_1, addr, 4, gain_array);
 }
@@ -50,42 +150,40 @@ void AUDIO_Init_ADAU1466(uint32_t hz)
     osDelay(10);
     HAL_GPIO_WritePin(DSP_RESET_GPIO_Port, DSP_RESET_Pin, 1);
     osDelay(500);
+
+    (void) AUDIO_Update_ADAU1466_SampleRate(hz);
+}
+
+bool AUDIO_Update_ADAU1466_SampleRate(uint32_t hz)
+{
+    adau1466_sample_rate_cfg_t cfg;
+
+    if (!adau1466_get_sample_rate_cfg(hz, &cfg))
+    {
+        SEGGER_RTT_printf(0, "[ADAU1466] unsupported sample rate: %lu\n", (unsigned long) hz);
+        return false;
+    }
+
+    // Re-run SigmaStudio default register/program sequence without HW reset.
+    // This keeps runtime update deterministic and aligns with known-good init flow.
 #if RESET_FROM_FW
     default_download_ADAU146XSCHEMATIC_1();
-    osDelay(100);
+    osDelay(5);
 #endif
 
-    if (hz == 48000)
-    {
-        ADI_REG_TYPE Mode0_0[2] = {0x00, 0x06};
-        ADI_REG_TYPE Mode0_1[2] = {0x00, 0x05};
-        ADI_REG_TYPE Mode0_2[2] = {0x00, 0x00};
-        ADI_REG_TYPE Mode0_3[2] = {0x00, 0x01};
+    // Update PLL-related clock generation for selected sample rate.
+    adau1466_write_reg_u16(ADAU1466_REG_CLK_GEN1_M, cfg.clk_gen1_m);
+    adau1466_write_reg_u16(ADAU1466_REG_MCLK_OUT, cfg.mclk_out);
 
-        SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, 0xF020, 2, Mode0_0); /* CLK_GEN1_M */
-        SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, 0xF005, 2, Mode0_1); /* MCLK_OUT */
-        SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, 0xF003, 2, Mode0_2); /* PLL_ENABLE */
-        __DSB();
-        osDelay(100);
-        SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, 0xF003, 2, Mode0_3); /* PLL_ENABLE */
-    }
-    else if (hz == 96000)
-    {
-        ADI_REG_TYPE Mode1_0[2] = {0x00, 0x03};
-        ADI_REG_TYPE Mode1_1[2] = {0x00, 0x07};
-        ADI_REG_TYPE Mode1_2[2] = {0x00, 0x00};
-        ADI_REG_TYPE Mode1_3[2] = {0x00, 0x01};
-
-        SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, 0xF020, 2, Mode1_0); /* CLK_GEN1_M */
-        SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, 0xF005, 2, Mode1_1); /* MCLK_OUT */
-        SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, 0xF003, 2, Mode1_2); /* PLL_ENABLE */
-        __DSB();
-        osDelay(100);
-        SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, 0xF003, 2, Mode1_3); /* PLL_ENABLE */
-    }
-
-    osDelay(50);  // Wait for PLL to lock and stabilize
+    // Re-enable PLL and wait for lock.
+    adau1466_write_reg_u16(ADAU1466_REG_PLL_ENABLE, 0x00U);
     __DSB();
+    osDelay(1);
+    adau1466_write_reg_u16(ADAU1466_REG_PLL_ENABLE, 0x01U);
+
+    bool pll_locked = adau1466_wait_pll_lock(ADAU1466_PLL_LOCK_TIMEOUT_MS);
+
+    return pll_locked;
 }
 
 void set_dc_inputA(float xf_pos)
@@ -125,28 +223,28 @@ void control_input_from_usb_gain(uint8_t ch, int16_t db)
 
 void control_input_from_ch1_gain(const uint16_t adc_val)
 {
-    const double db   = convert_pot2dB(adc_val);
+    const double db   = (double) convert_pot2dB_int(adc_val);
     const double gain = convert_dB2gain(db);
     write_q8_24(MOD_INPUT_FROM_CH1_GAIN_ADDR, gain);
 }
 
 void control_input_from_ch2_gain(const uint16_t adc_val)
 {
-    const double db   = convert_pot2dB(adc_val);
+    const double db   = (double) convert_pot2dB_int(adc_val);
     const double gain = convert_dB2gain(db);
     write_q8_24(MOD_INPUT_FROM_CH2_GAIN_ADDR, gain);
 }
 
 void control_send1_out_gain(const uint16_t adc_val)
 {
-    const double db   = convert_pot2dB(adc_val);
+    const double db   = (double) convert_pot2dB_int(adc_val);
     const double gain = convert_dB2gain(db);
     write_q8_24(MOD_SEND1_OUTPUT_GAIN_ADDR, gain);
 }
 
 void control_send2_out_gain(const uint16_t adc_val)
 {
-    const double db   = convert_pot2dB(adc_val);
+    const double db   = (double) convert_pot2dB_int(adc_val);
     const double gain = convert_dB2gain(db);
     write_q8_24(MOD_SEND2_OUTPUT_GAIN_ADDR, gain);
 }
@@ -171,7 +269,7 @@ void control_wet_out_gain(const uint16_t adc_val)
 
 void control_master_out_gain(const uint16_t adc_val)
 {
-    const double db   = convert_pot2dB(adc_val);
+    const double db   = (double) convert_pot2dB_int(adc_val);
     const double gain = convert_dB2gain(db);
     write_q8_24(MOD_MASTER_OUTPUT_GAIN_ADDR, gain);
 }

@@ -9,6 +9,7 @@
 #define INC_ADAU1466_H_
 
 #include "main.h"
+#include <stdbool.h>
 
 enum
 {
@@ -41,8 +42,10 @@ enum
 };
 
 double convert_pot2dB(uint16_t adc_val);
+int16_t convert_pot2dB_int(uint16_t adc_val);
 
 void AUDIO_Init_ADAU1466(uint32_t hz);
+bool AUDIO_Update_ADAU1466_SampleRate(uint32_t hz);
 
 void set_dc_inputA(float xf_pos);
 void set_dc_inputB(float xf_pos);
