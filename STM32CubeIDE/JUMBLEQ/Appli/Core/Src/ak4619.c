@@ -86,19 +86,19 @@ void AUDIO_Init_AK4619(uint32_t hz)
     }
 
     // ADC digital volume
-    if (ak4619_write_reg(0x06, 0x18) != HAL_OK)  // ADC1 Lch 0x00(24dB) -> 0x18(12dB) -> 0x30(0dB)
+    if (ak4619_write_reg(0x06, 0x30) != HAL_OK)  // ADC1 Lch 0x00(24dB) -> 0x18(12dB) -> 0x30(0dB)
     {
         return;
     }
-    if (ak4619_write_reg(0x07, 0x18) != HAL_OK)  // ADC1 Rch 0x00(24dB) -> 0x18(12dB) -> 0x30(0dB)
+    if (ak4619_write_reg(0x07, 0x30) != HAL_OK)  // ADC1 Rch 0x00(24dB) -> 0x18(12dB) -> 0x30(0dB)
     {
         return;
     }
-    if (ak4619_write_reg(0x08, 0x18) != HAL_OK)  // ADC2 Lch 0x00(24dB) -> 0x18(12dB) -> 0x30(0dB)
+    if (ak4619_write_reg(0x08, 0x30) != HAL_OK)  // ADC2 Lch 0x00(24dB) -> 0x18(12dB) -> 0x30(0dB)
     {
         return;
     }
-    if (ak4619_write_reg(0x09, 0x18) != HAL_OK)  // ADC2 Rch 0x00(24dB) -> 0x18(12dB) -> 0x30(0dB)
+    if (ak4619_write_reg(0x09, 0x30) != HAL_OK)  // ADC2 Rch 0x00(24dB) -> 0x18(12dB) -> 0x30(0dB)
     {
         return;
     }
