@@ -1051,19 +1051,8 @@ static void apply_xf_assign_post(uint8_t input_ch)
     current_xfpost_assign = current_input_src_from_channel(input_ch);
 }
 
-void ui_control_task(void)
+static void ui_control_process_pot(void)
 {
-#if !ENABLE_DSP_RUNTIME_CONTROL
-    // A/B diagnosis mode: disable runtime DSP control updates.
-    // This keeps USB/SAI audio path active while stopping parameter writes.
-    return;
-#endif
-
-    if (!is_started_audio_control() || !is_adc_complete)
-    {
-        return;
-    }
-
     if (pot_ch_counter < POT_CH_SEL_WAIT)
     {
         switch (pot_ch)
@@ -1210,7 +1199,10 @@ void ui_control_task(void)
         }
 #endif
     }
+}
 
+static void ui_control_process_mag(void)
+{
     for (int i = 0; i < MAG_SW_NUM; i++)
     {
         mag_val_ma[i][mag_ma_index[i]] = adc_val[i];
@@ -1344,7 +1336,10 @@ void ui_control_task(void)
             current_xfB_position = (uint8_t) (xf * 128.0f);
         }
     }
+}
 
+static void ui_control_process_midi_rx(void)
+{
     while (tud_midi_available())
     {
         uint8_t packet[4];
@@ -1400,6 +1395,24 @@ void ui_control_task(void)
 
         SEGGER_RTT_printf(0, "MIDI RX: 0x%02X 0x%02X 0x%02X(%d) 0x%02X(%d)\n", packet[0], packet[1], packet[2], packet[2], packet[3], packet[3]);
     }
+}
+
+void ui_control_task(void)
+{
+#if !ENABLE_DSP_RUNTIME_CONTROL
+    // A/B diagnosis mode: disable runtime DSP control updates.
+    // This keeps USB/SAI audio path active while stopping parameter writes.
+    return;
+#endif
+
+    if (!is_started_audio_control() || !is_adc_complete)
+    {
+        return;
+    }
+
+    ui_control_process_pot();
+    ui_control_process_mag();
+    ui_control_process_midi_rx();
     is_adc_complete = false;
 }
 
