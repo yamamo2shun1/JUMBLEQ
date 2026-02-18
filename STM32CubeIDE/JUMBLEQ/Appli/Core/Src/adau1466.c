@@ -89,6 +89,31 @@ double convert_pot2dB(uint16_t adc_val)
     return db;
 }
 
+int16_t convert_pot2dB_int(uint16_t adc_val)
+{
+    // Pot end-stop付近のADCノイズで表示/制御値が揺れないように端点デッドゾーンを設ける
+    if (adc_val <= 5U)
+    {
+        return -80;
+    }
+    if (adc_val >= (1023U - 5U))
+    {
+        return 10;
+    }
+
+    double db = convert_pot2dB(adc_val);
+    int16_t db_i = (int16_t) ((db >= 0.0) ? (db + 0.5) : (db - 0.5));
+    if (db_i < -80)
+    {
+        db_i = -80;
+    }
+    if (db_i > 10)
+    {
+        db_i = 10;
+    }
+    return db_i;
+}
+
 double convert_dB2gain(double db)
 {
     return pow(10.0, db / 20.0);
@@ -97,10 +122,21 @@ double convert_dB2gain(double db)
 void write_q8_24(const uint16_t addr, const double val)
 {
     uint8_t gain_array[4] = {0x00};
-    gain_array[0]         = ((uint32_t) (val * pow(2, 23)) >> 24) & 0x000000FF;
-    gain_array[1]         = ((uint32_t) (val * pow(2, 23)) >> 16) & 0x000000FF;
-    gain_array[2]         = ((uint32_t) (val * pow(2, 23)) >> 8) & 0x000000FF;
-    gain_array[3]         = (uint32_t) (val * pow(2, 23)) & 0x000000FF;
+    int64_t fixed_q8_24   = (int64_t) llround(val * 16777216.0);  // 2^24
+    if (fixed_q8_24 > INT32_MAX)
+    {
+        fixed_q8_24 = INT32_MAX;
+    }
+    else if (fixed_q8_24 < INT32_MIN)
+    {
+        fixed_q8_24 = INT32_MIN;
+    }
+
+    uint32_t raw  = (uint32_t) ((int32_t) fixed_q8_24);
+    gain_array[0] = (uint8_t) ((raw >> 24) & 0xFFU);
+    gain_array[1] = (uint8_t) ((raw >> 16) & 0xFFU);
+    gain_array[2] = (uint8_t) ((raw >> 8) & 0xFFU);
+    gain_array[3] = (uint8_t) (raw & 0xFFU);
 
     SIGMA_WRITE_REGISTER_BLOCK_IT(DEVICE_ADDR_ADAU146XSCHEMATIC_1, addr, 4, gain_array);
 }
@@ -185,28 +221,28 @@ void control_input_from_usb_gain(uint8_t ch, int16_t db)
 
 void control_input_from_ch1_gain(const uint16_t adc_val)
 {
-    const double db   = convert_pot2dB(adc_val);
+    const double db   = (double) convert_pot2dB_int(adc_val);
     const double gain = convert_dB2gain(db);
     write_q8_24(MOD_INPUT_FROM_CH1_GAIN_ADDR, gain);
 }
 
 void control_input_from_ch2_gain(const uint16_t adc_val)
 {
-    const double db   = convert_pot2dB(adc_val);
+    const double db   = (double) convert_pot2dB_int(adc_val);
     const double gain = convert_dB2gain(db);
     write_q8_24(MOD_INPUT_FROM_CH2_GAIN_ADDR, gain);
 }
 
 void control_send1_out_gain(const uint16_t adc_val)
 {
-    const double db   = convert_pot2dB(adc_val);
+    const double db   = (double) convert_pot2dB_int(adc_val);
     const double gain = convert_dB2gain(db);
     write_q8_24(MOD_SEND1_OUTPUT_GAIN_ADDR, gain);
 }
 
 void control_send2_out_gain(const uint16_t adc_val)
 {
-    const double db   = convert_pot2dB(adc_val);
+    const double db   = (double) convert_pot2dB_int(adc_val);
     const double gain = convert_dB2gain(db);
     write_q8_24(MOD_SEND2_OUTPUT_GAIN_ADDR, gain);
 }
@@ -231,7 +267,7 @@ void control_wet_out_gain(const uint16_t adc_val)
 
 void control_master_out_gain(const uint16_t adc_val)
 {
-    const double db   = convert_pot2dB(adc_val);
+    const double db   = (double) convert_pot2dB_int(adc_val);
     const double gain = convert_dB2gain(db);
     write_q8_24(MOD_MASTER_OUTPUT_GAIN_ADDR, gain);
 }
