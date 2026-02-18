@@ -210,193 +210,8 @@ void tud_resume_cb(void)
 //--------------------------------------------------------------------+
 
 //--------------------------------------------------------------------+
-// UAC1 Helper Functions
-//--------------------------------------------------------------------+
-
-static bool audio10_set_req_ep(tusb_control_request_t const* p_request, uint8_t* pBuff)
-{
-    uint8_t ctrlSel = TU_U16_HIGH(p_request->wValue);
-
-    switch (ctrlSel)
-    {
-    case AUDIO10_EP_CTRL_SAMPLING_FREQ:
-        if (p_request->bRequest == AUDIO10_CS_REQ_SET_CUR)
-        {
-            // Request uses 3 bytes
-            TU_VERIFY(p_request->wLength == 3);
-
-            current_sample_rate = tu_unaligned_read32(pBuff) & 0x00FFFFFF;
-            is_sr_changed       = true;
-
-            TU_LOG2("EP set current freq: %" PRIu32 "\r\n", current_sample_rate);
-
-            return true;
-        }
-        break;
-
-    // Unknown/Unsupported control
-    default:
-        TU_BREAKPOINT();
-        return false;
-    }
-
-    return false;
-}
-
-static bool audio10_get_req_ep(uint8_t rhport, tusb_control_request_t const* p_request)
-{
-    uint8_t ctrlSel = TU_U16_HIGH(p_request->wValue);
-
-    switch (ctrlSel)
-    {
-    case AUDIO10_EP_CTRL_SAMPLING_FREQ:
-        if (p_request->bRequest == AUDIO10_CS_REQ_GET_CUR)
-        {
-            TU_LOG2("EP get current freq\r\n");
-
-            uint8_t freq[3];
-            freq[0] = (uint8_t) (current_sample_rate & 0xFF);
-            freq[1] = (uint8_t) ((current_sample_rate >> 8) & 0xFF);
-            freq[2] = (uint8_t) ((current_sample_rate >> 16) & 0xFF);
-            return tud_audio_buffer_and_schedule_control_xfer(rhport, p_request, freq, sizeof(freq));
-        }
-        break;
-
-    // Unknown/Unsupported control
-    default:
-        TU_BREAKPOINT();
-        return false;
-    }
-
-    return false;
-}
-
-static bool audio10_set_req_entity(tusb_control_request_t const* p_request, uint8_t* pBuff)
-{
-    uint8_t channelNum = TU_U16_LOW(p_request->wValue);
-    uint8_t ctrlSel    = TU_U16_HIGH(p_request->wValue);
-    uint8_t entityID   = TU_U16_HIGH(p_request->wIndex);
-
-    // If request is for our speaker feature unit
-    if (entityID == UAC1_ENTITY_STEREO_OUT_FEATURE_UNIT)
-    {
-        switch (ctrlSel)
-        {
-        case AUDIO10_FU_CTRL_MUTE:
-            switch (p_request->bRequest)
-            {
-            case AUDIO10_CS_REQ_SET_CUR:
-                // Only 1st form is supported
-                TU_VERIFY(p_request->wLength == 1);
-
-                mute[channelNum] = pBuff[0];
-
-                TU_LOG2("    Set Mute: %d of channel: %u\r\n", mute[channelNum], channelNum);
-                return true;
-
-            default:
-                return false;  // not supported
-            }
-
-        case AUDIO10_FU_CTRL_VOLUME:
-            switch (p_request->bRequest)
-            {
-            case AUDIO10_CS_REQ_SET_CUR:
-                // Only 1st form is supported
-                TU_VERIFY(p_request->wLength == 2);
-
-                volume[channelNum] = (int16_t) tu_unaligned_read16(pBuff) / 256;
-
-                TU_LOG2("    Set Volume: %d dB of channel: %u\r\n", volume[channelNum], channelNum);
-                return true;
-
-            default:
-                return false;  // not supported
-            }
-
-            // Unknown/Unsupported control
-        default:
-            TU_BREAKPOINT();
-            return false;
-        }
-    }
-
-    return false;
-}
-
-static bool audio10_get_req_entity(uint8_t rhport, tusb_control_request_t const* p_request)
-{
-    uint8_t channelNum = TU_U16_LOW(p_request->wValue);
-    uint8_t ctrlSel    = TU_U16_HIGH(p_request->wValue);
-    uint8_t entityID   = TU_U16_HIGH(p_request->wIndex);
-
-    // If request is for our speaker feature unit
-    if (entityID == UAC1_ENTITY_STEREO_OUT_FEATURE_UNIT)
-    {
-        switch (ctrlSel)
-        {
-        case AUDIO10_FU_CTRL_MUTE:
-            // Audio control mute cur parameter block consists of only one byte - we thus can send it right away
-            // There does not exist a range parameter block for mute
-            TU_LOG2("    Get Mute of channel: %u\r\n", channelNum);
-            return tud_audio_buffer_and_schedule_control_xfer(rhport, p_request, &mute[channelNum], 1);
-
-        case AUDIO10_FU_CTRL_VOLUME:
-            switch (p_request->bRequest)
-            {
-            case AUDIO10_CS_REQ_GET_CUR:
-                TU_LOG2("    Get Volume of channel: %u\r\n", channelNum);
-                {
-                    int16_t vol = (int16_t) volume[channelNum];
-                    vol         = vol * 256;  // convert to 1/256 dB units
-                    return tud_audio_buffer_and_schedule_control_xfer(rhport, p_request, &vol, sizeof(vol));
-                }
-
-            case AUDIO10_CS_REQ_GET_MIN:
-                TU_LOG2("    Get Volume min of channel: %u\r\n", channelNum);
-                {
-                    int16_t min = -90;        // -90 dB
-                    min         = min * 256;  // convert to 1/256 dB units
-                    return tud_audio_buffer_and_schedule_control_xfer(rhport, p_request, &min, sizeof(min));
-                }
-
-            case AUDIO10_CS_REQ_GET_MAX:
-                TU_LOG2("    Get Volume max of channel: %u\r\n", channelNum);
-                {
-                    int16_t max = 30;         // +30 dB
-                    max         = max * 256;  // convert to 1/256 dB units
-                    return tud_audio_buffer_and_schedule_control_xfer(rhport, p_request, &max, sizeof(max));
-                }
-
-            case AUDIO10_CS_REQ_GET_RES:
-                TU_LOG2("    Get Volume res of channel: %u\r\n", channelNum);
-                {
-                    int16_t res = 1;          // 1 dB
-                    res         = res * 256;  // convert to 1/256 dB units
-                    return tud_audio_buffer_and_schedule_control_xfer(rhport, p_request, &res, sizeof(res));
-                }
-                // Unknown/Unsupported control
-            default:
-                TU_BREAKPOINT();
-                return false;
-            }
-            break;
-
-            // Unknown/Unsupported control
-        default:
-            TU_BREAKPOINT();
-            return false;
-        }
-    }
-
-    return false;
-}
-
-//--------------------------------------------------------------------+
 // UAC2 Helper Functions
 //--------------------------------------------------------------------+
-
-#if TUD_OPT_HIGH_SPEED
 
 // Helper for clock get requests
 static bool audio20_clock_get_request(uint8_t rhport, audio20_control_request_t const* request)
@@ -564,79 +379,35 @@ static bool audio20_set_req_entity(uint8_t rhport, tusb_control_request_t const*
     return false;
 }
 
-#endif  // TUD_OPT_HIGH_SPEED
-
 // Invoked when audio class specific set request received for an EP
 bool tud_audio_set_req_ep_cb(uint8_t rhport, tusb_control_request_t const* p_request, uint8_t* pBuff)
 {
     (void) rhport;
     (void) pBuff;
-
-    if (tud_audio_version() == 1)
-    {
-        return audio10_set_req_ep(p_request, pBuff);
-    }
-    else if (tud_audio_version() == 2)
-    {
-        // We do not support any requests here
-    }
-
-    return false;  // Yet not implemented
+    (void) p_request;
+    return false;  // EP-specific requests are not used for UAC2 in this project.
 }
 
 // Invoked when audio class specific get request received for an EP
 bool tud_audio_get_req_ep_cb(uint8_t rhport, tusb_control_request_t const* p_request)
 {
     (void) rhport;
-
-    if (tud_audio_version() == 1)
-    {
-        return audio10_get_req_ep(rhport, p_request);
-    }
-    else if (tud_audio_version() == 2)
-    {
-        // We do not support any requests here
-    }
-
-    return false;  // Yet not implemented
+    (void) p_request;
+    return false;  // EP-specific requests are not used for UAC2 in this project.
 }
 
 // Invoked when audio class specific get request received for an entity
 bool tud_audio_get_req_entity_cb(uint8_t rhport, tusb_control_request_t const* p_request)
 {
     (void) rhport;
-
-    if (tud_audio_version() == 1)
-    {
-        return audio10_get_req_entity(rhport, p_request);
-#if TUD_OPT_HIGH_SPEED
-    }
-    else if (tud_audio_version() == 2)
-    {
-        return audio20_get_req_entity(rhport, p_request);
-#endif
-    }
-
-    return false;
+    return audio20_get_req_entity(rhport, p_request);
 }
 
 // Invoked when audio class specific set request received for an entity
 bool tud_audio_set_req_entity_cb(uint8_t rhport, tusb_control_request_t const* p_request, uint8_t* buf)
 {
     (void) rhport;
-
-    if (tud_audio_version() == 1)
-    {
-        return audio10_set_req_entity(p_request, buf);
-#if TUD_OPT_HIGH_SPEED
-    }
-    else if (tud_audio_version() == 2)
-    {
-        return audio20_set_req_entity(rhport, p_request, buf);
-#endif
-    }
-
-    return false;
+    return audio20_set_req_entity(rhport, p_request, buf);
 }
 
 bool tud_audio_set_itf_close_ep_cb(uint8_t rhport, tusb_control_request_t const* p_request)
