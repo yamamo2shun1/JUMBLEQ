@@ -42,6 +42,7 @@ enum
 };
 
 double convert_pot2dB(uint16_t adc_val);
+int16_t convert_pot2dB_int(uint16_t adc_val);
 
 void AUDIO_Init_ADAU1466(uint32_t hz);
 bool AUDIO_Update_ADAU1466_SampleRate(uint32_t hz);

@@ -89,6 +89,31 @@ double convert_pot2dB(uint16_t adc_val)
     return db;
 }
 
+int16_t convert_pot2dB_int(uint16_t adc_val)
+{
+    // Pot end-stop付近のADCノイズで表示/制御値が揺れないように端点デッドゾーンを設ける
+    if (adc_val <= 5U)
+    {
+        return -80;
+    }
+    if (adc_val >= (1023U - 5U))
+    {
+        return 10;
+    }
+
+    double db = convert_pot2dB(adc_val);
+    int16_t db_i = (int16_t) ((db >= 0.0) ? (db + 0.5) : (db - 0.5));
+    if (db_i < -80)
+    {
+        db_i = -80;
+    }
+    if (db_i > 10)
+    {
+        db_i = 10;
+    }
+    return db_i;
+}
+
 double convert_dB2gain(double db)
 {
     return pow(10.0, db / 20.0);
@@ -185,28 +210,28 @@ void control_input_from_usb_gain(uint8_t ch, int16_t db)
 
 void control_input_from_ch1_gain(const uint16_t adc_val)
 {
-    const double db   = convert_pot2dB(adc_val);
+    const double db   = (double) convert_pot2dB_int(adc_val);
     const double gain = convert_dB2gain(db);
     write_q8_24(MOD_INPUT_FROM_CH1_GAIN_ADDR, gain);
 }
 
 void control_input_from_ch2_gain(const uint16_t adc_val)
 {
-    const double db   = convert_pot2dB(adc_val);
+    const double db   = (double) convert_pot2dB_int(adc_val);
     const double gain = convert_dB2gain(db);
     write_q8_24(MOD_INPUT_FROM_CH2_GAIN_ADDR, gain);
 }
 
 void control_send1_out_gain(const uint16_t adc_val)
 {
-    const double db   = convert_pot2dB(adc_val);
+    const double db   = (double) convert_pot2dB_int(adc_val);
     const double gain = convert_dB2gain(db);
     write_q8_24(MOD_SEND1_OUTPUT_GAIN_ADDR, gain);
 }
 
 void control_send2_out_gain(const uint16_t adc_val)
 {
-    const double db   = convert_pot2dB(adc_val);
+    const double db   = (double) convert_pot2dB_int(adc_val);
     const double gain = convert_dB2gain(db);
     write_q8_24(MOD_SEND2_OUTPUT_GAIN_ADDR, gain);
 }
@@ -231,7 +256,7 @@ void control_wet_out_gain(const uint16_t adc_val)
 
 void control_master_out_gain(const uint16_t adc_val)
 {
-    const double db   = convert_pot2dB(adc_val);
+    const double db   = (double) convert_pot2dB_int(adc_val);
     const double gain = convert_dB2gain(db);
     write_q8_24(MOD_MASTER_OUTPUT_GAIN_ADDR, gain);
 }
