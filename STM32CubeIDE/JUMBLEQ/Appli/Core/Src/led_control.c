@@ -23,7 +23,7 @@
 #define WL_LED_ONE     16
 #define WL_LED_ZERO    7
 
-#define BLINK_COUNT_MAX 32
+#define BLINK_COUNT_MAX 64
 
 __attribute__((section("noncacheable_buffer"), aligned(32))) uint8_t led_buf[DMA_BUF_SIZE] = {0};
 

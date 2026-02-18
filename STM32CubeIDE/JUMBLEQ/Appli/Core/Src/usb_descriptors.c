@@ -88,6 +88,7 @@ uint8_t const* tud_descriptor_device_cb(void)
     // 0 control, 1 In, 2 Bulk, 3 Iso, 4 In etc ...
     #define EPNUM_AUDIO_IN  0x03
     #define EPNUM_AUDIO_OUT 0x03
+    #define EPNUM_AUDIO_FB  0x04
     #define EPNUM_AUDIO_INT 0x01
 
 #elif CFG_TUSB_MCU == OPT_MCU_CXD56
@@ -108,11 +109,13 @@ uint8_t const* tud_descriptor_device_cb(void)
     //    e.g EP1 OUT & EP1 IN cannot exist together
     #define EPNUM_AUDIO_IN  0x01
     #define EPNUM_AUDIO_OUT 0x02
+    #define EPNUM_AUDIO_FB  0x06
     #define EPNUM_AUDIO_INT 0x03
 
 #else
     #define EPNUM_AUDIO_IN  0x01
     #define EPNUM_AUDIO_OUT 0x01
+    #define EPNUM_AUDIO_FB  0x03
     #define EPNUM_AUDIO_INT 0x02
 #endif
 
@@ -162,7 +165,7 @@ uint8_t const desc_uac2_configuration[] =
         TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_UAC2_TOTAL_LEN, 0x00, 500),
 
         // String index OUT, String index IN, EP Out & EP In address, EP Interrupt address
-        TUD_AUDIO20_AUDIOIF_STEREO_DESCRIPTOR(STRID_AUDIO_OUT, STRID_AUDIO_IN, EPNUM_AUDIO_OUT, EPNUM_AUDIO_IN | 0x80, EPNUM_AUDIO_INT | 0x80),
+        TUD_AUDIO20_AUDIOIF_STEREO_DESCRIPTOR(STRID_AUDIO_OUT, STRID_AUDIO_IN, EPNUM_AUDIO_OUT, EPNUM_AUDIO_IN | 0x80, EPNUM_AUDIO_FB | 0x80, EPNUM_AUDIO_INT | 0x80),
 
     #if CFG_TUD_MIDI
 

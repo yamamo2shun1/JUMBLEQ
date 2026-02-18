@@ -95,12 +95,22 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : UCPD_FLG_n_Pin */
+  GPIO_InitStruct.Pin = UCPD_FLG_n_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(UCPD_FLG_n_GPIO_Port, &GPIO_InitStruct);
+
   /*Configure GPIO pin : UCPD_PWR_EN_Pin */
   GPIO_InitStruct.Pin = UCPD_PWR_EN_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(UCPD_PWR_EN_GPIO_Port, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI8_IRQn, 14, 0);
+  HAL_NVIC_EnableIRQ(EXTI8_IRQn);
 
 }
 
