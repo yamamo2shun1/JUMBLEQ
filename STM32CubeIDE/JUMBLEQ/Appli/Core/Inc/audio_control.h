@@ -43,6 +43,8 @@ int16_t get_current_ch1_db(void);
 int16_t get_current_ch2_db(void);
 int16_t get_current_master_db(void);
 int16_t get_current_dry_wet(void);
+char* get_current_input_typeA_str(void);
+char* get_current_input_typeB_str(void);
 char* get_current_input_srcA_str(void);
 char* get_current_input_srcB_str(void);
 char* get_current_input_srcP_str(void);

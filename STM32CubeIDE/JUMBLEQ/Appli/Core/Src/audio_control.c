@@ -70,8 +70,8 @@ static uint32_t rx_blink_interval_ms = BLINK_NOT_MOUNTED;
 uint8_t current_ch1_input_type = INPUT_TYPE_LINE;
 uint8_t current_ch2_input_type = INPUT_TYPE_LINE;
 
-uint8_t current_xfA_assign    = INPUT_SRC_CH1_LN;
-uint8_t current_xfB_assign    = INPUT_SRC_CH2_LN;
+uint8_t current_xfA_assign    = INPUT_SRC_CH2_LN;
+uint8_t current_xfB_assign    = INPUT_SRC_CH1_LN;
 uint8_t current_xfpost_assign = INPUT_SRC_USB;
 
 uint8_t current_xfA_position = 127;
@@ -270,22 +270,52 @@ int16_t get_current_dry_wet(void)
     return (int16_t) ((double) pot_val[7] / 1023.0 * 100.0);
 }
 
+char* get_current_input_typeA_str(void)
+{
+    switch (current_xfA_assign)
+    {
+    case INPUT_SRC_CH1_LN:
+    case INPUT_SRC_CH2_LN:
+        return "[line]";
+    case INPUT_SRC_CH1_PN:
+    case INPUT_SRC_CH2_PN:
+        return "[phono]";
+    default:
+        return "[]";
+    }
+}
+
+char* get_current_input_typeB_str(void)
+{
+    switch (current_xfB_assign)
+    {
+    case INPUT_SRC_CH1_LN:
+    case INPUT_SRC_CH2_LN:
+        return " [line]";
+    case INPUT_SRC_CH1_PN:
+    case INPUT_SRC_CH2_PN:
+        return "[phono]";
+    default:
+        return "     []";
+    }
+}
+
 char* get_current_input_srcA_str(void)
 {
     switch (current_xfA_assign)
     {
     case INPUT_SRC_CH1_LN:
-        return "C1(LN)";
+        return "A:Ch1";
     case INPUT_SRC_CH1_PN:
-        return "C1(PN)";
+        return "A:Ch1";
     case INPUT_SRC_CH2_LN:
-        return "C2(LN)";
+        return "A:Ch2";
     case INPUT_SRC_CH2_PN:
-        return "C2(PN)";
+        return "A:Ch2";
     case INPUT_SRC_USB:
-        return "USB   ";
+        return "A:USB";
     default:
-        return "NONE  ";
+        return "A:";
     }
 }
 
@@ -294,17 +324,17 @@ char* get_current_input_srcB_str(void)
     switch (current_xfB_assign)
     {
     case INPUT_SRC_CH1_LN:
-        return "C1(LN)";
+        return "B:Ch1";
     case INPUT_SRC_CH1_PN:
-        return "C1(PN)";
+        return "B:Ch1";
     case INPUT_SRC_CH2_LN:
-        return "C2(LN)";
+        return "B:Ch2";
     case INPUT_SRC_CH2_PN:
-        return "C2(PN)";
+        return "B:Ch2";
     case INPUT_SRC_USB:
-        return "USB   ";
+        return "B:USB";
     default:
-        return "NONE  ";
+        return "B:";
     }
 }
 
@@ -313,17 +343,17 @@ char* get_current_input_srcP_str(void)
     switch (current_xfpost_assign)
     {
     case INPUT_SRC_CH1_LN:
-        return "C1(LN)";
+        return "THRU:Ch1[line]";
     case INPUT_SRC_CH1_PN:
-        return "C1(PN)";
+        return "THRU:Ch1[phono]";
     case INPUT_SRC_CH2_LN:
-        return "C2(LN)";
+        return "THRU:Ch2[line]";
     case INPUT_SRC_CH2_PN:
-        return "C2(PN)";
+        return "THRU:Ch2[phono]";
     case INPUT_SRC_USB:
-        return "USB";
+        return "THRU:USB";
     default:
-        return "NONE";
+        return "THRU:";
     }
 }
 
@@ -1258,9 +1288,13 @@ void ui_control_task(void)
                 {
                     current_xfA_assign = INPUT_SRC_CH1_LN;
                 }
-                else if (current_xfB_assign == INPUT_SRC_CH1_PN || current_xfB_assign == INPUT_SRC_CH1_LN)
+                if (current_xfB_assign == INPUT_SRC_CH1_PN || current_xfB_assign == INPUT_SRC_CH1_LN)
                 {
                     current_xfB_assign = INPUT_SRC_CH1_LN;
+                }
+                if (current_xfpost_assign == INPUT_SRC_CH1_PN || current_xfpost_assign == INPUT_SRC_CH1_LN)
+                {
+                    current_xfpost_assign = INPUT_SRC_CH1_LN;
                 }
                 break;
             case CH1_PHONO:
@@ -1270,9 +1304,13 @@ void ui_control_task(void)
                 {
                     current_xfA_assign = INPUT_SRC_CH1_PN;
                 }
-                else if (current_xfB_assign == INPUT_SRC_CH1_PN || current_xfB_assign == INPUT_SRC_CH1_LN)
+                if (current_xfB_assign == INPUT_SRC_CH1_PN || current_xfB_assign == INPUT_SRC_CH1_LN)
                 {
                     current_xfB_assign = INPUT_SRC_CH1_PN;
+                }
+                if (current_xfpost_assign == INPUT_SRC_CH1_PN || current_xfpost_assign == INPUT_SRC_CH1_LN)
+                {
+                    current_xfpost_assign = INPUT_SRC_CH1_PN;
                 }
                 break;
             case CH2_LINE:
@@ -1282,9 +1320,13 @@ void ui_control_task(void)
                 {
                     current_xfA_assign = INPUT_SRC_CH2_LN;
                 }
-                else if (current_xfB_assign == INPUT_SRC_CH2_PN || current_xfB_assign == INPUT_SRC_CH2_LN)
+                if (current_xfB_assign == INPUT_SRC_CH2_PN || current_xfB_assign == INPUT_SRC_CH2_LN)
                 {
                     current_xfB_assign = INPUT_SRC_CH2_LN;
+                }
+                if (current_xfpost_assign == INPUT_SRC_CH2_PN || current_xfpost_assign == INPUT_SRC_CH2_LN)
+                {
+                    current_xfpost_assign = INPUT_SRC_CH2_LN;
                 }
                 break;
             case CH2_PHONO:
@@ -1294,9 +1336,13 @@ void ui_control_task(void)
                 {
                     current_xfA_assign = INPUT_SRC_CH2_PN;
                 }
-                else if (current_xfB_assign == INPUT_SRC_CH2_PN || current_xfB_assign == INPUT_SRC_CH2_LN)
+                if (current_xfB_assign == INPUT_SRC_CH2_PN || current_xfB_assign == INPUT_SRC_CH2_LN)
                 {
                     current_xfB_assign = INPUT_SRC_CH2_PN;
+                }
+                if (current_xfpost_assign == INPUT_SRC_CH2_PN || current_xfpost_assign == INPUT_SRC_CH2_LN)
+                {
+                    current_xfpost_assign = INPUT_SRC_CH2_PN;
                 }
                 break;
             case XF_ASSIGN_A_CH1:
