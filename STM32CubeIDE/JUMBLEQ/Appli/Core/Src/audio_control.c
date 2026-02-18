@@ -1051,83 +1051,91 @@ static void apply_xf_assign_post(uint8_t input_ch)
     current_xfpost_assign = current_input_src_from_channel(input_ch);
 }
 
+static void set_pot_mux_channel(uint8_t channel)
+{
+    static const uint8_t mux_bits[POT_NUM][3] = {
+        {0, 0, 0},  // RV1
+        {0, 1, 0},  // RV3
+        {0, 0, 1},  // RV5
+        {0, 1, 1},  // RV7
+        {1, 0, 0},  // RV2
+        {1, 1, 0},  // RV4
+        {1, 0, 1},  // RV6
+        {1, 1, 1},  // RV8
+    };
+
+    if (channel >= POT_NUM)
+    {
+        channel = 0;
+    }
+
+    HAL_GPIO_WritePin(S0_GPIO_Port, S0_Pin, mux_bits[channel][0]);
+    HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, mux_bits[channel][1]);
+    HAL_GPIO_WritePin(S2_GPIO_Port, S2_Pin, mux_bits[channel][2]);
+}
+
+static void apply_pot_value(uint8_t channel, uint16_t value)
+{
+    switch (channel)
+    {
+    case 0:
+    case 1:
+    case 2:
+    case 3:
+        send_control_change(channel, value, 0);
+        break;
+    case 4:
+        control_input_from_ch2_gain(value);
+        break;
+    case 5:
+        control_master_out_gain(value);
+        break;
+    case 6:
+        control_input_from_ch1_gain(value);
+        break;
+    case 7:
+        // control_dryA_out_gain(1023 - value);
+        control_dryB_out_gain(value);
+        control_wet_out_gain(value);
+        break;
+    default:
+        break;
+    }
+}
+
+static uint32_t read_pot_sample_from_adc(uint8_t channel, uint32_t adc_raw)
+{
+    /*
+     * 0 1 4 5
+     * 2 3 6 7
+     */
+    switch (channel)
+    {
+    case 0:
+    case 1:
+    case 2:
+    case 3:
+        return adc_raw >> 5;
+    case 4:
+    case 5:
+    case 6:
+    case 7:
+        return adc_raw >> 2;
+    default:
+        return 0;
+    }
+}
+
 static void ui_control_process_pot(void)
 {
     if (pot_ch_counter < POT_CH_SEL_WAIT)
     {
-        switch (pot_ch)
-        {
-        case 0:  // RV1
-            HAL_GPIO_WritePin(S0_GPIO_Port, S0_Pin, 0);
-            HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 0);
-            HAL_GPIO_WritePin(S2_GPIO_Port, S2_Pin, 0);
-            break;
-        case 1:  // RV3
-            HAL_GPIO_WritePin(S0_GPIO_Port, S0_Pin, 0);
-            HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 1);
-            HAL_GPIO_WritePin(S2_GPIO_Port, S2_Pin, 0);
-            break;
-        case 2:  // RV5
-            HAL_GPIO_WritePin(S0_GPIO_Port, S0_Pin, 0);
-            HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 0);
-            HAL_GPIO_WritePin(S2_GPIO_Port, S2_Pin, 1);
-            break;
-        case 3:  // RV7
-            HAL_GPIO_WritePin(S0_GPIO_Port, S0_Pin, 0);
-            HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 1);
-            HAL_GPIO_WritePin(S2_GPIO_Port, S2_Pin, 1);
-            break;
-        case 4:  // RV2
-            HAL_GPIO_WritePin(S0_GPIO_Port, S0_Pin, 1);
-            HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 0);
-            HAL_GPIO_WritePin(S2_GPIO_Port, S2_Pin, 0);
-            break;
-        case 5:  // RV4
-            HAL_GPIO_WritePin(S0_GPIO_Port, S0_Pin, 1);
-            HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 1);
-            HAL_GPIO_WritePin(S2_GPIO_Port, S2_Pin, 0);
-            break;
-        case 6:  // RV6
-            HAL_GPIO_WritePin(S0_GPIO_Port, S0_Pin, 1);
-            HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 0);
-            HAL_GPIO_WritePin(S2_GPIO_Port, S2_Pin, 1);
-            break;
-        case 7:  // RV8
-            HAL_GPIO_WritePin(S0_GPIO_Port, S0_Pin, 1);
-            HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 1);
-            HAL_GPIO_WritePin(S2_GPIO_Port, S2_Pin, 1);
-            break;
-        default:
-            HAL_GPIO_WritePin(S0_GPIO_Port, S0_Pin, 0);
-            HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 0);
-            HAL_GPIO_WritePin(S2_GPIO_Port, S2_Pin, 0);
-            break;
-        }
+        set_pot_mux_channel(pot_ch);
         pot_ch_counter++;
     }
     else if (pot_ch_counter >= POT_CH_SEL_WAIT)
     {
-        /*
-         * 0 1 4 5
-         * 2 3 6 7
-         */
-        switch (pot_ch)
-        {
-        case 0:
-        case 1:
-        case 2:
-        case 3:
-            pot_val_ma[pot_ch][pot_ma_index[pot_ch]] = adc_val[6] >> 5;
-            break;
-        case 4:
-        case 5:
-        case 6:
-        case 7:
-            pot_val_ma[pot_ch][pot_ma_index[pot_ch]] = adc_val[6] >> 2;
-            break;
-        default:
-            break;
-        }
+        pot_val_ma[pot_ch][pot_ma_index[pot_ch]] = read_pot_sample_from_adc(pot_ch, adc_val[6]);
         // SEGGER_RTT_printf(0, "ch=%d, adc=%d, ma=[%d, %d, %d, %d, %d, %d, %d, %d]\n", pot_ch, adc_val[6], pot_val_ma[pot_ch][0], pot_val_ma[pot_ch][1], pot_val_ma[pot_ch][2], pot_val_ma[pot_ch][3], pot_val_ma[pot_ch][4], pot_val_ma[pot_ch][5], pot_val_ma[pot_ch][6], pot_val_ma[pot_ch][7]);
         pot_ma_index[pot_ch] = (pot_ma_index[pot_ch] + 1) % POT_MA_SIZE;
 
@@ -1154,35 +1162,7 @@ static void ui_control_process_pot(void)
 
         if (stable_count <= 1)
         {
-            /*
-             * 0 1 4 5
-             * 2 3 6 7
-             */
-            switch (pot_ch)
-            {
-            case 0:
-            case 1:
-            case 2:
-            case 3:
-                send_control_change(pot_ch, pot_val[pot_ch], 0);
-                break;
-            case 4:
-                control_input_from_ch2_gain(pot_val[pot_ch]);
-                break;
-            case 5:
-                control_master_out_gain(pot_val[pot_ch]);
-                break;
-            case 6:
-                control_input_from_ch1_gain(pot_val[pot_ch]);
-                break;
-            case 7:
-                // control_dryA_out_gain(1023 - pot_val[pot_ch]);
-                control_dryB_out_gain(pot_val[pot_ch]);
-                control_wet_out_gain(pot_val[pot_ch]);
-                break;
-            default:
-                break;
-            }
+            apply_pot_value(pot_ch, pot_val[pot_ch]);
         }
 
         pot_val_prev[pot_ch][1] = pot_val_prev[pot_ch][0];
@@ -1201,7 +1181,7 @@ static void ui_control_process_pot(void)
     }
 }
 
-static void ui_control_process_mag(void)
+static void ui_control_update_mag_samples(void)
 {
     for (int i = 0; i < MAG_SW_NUM; i++)
     {
@@ -1228,113 +1208,125 @@ static void ui_control_process_mag(void)
     {
         mag_calibration_count++;
     }
+}
+
+static void ui_control_update_xfade_from_mag(void)
+{
+    int index[MAG_SW_NUM] = {0, 5, 1, 2, 3, 4};
+    for (int j = 0; j < MAG_SW_NUM; j++)
+    {
+        int i = index[j];
+        if (i == 0 || i == 5)
+        {
+            if (mag_val[i] < mag_offset[i] + MAG_XFADE_CUTOFF)
+            {
+                xfade[i] = 0.0f;
+            }
+            else if (mag_val[i] >= mag_offset[i] + MAG_XFADE_CUTOFF && mag_val[i] <= mag_offset[i] + MAG_XFADE_RANGE)
+            {
+                xfade[i] = (float) (mag_val[i] - mag_offset[i] - MAG_XFADE_CUTOFF) / (float) MAG_XFADE_RANGE;
+            }
+            else if (mag_val[i] > mag_offset[i] + MAG_XFADE_RANGE)
+            {
+                xfade[i] = 1.0f;
+            }
+
+            if (xfade[i] >= xfade_max[i])
+            {
+                xfade_max[i] = xfade[i];
+
+                if (i == 0)
+                {
+                    xfade_min[1] = xfade_max[i];
+                }
+                else if (i == 5)
+                {
+                    xfade_min[4] = xfade_max[i];
+                }
+            }
+        }
+        else
+        {
+            if (mag_val[i] < mag_offset[i] + MAG_XFADE_CUTOFF)
+            {
+                xfade[i] = 1.0f;
+            }
+            else if (mag_val[i] >= mag_offset[i] + MAG_XFADE_CUTOFF && mag_val[i] <= mag_offset[i] + MAG_XFADE_RANGE)
+            {
+                xfade[i] = 1.0f - ((float) (mag_val[i] - mag_offset[i] - MAG_XFADE_CUTOFF) / (float) MAG_XFADE_RANGE);
+            }
+            else if (mag_val[i] > mag_offset[i] + MAG_XFADE_RANGE)
+            {
+                xfade[i] = 0.0f;
+            }
+
+            if (xfade[i] <= xfade_min[i])
+            {
+                xfade_min[i] = xfade[i];
+
+                if (xfade_min[i] < 0.05f)
+                {
+                    if (i == 1)
+                    {
+                        xfade_max[0] = 0.0f;
+                    }
+                    else if (i == 4)
+                    {
+                        xfade_max[5] = 0.0f;
+                    }
+                }
+            }
+        }
+    }
+}
+
+static void ui_control_apply_xfade_updates(void)
+{
+    bool xfadeA_changed = false;
+    bool xfadeB_changed = false;
+    for (int i = 0; i < MAG_SW_NUM; i++)
+    {
+        if (fabs(xfade[i] - xfade_prev[i]) > 0.01f)
+        {
+            // send_note(60 + (5 - i), (uint8_t) (127.0f - xfade[i] * 127.0f), 0);
+            send_control_change(10 + (5 - i), (uint8_t) (127.0f - xfade[i] * 127.0f), 0);
+
+            if (i == 0 || i == 1)
+            {
+                xfadeB_changed = true;
+            }
+            if (i == 4 || i == 5)
+            {
+                xfadeA_changed = true;
+            }
+
+            xfade_prev[i] = xfade[i];
+        }
+    }
+
+    if (xfadeA_changed)
+    {
+        const float xf = pow(xfade_max[5] * xfade_min[4], 1.0f / 3.0f);
+        set_dc_inputA(xf);
+        current_xfA_position = (uint8_t) (xf * 128.0f);
+    }
+
+    if (xfadeB_changed)
+    {
+        const float xf = pow(xfade_max[0] * xfade_min[1], 1.0f / 3.0f);
+        set_dc_inputB(xf);
+        current_xfB_position = (uint8_t) (xf * 128.0f);
+    }
+}
+
+static void ui_control_process_mag(void)
+{
+    ui_control_update_mag_samples();
 
     if (mag_calibration_count > MAG_CALIBRATION_COUNT_MAX)
     {
-        int index[6] = {0, 5, 1, 2, 3, 4};
-        for (int j = 0; j < 6; j++)
-        {
-            int i = index[j];
-            if (i == 0 || i == 5)
-            {
-                if (mag_val[i] < mag_offset[i] + MAG_XFADE_CUTOFF)
-                {
-                    xfade[i] = 0.0f;
-                }
-                else if (mag_val[i] >= mag_offset[i] + MAG_XFADE_CUTOFF && mag_val[i] <= mag_offset[i] + MAG_XFADE_RANGE)
-                {
-                    xfade[i] = (float) (mag_val[i] - mag_offset[i] - MAG_XFADE_CUTOFF) / (float) MAG_XFADE_RANGE;
-                }
-                else if (mag_val[i] > mag_offset[i] + MAG_XFADE_RANGE)
-                {
-                    xfade[i] = 1.0f;
-                }
-
-                if (xfade[i] >= xfade_max[i])
-                {
-                    xfade_max[i] = xfade[i];
-
-                    if (i == 0)
-                    {
-                        xfade_min[1] = xfade_max[i];
-                    }
-                    else if (i == 5)
-                    {
-                        xfade_min[4] = xfade_max[i];
-                    }
-                }
-            }
-            else
-            {
-                if (mag_val[i] < mag_offset[i] + MAG_XFADE_CUTOFF)
-                {
-                    xfade[i] = 1.0f;
-                }
-                else if (mag_val[i] >= mag_offset[i] + MAG_XFADE_CUTOFF && mag_val[i] <= mag_offset[i] + MAG_XFADE_RANGE)
-                {
-                    xfade[i] = 1.0f - ((float) (mag_val[i] - mag_offset[i] - MAG_XFADE_CUTOFF) / (float) MAG_XFADE_RANGE);
-                }
-                else if (mag_val[i] > mag_offset[i] + MAG_XFADE_RANGE)
-                {
-                    xfade[i] = 0.0f;
-                }
-
-                if (xfade[i] <= xfade_min[i])
-                {
-                    xfade_min[i] = xfade[i];
-
-                    if (xfade_min[i] < 0.05f)
-                    {
-                        if (i == 1)
-                        {
-                            xfade_max[0] = 0.0f;
-                        }
-                        else if (i == 4)
-                        {
-                            xfade_max[5] = 0.0f;
-                        }
-                    }
-                }
-            }
-        }
-
-        bool xfadeA_changed = false;
-        bool xfadeB_changed = false;
-        for (int i = 0; i < 6; i++)
-        {
-            if (fabs(xfade[i] - xfade_prev[i]) > 0.01f)
-            {
-                // send_note(60 + (5 - i), (uint8_t) (127.0f - xfade[i] * 127.0f), 0);
-                send_control_change(10 + (5 - i), (uint8_t) (127.0f - xfade[i] * 127.0f), 0);
-
-                if (i == 0 || i == 1)
-                {
-                    xfadeB_changed = true;
-                }
-                if (i == 4 || i == 5)
-                {
-                    xfadeA_changed = true;
-                }
-
-                xfade_prev[i] = xfade[i];
-            }
-        }
-
-        if (xfadeA_changed)
-        {
-            const float xf = pow(xfade_max[5] * xfade_min[4], 1.0f / 3.0f);
-            set_dc_inputA(xf);
-
-            current_xfA_position = (uint8_t) (xf * 128.0f);
-        }
-
-        if (xfadeB_changed)
-        {
-            const float xf = pow(xfade_max[0] * xfade_min[1], 1.0f / 3.0f);
-            set_dc_inputB(xf);
-
-            current_xfB_position = (uint8_t) (xf * 128.0f);
-        }
+        ui_control_update_xfade_from_mag();
+        ui_control_apply_xfade_updates();
     }
 }
 
