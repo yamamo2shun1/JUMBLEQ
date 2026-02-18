@@ -26,6 +26,18 @@
 #define N_SAMPLE_RATES TU_ARRAY_SIZE(sample_rates)
 #define AUDIO_DIAG_LOG 0
 
+enum
+{
+    AUDIO_MS_PER_SECOND        = 1000u,
+    AUDIO_TASK_STATS_PERIOD_MS = 1000u,
+    AUDIO_RESOLUTION_16BIT     = 16u,
+    AUDIO_BYTES_PER_SAMPLE_16  = 2u,
+    AUDIO_BYTES_PER_SAMPLE_32  = 4u,
+    AUDIO_USB_FRAME_CHANNELS   = 4u,
+    AUDIO_RING_FRAME_WORDS     = 4u,
+    DBG_MIN_U16_INIT           = 0xFFFFu,
+};
+
 extern DMA_QListTypeDef List_GPDMA1_Channel2;
 extern DMA_QListTypeDef List_GPDMA1_Channel3;
 extern DMA_QListTypeDef List_HPDMA1_Channel0;
@@ -81,7 +93,7 @@ static volatile uint32_t dbg_tx_half_rewrite_events = 0u;
 static volatile uint32_t dbg_tx_cplt_rewrite_events = 0u;
 static volatile uint32_t dbg_rx_half_rewrite_events = 0u;
 static volatile uint32_t dbg_rx_cplt_rewrite_events = 0u;
-static volatile uint16_t dbg_usb_read_size_min      = 0xFFFFu;
+static volatile uint16_t dbg_usb_read_size_min      = DBG_MIN_U16_INIT;
 static volatile uint16_t dbg_usb_read_size_max      = 0u;
 #endif
 
@@ -819,7 +831,7 @@ void start_sai(void)
     dbg_tx_cplt_rewrite_events = 0u;
     dbg_rx_half_rewrite_events = 0u;
     dbg_rx_cplt_rewrite_events = 0u;
-    dbg_usb_read_size_min      = 0xFFFFu;
+    dbg_usb_read_size_min      = DBG_MIN_U16_INIT;
     dbg_usb_read_size_max      = 0u;
 #endif
 
@@ -914,7 +926,7 @@ void copybuf_usb2ring(void)
 
     uint32_t sai_words;  // SAIに書くword数�E�Ech刁E��E
 
-    if (current_resolution == 16)
+    if (current_resolution == AUDIO_RESOLUTION_16BIT)
     {
         // 16bit: USBチE�Eタはint16_tとして詰まってぁE�� (4ch)
         int16_t* usb_in_buf_16 = (int16_t*) usb_in_buf;
@@ -1163,14 +1175,14 @@ static void copybuf_sai2ring(void)
 static uint32_t audio_frames_per_ms(void)
 {
     // 侁E 48kHz -> 48 frames/ms
-    return current_sample_rate / 1000u;
+    return current_sample_rate / AUDIO_MS_PER_SECOND;
 }
 
 static uint16_t audio_out_bytes_per_ms(void)
 {
     // Host -> Device (speaker OUT) stream bytes per 1ms
     // 48/96kHz are integer frames per ms in this project.
-    uint32_t bytes_per_sample = (current_resolution == 16) ? 2u : 4u;
+    uint32_t bytes_per_sample = (current_resolution == AUDIO_RESOLUTION_16BIT) ? AUDIO_BYTES_PER_SAMPLE_16 : AUDIO_BYTES_PER_SAMPLE_32;
     uint32_t bytes            = audio_frames_per_ms() * CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX * bytes_per_sample;
     if (bytes > sizeof(usb_in_buf))
     {
@@ -1218,10 +1230,10 @@ static void copybuf_ring2usb_and_send(void)
     uint32_t usb_bytes;
     uint16_t written;
 
-    if (current_resolution == 16)
+    if (current_resolution == AUDIO_RESOLUTION_16BIT)
     {
         // 16bit: SAI(32bit 2ch) ↁEUSB(16bit 4ch) 変換
-        usb_bytes = frames * 4 * sizeof(int16_t);  // 4ch刁E
+        usb_bytes = frames * AUDIO_USB_FRAME_CHANNELS * sizeof(int16_t);  // 4ch刁E
 
         // 安�E: usb_out_buf が足りなぁE��定なら絶対に書かなぁE
         if (usb_bytes > sizeof(usb_out_buf))
@@ -1231,20 +1243,20 @@ static void copybuf_ring2usb_and_send(void)
 
         for (uint32_t f = 0; f < frames; f++)
         {
-            uint32_t r_L1 = (sai_receive_index + f * 4 + 0) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_R1 = (sai_receive_index + f * 4 + 1) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_L2 = (sai_receive_index + f * 4 + 2) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_R2 = (sai_receive_index + f * 4 + 3) & (SAI_RNG_BUF_SIZE - 1);
+            uint32_t r_L1 = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 0) & (SAI_RNG_BUF_SIZE - 1);
+            uint32_t r_R1 = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 1) & (SAI_RNG_BUF_SIZE - 1);
+            uint32_t r_L2 = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 2) & (SAI_RNG_BUF_SIZE - 1);
+            uint32_t r_R2 = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 3) & (SAI_RNG_BUF_SIZE - 1);
             // 32bit ↁE16bit (上佁E6bitを取り�EぁE
             // SAIチE�Eタは符号付き32bitなので、算術右シフトで符号を保持
             int32_t sample_L1         = sai_rx_rng_buf[r_L1];
             int32_t sample_R1         = sai_rx_rng_buf[r_R1];
             int32_t sample_L2         = sai_rx_rng_buf[r_L2];
             int32_t sample_R2         = sai_rx_rng_buf[r_R2];
-            usb_out_buf_16[f * 4 + 0] = (int16_t) (sample_L1 >> 16);  // L1
-            usb_out_buf_16[f * 4 + 1] = (int16_t) (sample_R1 >> 16);  // R1
-            usb_out_buf_16[f * 4 + 2] = (int16_t) (sample_L2 >> 16);  // L2
-            usb_out_buf_16[f * 4 + 3] = (int16_t) (sample_R2 >> 16);  // R2
+            usb_out_buf_16[f * AUDIO_USB_FRAME_CHANNELS + 0] = (int16_t) (sample_L1 >> 16);  // L1
+            usb_out_buf_16[f * AUDIO_USB_FRAME_CHANNELS + 1] = (int16_t) (sample_R1 >> 16);  // R1
+            usb_out_buf_16[f * AUDIO_USB_FRAME_CHANNELS + 2] = (int16_t) (sample_L2 >> 16);  // L2
+            usb_out_buf_16[f * AUDIO_USB_FRAME_CHANNELS + 3] = (int16_t) (sample_R2 >> 16);  // R2
         }
 
         // ISRコンチE��ストから呼ばれるので通常版を使用
@@ -1256,17 +1268,17 @@ static void copybuf_ring2usb_and_send(void)
         }
 
         // 書けた刁E��け読みポインタを進める
-        uint32_t written_frames = ((uint32_t) written) / (4 * sizeof(int16_t));
+        uint32_t written_frames = ((uint32_t) written) / (AUDIO_USB_FRAME_CHANNELS * sizeof(int16_t));
         if (written_frames > frames)
             written_frames = frames;
         if (written_frames == 0)
             return;
-        sai_receive_index += written_frames * 4;  // SAIは4ch刁E
+        sai_receive_index += written_frames * AUDIO_RING_FRAME_WORDS;  // SAIは4ch刁E
     }
     else
     {
         // 24bit in 32bit slot: SAI(2ch) ↁEUSB(4ch) 変換
-        usb_bytes = frames * 4 * sizeof(int32_t);  // 4ch刁E
+        usb_bytes = frames * AUDIO_USB_FRAME_CHANNELS * sizeof(int32_t);  // 4ch刁E
 
         // 安�E: usb_out_buf が足りなぁE��定なら絶対に書かなぁE
         if (usb_bytes > sizeof(usb_out_buf))
@@ -1274,14 +1286,14 @@ static void copybuf_ring2usb_and_send(void)
 
         for (uint32_t f = 0; f < frames; f++)
         {
-            uint32_t r_L1          = (sai_receive_index + f * 4 + 0) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_R1          = (sai_receive_index + f * 4 + 1) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_L2          = (sai_receive_index + f * 4 + 2) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_R2          = (sai_receive_index + f * 4 + 3) & (SAI_RNG_BUF_SIZE - 1);
-            usb_out_buf[f * 4 + 0] = sai_rx_rng_buf[r_L1];  // L1
-            usb_out_buf[f * 4 + 1] = sai_rx_rng_buf[r_R1];  // R1
-            usb_out_buf[f * 4 + 2] = sai_rx_rng_buf[r_L2];  // L2
-            usb_out_buf[f * 4 + 3] = sai_rx_rng_buf[r_R2];  // R2
+            uint32_t r_L1          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 0) & (SAI_RNG_BUF_SIZE - 1);
+            uint32_t r_R1          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 1) & (SAI_RNG_BUF_SIZE - 1);
+            uint32_t r_L2          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 2) & (SAI_RNG_BUF_SIZE - 1);
+            uint32_t r_R2          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 3) & (SAI_RNG_BUF_SIZE - 1);
+            usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 0] = sai_rx_rng_buf[r_L1];  // L1
+            usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 1] = sai_rx_rng_buf[r_R1];  // R1
+            usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 2] = sai_rx_rng_buf[r_L2];  // L2
+            usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 3] = sai_rx_rng_buf[r_R2];  // R2
         }
 
         // ISRコンチE��ストから呼ばれるので通常版を使用
@@ -1293,12 +1305,12 @@ static void copybuf_ring2usb_and_send(void)
         }
 
         // 書けた刁E��け読みポインタを進める
-        uint32_t written_frames = ((uint32_t) written) / (4 * sizeof(int32_t));
+        uint32_t written_frames = ((uint32_t) written) / (AUDIO_USB_FRAME_CHANNELS * sizeof(int32_t));
         if (written_frames > frames)
             written_frames = frames;
         if (written_frames == 0)
             return;
-        sai_receive_index += written_frames * 4;  // SAIは4ch刁E
+        sai_receive_index += written_frames * AUDIO_RING_FRAME_WORDS;  // SAIは4ch刁E
     }
 }
 
@@ -1327,7 +1339,7 @@ void audio_task(void)
     // 呼び出し頻度計測
     audio_task_call_count++;
     uint32_t now = HAL_GetTick();
-    if (now - audio_task_last_tick >= 1000)
+    if (now - audio_task_last_tick >= AUDIO_TASK_STATS_PERIOD_MS)
     {
         audio_task_frequency  = audio_task_call_count;
         audio_task_call_count = 0;
@@ -1341,7 +1353,7 @@ void audio_task(void)
             uint32_t sigma_err   = sigma_spi_it_write_errors;
             uint32_t sigma_to    = sigma_spi_it_write_timeouts;
             uint32_t sigma_mto   = sigma_spi_it_mutex_timeouts;
-            SEGGER_RTT_printf(0, "[AUD][TX] sr=%lu used_now=%ld used_min=%lu used_max=%lu und=%lu part=%lu drift+%lu drift-%lu usb0=%lu usbB=%lu usbMin=%u usbMax=%u txRw=(%lu,%lu) rxRw=(%lu,%lu) dmae=%lu txe=%lu rxe=%lu txer=0x%08lX rxer=0x%08lX txsr=0x%08lX rxsr=0x%08lX spiC=%lu spiE=%lu spiT=%lu spiM=%lu task_hz=%lu\r\n", (unsigned long) current_sample_rate, (long) tx_used_now, (unsigned long) ((dbg_tx_used_min == 0xFFFFFFFFu) ? 0u : dbg_tx_used_min), (unsigned long) dbg_tx_used_max, (unsigned long) dbg_tx_underrun_events, (unsigned long) dbg_tx_partial_fill_events, (unsigned long) dbg_tx_drift_up_events, (unsigned long) dbg_tx_drift_dn_events, (unsigned long) dbg_usb_read_zero_events, (unsigned long) dbg_usb_read_bytes, (unsigned int) ((dbg_usb_read_size_min == 0xFFFFu) ? 0u : dbg_usb_read_size_min), (unsigned int) dbg_usb_read_size_max, (unsigned long) dbg_tx_half_rewrite_events, (unsigned long) dbg_tx_cplt_rewrite_events, (unsigned long) dbg_rx_half_rewrite_events, (unsigned long) dbg_rx_cplt_rewrite_events, (unsigned long) dbg_dma_err_events, (unsigned long) dbg_sai_tx_err_events, (unsigned long) dbg_sai_rx_err_events, (unsigned long) dbg_sai_tx_last_err, (unsigned long) dbg_sai_rx_last_err, (unsigned long) dbg_sai_tx_sr_flags, (unsigned long) dbg_sai_rx_sr_flags, (unsigned long) (sigma_calls - dbg_sigma_calls_prev), (unsigned long) (sigma_err - dbg_sigma_err_prev), (unsigned long) (sigma_to - dbg_sigma_to_prev), (unsigned long) (sigma_mto - dbg_sigma_mto_prev), (unsigned long) audio_task_frequency);
+            SEGGER_RTT_printf(0, "[AUD][TX] sr=%lu used_now=%ld used_min=%lu used_max=%lu und=%lu part=%lu drift+%lu drift-%lu usb0=%lu usbB=%lu usbMin=%u usbMax=%u txRw=(%lu,%lu) rxRw=(%lu,%lu) dmae=%lu txe=%lu rxe=%lu txer=0x%08lX rxer=0x%08lX txsr=0x%08lX rxsr=0x%08lX spiC=%lu spiE=%lu spiT=%lu spiM=%lu task_hz=%lu\r\n", (unsigned long) current_sample_rate, (long) tx_used_now, (unsigned long) ((dbg_tx_used_min == 0xFFFFFFFFu) ? 0u : dbg_tx_used_min), (unsigned long) dbg_tx_used_max, (unsigned long) dbg_tx_underrun_events, (unsigned long) dbg_tx_partial_fill_events, (unsigned long) dbg_tx_drift_up_events, (unsigned long) dbg_tx_drift_dn_events, (unsigned long) dbg_usb_read_zero_events, (unsigned long) dbg_usb_read_bytes, (unsigned int) ((dbg_usb_read_size_min == DBG_MIN_U16_INIT) ? 0u : dbg_usb_read_size_min), (unsigned int) dbg_usb_read_size_max, (unsigned long) dbg_tx_half_rewrite_events, (unsigned long) dbg_tx_cplt_rewrite_events, (unsigned long) dbg_rx_half_rewrite_events, (unsigned long) dbg_rx_cplt_rewrite_events, (unsigned long) dbg_dma_err_events, (unsigned long) dbg_sai_tx_err_events, (unsigned long) dbg_sai_rx_err_events, (unsigned long) dbg_sai_tx_last_err, (unsigned long) dbg_sai_rx_last_err, (unsigned long) dbg_sai_tx_sr_flags, (unsigned long) dbg_sai_rx_sr_flags, (unsigned long) (sigma_calls - dbg_sigma_calls_prev), (unsigned long) (sigma_err - dbg_sigma_err_prev), (unsigned long) (sigma_to - dbg_sigma_to_prev), (unsigned long) (sigma_mto - dbg_sigma_mto_prev), (unsigned long) audio_task_frequency);
             dbg_sigma_calls_prev = sigma_calls;
             dbg_sigma_err_prev   = sigma_err;
             dbg_sigma_to_prev    = sigma_to;
@@ -1366,7 +1378,7 @@ void audio_task(void)
         dbg_tx_cplt_rewrite_events = 0u;
         dbg_rx_half_rewrite_events = 0u;
         dbg_rx_cplt_rewrite_events = 0u;
-        dbg_usb_read_size_min      = 0xFFFFu;
+        dbg_usb_read_size_min      = DBG_MIN_U16_INIT;
         dbg_usb_read_size_max      = 0u;
 #endif
     }
@@ -1483,7 +1495,7 @@ void AUDIO_SAI_Reset_ForNewRate(void)
     dbg_tx_cplt_rewrite_events = 0u;
     dbg_rx_half_rewrite_events = 0u;
     dbg_rx_cplt_rewrite_events = 0u;
-    dbg_usb_read_size_min      = 0xFFFFu;
+    dbg_usb_read_size_min      = DBG_MIN_U16_INIT;
     dbg_usb_read_size_max      = 0u;
 #endif
 
