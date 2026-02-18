@@ -135,29 +135,7 @@ uint8_t const* tud_descriptor_device_cb(void)
     #define MIDI_EP_SIZE_HS 512
 #endif
 
-#define CONFIG_UAC1_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_AUDIO10_AUDIOIF_STEREO_DESC_LEN(2) + (CFG_TUD_MIDI ? TUD_MIDI_DESC_LEN : 0))
-
-uint8_t const desc_uac1_configuration[] =
-    {
-        // Config number, interface count, string index, total length, attribute, power in mA
-        TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_UAC1_TOTAL_LEN, 0x00, 500),
-
-        // Interface number, string index OUT, string index IN, bytes per sample RX/TX, bits used per sample RX/TX, EP Out & EP In address, EP sizes, sample rate
-        TUD_AUDIO10_AUDIOIF_STEREO_DESCRIPTOR(ITF_NUM_AUDIO_CONTROL, STRID_AUDIO_OUT, STRID_AUDIO_IN, CFG_TUD_AUDIO_FUNC_1_FORMAT_1_N_BYTES_PER_SAMPLE_RX, CFG_TUD_AUDIO_FUNC_1_FORMAT_1_RESOLUTION_RX, CFG_TUD_AUDIO_FUNC_1_FORMAT_1_N_BYTES_PER_SAMPLE_TX, CFG_TUD_AUDIO_FUNC_1_FORMAT_1_RESOLUTION_TX, EPNUM_AUDIO_OUT, CFG_TUD_AUDIO10_FUNC_1_FORMAT_1_EP_SZ_OUT, EPNUM_AUDIO_IN | 0x80, CFG_TUD_AUDIO10_FUNC_1_FORMAT_1_EP_SZ_IN, 48000, 96000),
-
-#if CFG_TUD_MIDI
-
-        // MIDI (Audio Class 1.0, MIDIStreaming)
-        TUD_MIDI_DESCRIPTOR(ITF_NUM_MIDI, STRID_MIDI, EPNUM_MIDI_OUT, (uint8_t) (EPNUM_MIDI_IN | 0x80), MIDI_EP_SIZE_FS),
-
-#endif
-};
-
-TU_VERIFY_STATIC(sizeof(desc_uac1_configuration) == CONFIG_UAC1_TOTAL_LEN, "Incorrect size");
-
-#if TUD_OPT_HIGH_SPEED
-
-    #define CONFIG_UAC2_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_AUDIO20_AUDIOIF_STEREO_DESC_LEN + (CFG_TUD_MIDI ? TUD_MIDI_DESC_LEN : 0))
+#define CONFIG_UAC2_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_AUDIO20_AUDIOIF_STEREO_DESC_LEN + (CFG_TUD_MIDI ? TUD_MIDI_DESC_LEN : 0))
 
 uint8_t const desc_uac2_configuration[] =
     {
@@ -176,6 +154,8 @@ uint8_t const desc_uac2_configuration[] =
 };
 
 TU_VERIFY_STATIC(sizeof(desc_uac2_configuration) == CONFIG_UAC2_TOTAL_LEN, "Incorrect size");
+
+#if TUD_OPT_HIGH_SPEED
 
 // device qualifier is mostly similar to device descriptor since we don't change configuration based on speed
 tusb_desc_device_qualifier_t const desc_device_qualifier =
@@ -208,8 +188,8 @@ uint8_t const* tud_descriptor_other_speed_configuration_cb(uint8_t index)
 {
     (void) index;  // for multiple configurations
 
-    // if link speed is high return fullspeed config, and vice versa
-    return (tud_speed_get() == TUSB_SPEED_HIGH) ? desc_uac1_configuration : desc_uac2_configuration;
+    // UAC2-only: use the same descriptor regardless of requested opposite speed.
+    return desc_uac2_configuration;
 }
 #endif
 
@@ -219,19 +199,7 @@ uint8_t const* tud_descriptor_other_speed_configuration_cb(uint8_t index)
 uint8_t const* tud_descriptor_configuration_cb(uint8_t index)
 {
     (void) index;  // for multiple configurations
-#if TUD_OPT_HIGH_SPEED
-    // Although we are highspeed, host may be fullspeed.
-    if (tud_speed_get() == TUSB_SPEED_FULL)
-    {
-        return desc_uac1_configuration;
-    }
-    else
-    {
-        return desc_uac2_configuration;
-    }
-#else
-    return desc_uac1_configuration;
-#endif
+    return desc_uac2_configuration;
 }
 
 //--------------------------------------------------------------------+
