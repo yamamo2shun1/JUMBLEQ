@@ -122,10 +122,21 @@ double convert_dB2gain(double db)
 void write_q8_24(const uint16_t addr, const double val)
 {
     uint8_t gain_array[4] = {0x00};
-    gain_array[0]         = ((uint32_t) (val * pow(2, 23)) >> 24) & 0x000000FF;
-    gain_array[1]         = ((uint32_t) (val * pow(2, 23)) >> 16) & 0x000000FF;
-    gain_array[2]         = ((uint32_t) (val * pow(2, 23)) >> 8) & 0x000000FF;
-    gain_array[3]         = (uint32_t) (val * pow(2, 23)) & 0x000000FF;
+    int64_t fixed_q8_24   = (int64_t) llround(val * 16777216.0);  // 2^24
+    if (fixed_q8_24 > INT32_MAX)
+    {
+        fixed_q8_24 = INT32_MAX;
+    }
+    else if (fixed_q8_24 < INT32_MIN)
+    {
+        fixed_q8_24 = INT32_MIN;
+    }
+
+    uint32_t raw  = (uint32_t) ((int32_t) fixed_q8_24);
+    gain_array[0] = (uint8_t) ((raw >> 24) & 0xFFU);
+    gain_array[1] = (uint8_t) ((raw >> 16) & 0xFFU);
+    gain_array[2] = (uint8_t) ((raw >> 8) & 0xFFU);
+    gain_array[3] = (uint8_t) (raw & 0xFFU);
 
     SIGMA_WRITE_REGISTER_BLOCK_IT(DEVICE_ADDR_ADAU146XSCHEMATIC_1, addr, 4, gain_array);
 }

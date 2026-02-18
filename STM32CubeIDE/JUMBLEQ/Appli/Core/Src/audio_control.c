@@ -6,6 +6,7 @@
  */
 
 #include "audio_control.h"
+#include "ui_control_internal.h"
 
 #include "adc.h"
 #include "gpdma.h"
@@ -25,6 +26,18 @@
 #define N_SAMPLE_RATES TU_ARRAY_SIZE(sample_rates)
 #define AUDIO_DIAG_LOG 0
 
+enum
+{
+    AUDIO_MS_PER_SECOND        = 1000u,
+    AUDIO_TASK_STATS_PERIOD_MS = 1000u,
+    AUDIO_RESOLUTION_16BIT     = 16u,
+    AUDIO_BYTES_PER_SAMPLE_16  = 2u,
+    AUDIO_BYTES_PER_SAMPLE_32  = 4u,
+    AUDIO_USB_FRAME_CHANNELS   = 4u,
+    AUDIO_RING_FRAME_WORDS     = 4u,
+    DBG_MIN_U16_INIT           = 0xFFFFu,
+};
+
 extern DMA_QListTypeDef List_GPDMA1_Channel2;
 extern DMA_QListTypeDef List_GPDMA1_Channel3;
 extern DMA_QListTypeDef List_HPDMA1_Channel0;
@@ -40,66 +53,13 @@ enum
 enum
 {
     VOLUME_CTRL_0_DB    = 0,
-    VOLUME_CTRL_10_DB   = 2560,
-    VOLUME_CTRL_20_DB   = 5120,
-    VOLUME_CTRL_30_DB   = 7680,
-    VOLUME_CTRL_40_DB   = 10240,
     VOLUME_CTRL_50_DB   = 12800,
-    VOLUME_CTRL_60_DB   = 15360,
-    VOLUME_CTRL_70_DB   = 17920,
-    VOLUME_CTRL_80_DB   = 20480,
-    VOLUME_CTRL_90_DB   = 23040,
-    VOLUME_CTRL_100_DB  = 25600,
-    VOLUME_CTRL_SILENCE = 0x8000,
-};
-
-enum
-{
-    INPUT_SRC_CH1_LN = 0,
-    INPUT_SRC_CH1_PN,
-    INPUT_SRC_CH2_LN,
-    INPUT_SRC_CH2_PN,
-    INPUT_SRC_USB,
-    INPUT_SRC_NONE,
 };
 
 // Audio controls
 static uint32_t tx_blink_interval_ms = BLINK_NOT_MOUNTED;
 static uint32_t rx_blink_interval_ms = BLINK_NOT_MOUNTED;
 
-uint8_t current_ch1_input_type = INPUT_TYPE_LINE;
-uint8_t current_ch2_input_type = INPUT_TYPE_LINE;
-
-uint8_t current_xfA_assign    = INPUT_SRC_CH2_LN;
-uint8_t current_xfB_assign    = INPUT_SRC_CH1_LN;
-uint8_t current_xfpost_assign = INPUT_SRC_USB;
-
-uint8_t current_xfA_position = 127;
-uint8_t current_xfB_position = 127;
-
-__attribute__((section("noncacheable_buffer"), aligned(32))) uint32_t adc_val[ADC_NUM] = {0};
-
-uint8_t pot_ch         = 0;
-uint8_t pot_ch_counter = 0;
-
-uint16_t pot_ma_index[POT_NUM]            = {0};
-uint32_t pot_val_ma[POT_NUM][POT_MA_SIZE] = {0};
-uint16_t pot_val[POT_NUM]                 = {0};
-uint16_t pot_val_prev[POT_NUM][2]         = {0};
-
-uint16_t mag_calibration_count               = 0;
-uint16_t mag_ma_index[MAG_SW_NUM]            = {0};
-uint32_t mag_val_ma[MAG_SW_NUM][MAG_MA_SIZE] = {0};
-uint16_t mag_val[MAG_SW_NUM]                 = {0};
-uint32_t mag_offset_sum[MAG_SW_NUM]          = {0};
-uint16_t mag_offset[MAG_SW_NUM]              = {0};
-
-float xfade[MAG_SW_NUM]      = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
-float xfade_prev[MAG_SW_NUM] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
-float xfade_min[MAG_SW_NUM]  = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
-float xfade_max[MAG_SW_NUM]  = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-
-int16_t hpout_clear_count              = 0;
 volatile uint32_t sai_tx_rng_buf_index = 0;
 volatile uint32_t sai_rx_rng_buf_index = 0;
 volatile uint32_t sai_transmit_index   = 0;
@@ -133,7 +93,7 @@ static volatile uint32_t dbg_tx_half_rewrite_events = 0u;
 static volatile uint32_t dbg_tx_cplt_rewrite_events = 0u;
 static volatile uint32_t dbg_rx_half_rewrite_events = 0u;
 static volatile uint32_t dbg_rx_cplt_rewrite_events = 0u;
-static volatile uint16_t dbg_usb_read_size_min      = 0xFFFFu;
+static volatile uint16_t dbg_usb_read_size_min      = DBG_MIN_U16_INIT;
 static volatile uint16_t dbg_usb_read_size_max      = 0u;
 #endif
 
@@ -141,8 +101,6 @@ bool s_streaming_out = false;
 bool s_streaming_in  = false;
 
 bool is_sr_changed            = false;
-bool is_start_audio_control   = false;
-volatile bool is_adc_complete = false;
 
 const uint32_t sample_rates[] = {48000, 96000};
 uint32_t current_sample_rate  = sample_rates[0];
@@ -171,35 +129,7 @@ void control_input_from_usb_gain(uint8_t ch, int16_t db);
 
 void reset_audio_buffer(void)
 {
-    for (uint16_t i = 0; i < ADC_NUM; i++)
-    {
-        adc_val[i] = 0;
-    }
-
-    for (uint16_t i = 0; i < POT_NUM; i++)
-    {
-        pot_ma_index[i]    = 0;
-        pot_val[i]         = 0;
-        pot_val_prev[i][0] = 0;
-        pot_val_prev[i][1] = 0;
-        for (uint16_t j = 0; j < POT_MA_SIZE; j++)
-        {
-            pot_val_ma[i][j] = 0;
-        }
-    }
-
-    mag_calibration_count = 0;
-    for (uint16_t i = 0; i < MAG_SW_NUM; i++)
-    {
-        mag_ma_index[i]   = 0;
-        mag_val[i]        = 0;
-        mag_offset_sum[i] = 0;
-        mag_offset[i]     = 0;
-        for (uint16_t j = 0; j < MAG_MA_SIZE; j++)
-        {
-            mag_val_ma[i][j] = 0;
-        }
-    }
+    ui_control_reset_state();
 
     for (uint16_t i = 0; i < CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ / 4; i++)
     {
@@ -238,132 +168,6 @@ uint32_t get_tx_blink_interval_ms(void)
 uint32_t get_rx_blink_interval_ms(void)
 {
     return rx_blink_interval_ms;
-}
-
-uint8_t get_current_xfA_position(void)
-{
-    return current_xfA_position;
-}
-
-uint8_t get_current_xfB_position(void)
-{
-    return current_xfB_position;
-}
-
-int16_t get_current_ch1_db(void)
-{
-    return convert_pot2dB_int(pot_val[6]);
-}
-
-int16_t get_current_ch2_db(void)
-{
-    return convert_pot2dB_int(pot_val[4]);
-}
-
-int16_t get_current_master_db(void)
-{
-    return convert_pot2dB_int(pot_val[5]);
-}
-
-int16_t get_current_dry_wet(void)
-{
-    int16_t pct = (int16_t) (((double) pot_val[7] / 1023.0 * 100.0) + 0.5);
-    if (pct < 0)
-    {
-        pct = 0;
-    }
-    if (pct > 100)
-    {
-        pct = 100;
-    }
-    return pct;
-}
-
-char* get_current_input_typeA_str(void)
-{
-    switch (current_xfA_assign)
-    {
-    case INPUT_SRC_CH1_LN:
-    case INPUT_SRC_CH2_LN:
-        return "[line]";
-    case INPUT_SRC_CH1_PN:
-    case INPUT_SRC_CH2_PN:
-        return "[phono]";
-    default:
-        return "[]";
-    }
-}
-
-char* get_current_input_typeB_str(void)
-{
-    switch (current_xfB_assign)
-    {
-    case INPUT_SRC_CH1_LN:
-    case INPUT_SRC_CH2_LN:
-        return " [line]";
-    case INPUT_SRC_CH1_PN:
-    case INPUT_SRC_CH2_PN:
-        return "[phono]";
-    default:
-        return "     []";
-    }
-}
-
-char* get_current_input_srcA_str(void)
-{
-    switch (current_xfA_assign)
-    {
-    case INPUT_SRC_CH1_LN:
-        return "A:Ch1";
-    case INPUT_SRC_CH1_PN:
-        return "A:Ch1";
-    case INPUT_SRC_CH2_LN:
-        return "A:Ch2";
-    case INPUT_SRC_CH2_PN:
-        return "A:Ch2";
-    case INPUT_SRC_USB:
-        return "A:USB";
-    default:
-        return "A:";
-    }
-}
-
-char* get_current_input_srcB_str(void)
-{
-    switch (current_xfB_assign)
-    {
-    case INPUT_SRC_CH1_LN:
-        return "B:Ch1";
-    case INPUT_SRC_CH1_PN:
-        return "B:Ch1";
-    case INPUT_SRC_CH2_LN:
-        return "B:Ch2";
-    case INPUT_SRC_CH2_PN:
-        return "B:Ch2";
-    case INPUT_SRC_USB:
-        return "B:USB";
-    default:
-        return "B:";
-    }
-}
-
-char* get_current_input_srcP_str(void)
-{
-    switch (current_xfpost_assign)
-    {
-    case INPUT_SRC_CH1_LN:
-        return "THRU:Ch1[line]";
-    case INPUT_SRC_CH1_PN:
-        return "THRU:Ch1[phono]";
-    case INPUT_SRC_CH2_LN:
-        return "THRU:Ch2[line]";
-    case INPUT_SRC_CH2_PN:
-        return "THRU:Ch2[phono]";
-    case INPUT_SRC_USB:
-        return "THRU:USB";
-    default:
-        return "THRU:";
-    }
 }
 
 //--------------------------------------------------------------------+
@@ -912,563 +716,6 @@ void tud_audio_feedback_params_cb(uint8_t func_id, uint8_t alt_itf, audio_feedba
 }
 #endif
 
-static void dma_adc_cplt(DMA_HandleTypeDef* hdma)
-{
-    (void) hdma;
-    is_adc_complete = true;
-    __DSB();
-}
-
-void start_adc(void)
-{
-    if (MX_List_HPDMA1_Channel0_Config() != HAL_OK)
-    {
-        Error_Handler();
-    }
-    if (HAL_DMAEx_List_LinkQ(&handle_HPDMA1_Channel0, &List_HPDMA1_Channel0) != HAL_OK)
-    {
-        /* Linking error */
-        Error_Handler();
-    }
-
-    HAL_GPIO_WritePin(S0_GPIO_Port, S0_Pin, 0);
-    HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 0);
-    HAL_GPIO_WritePin(S2_GPIO_Port, S2_Pin, 0);
-    pot_ch = 1;
-
-    if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) != HAL_OK)
-    {
-        /* Calibration Error */
-        Error_Handler();
-    }
-
-    // ADC DMA request enable（ビット名はヘッダに合わせて）
-    SET_BIT(hadc1.Instance->CFGR, ADC_CFGR_DMAEN);
-    SET_BIT(hadc1.Instance->CFGR, ADC_CFGR_DMACFG);  // circularにしたいなら
-
-    handle_HPDMA1_Channel0.XferCpltCallback = dma_adc_cplt;
-    if (HAL_DMAEx_List_Start_IT(&handle_HPDMA1_Channel0) != HAL_OK)
-    {
-        /* Start Error */
-        Error_Handler();
-    }
-
-    if (HAL_ADC_Start(&hadc1) != HAL_OK)
-    {
-        /* ADC conversion start error */
-        Error_Handler();
-    }
-#if 0
-    if (HAL_ADC_Start_DMA(&hadc1, (uint32_t*) adc_val, ADC_NUM) != HAL_OK)
-    {
-        /* ADC conversion start error */
-        Error_Handler();
-    }
-#endif
-}
-
-void send_control_change(uint8_t number, uint8_t value, uint8_t channel)
-{
-    uint8_t control_change[3] = {0xB0 | channel, number, value};
-    tud_midi_stream_write(0, control_change, 3);
-}
-
-void send_note(uint8_t note, uint8_t velocity, uint8_t channel)
-{
-    if (velocity == 0)
-    {
-        uint8_t note_off[3] = {0x80 | channel, note, 0};
-        tud_midi_stream_write(0, note_off, 3);
-    }
-    else
-    {
-        uint8_t note_on[3] = {0x90 | channel, note, velocity};
-        tud_midi_stream_write(0, note_on, 3);
-    }
-}
-
-void ui_control_task(void)
-{
-#if !ENABLE_DSP_RUNTIME_CONTROL
-    // A/B diagnosis mode: disable runtime DSP control updates.
-    // This keeps USB/SAI audio path active while stopping parameter writes.
-    return;
-#endif
-
-    if (!is_started_audio_control() || !is_adc_complete)
-    {
-        return;
-    }
-
-    if (pot_ch_counter < POT_CH_SEL_WAIT)
-    {
-        switch (pot_ch)
-        {
-        case 0:  // RV1
-            HAL_GPIO_WritePin(S0_GPIO_Port, S0_Pin, 0);
-            HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 0);
-            HAL_GPIO_WritePin(S2_GPIO_Port, S2_Pin, 0);
-            break;
-        case 1:  // RV3
-            HAL_GPIO_WritePin(S0_GPIO_Port, S0_Pin, 0);
-            HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 1);
-            HAL_GPIO_WritePin(S2_GPIO_Port, S2_Pin, 0);
-            break;
-        case 2:  // RV5
-            HAL_GPIO_WritePin(S0_GPIO_Port, S0_Pin, 0);
-            HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 0);
-            HAL_GPIO_WritePin(S2_GPIO_Port, S2_Pin, 1);
-            break;
-        case 3:  // RV7
-            HAL_GPIO_WritePin(S0_GPIO_Port, S0_Pin, 0);
-            HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 1);
-            HAL_GPIO_WritePin(S2_GPIO_Port, S2_Pin, 1);
-            break;
-        case 4:  // RV2
-            HAL_GPIO_WritePin(S0_GPIO_Port, S0_Pin, 1);
-            HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 0);
-            HAL_GPIO_WritePin(S2_GPIO_Port, S2_Pin, 0);
-            break;
-        case 5:  // RV4
-            HAL_GPIO_WritePin(S0_GPIO_Port, S0_Pin, 1);
-            HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 1);
-            HAL_GPIO_WritePin(S2_GPIO_Port, S2_Pin, 0);
-            break;
-        case 6:  // RV6
-            HAL_GPIO_WritePin(S0_GPIO_Port, S0_Pin, 1);
-            HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 0);
-            HAL_GPIO_WritePin(S2_GPIO_Port, S2_Pin, 1);
-            break;
-        case 7:  // RV8
-            HAL_GPIO_WritePin(S0_GPIO_Port, S0_Pin, 1);
-            HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 1);
-            HAL_GPIO_WritePin(S2_GPIO_Port, S2_Pin, 1);
-            break;
-        default:
-            HAL_GPIO_WritePin(S0_GPIO_Port, S0_Pin, 0);
-            HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 0);
-            HAL_GPIO_WritePin(S2_GPIO_Port, S2_Pin, 0);
-            break;
-        }
-        pot_ch_counter++;
-    }
-    else if (pot_ch_counter >= POT_CH_SEL_WAIT)
-    {
-        /*
-         * 0 1 4 5
-         * 2 3 6 7
-         */
-        switch (pot_ch)
-        {
-        case 0:
-        case 1:
-        case 2:
-        case 3:
-            pot_val_ma[pot_ch][pot_ma_index[pot_ch]] = adc_val[6] >> 5;
-            break;
-        case 4:
-        case 5:
-        case 6:
-        case 7:
-            pot_val_ma[pot_ch][pot_ma_index[pot_ch]] = adc_val[6] >> 2;
-            break;
-        default:
-            break;
-        }
-        // SEGGER_RTT_printf(0, "ch=%d, adc=%d, ma=[%d, %d, %d, %d, %d, %d, %d, %d]\n", pot_ch, adc_val[6], pot_val_ma[pot_ch][0], pot_val_ma[pot_ch][1], pot_val_ma[pot_ch][2], pot_val_ma[pot_ch][3], pot_val_ma[pot_ch][4], pot_val_ma[pot_ch][5], pot_val_ma[pot_ch][6], pot_val_ma[pot_ch][7]);
-        pot_ma_index[pot_ch] = (pot_ma_index[pot_ch] + 1) % POT_MA_SIZE;
-
-        float pot_sum = 0.0f;
-        for (int j = 0; j < POT_MA_SIZE; j++)
-        {
-            pot_sum += (float) pot_val_ma[pot_ch][j];
-        }
-        pot_val[pot_ch] = round(pot_sum / (float) POT_MA_SIZE);
-
-        uint8_t stable_count = 0;
-        if (pot_val[pot_ch] == pot_val_prev[pot_ch][0])
-        {
-            stable_count++;
-        }
-        if (pot_val[pot_ch] == pot_val_prev[pot_ch][1])
-        {
-            stable_count++;
-        }
-        if (pot_val_prev[pot_ch][0] == pot_val_prev[pot_ch][1])
-        {
-            stable_count++;
-        }
-
-        if (stable_count <= 1)
-        {
-            /*
-             * 0 1 4 5
-             * 2 3 6 7
-             */
-            switch (pot_ch)
-            {
-            case 0:
-            case 1:
-            case 2:
-            case 3:
-                send_control_change(pot_ch, pot_val[pot_ch], 0);
-                break;
-            case 4:
-                control_input_from_ch2_gain(pot_val[pot_ch]);
-                break;
-            case 5:
-                control_master_out_gain(pot_val[pot_ch]);
-                break;
-            case 6:
-                control_input_from_ch1_gain(pot_val[pot_ch]);
-                break;
-            case 7:
-                // control_dryA_out_gain(1023 - pot_val[pot_ch]);
-                control_dryB_out_gain(pot_val[pot_ch]);
-                control_wet_out_gain(pot_val[pot_ch]);
-                break;
-            default:
-                break;
-            }
-        }
-
-        pot_val_prev[pot_ch][1] = pot_val_prev[pot_ch][0];
-        pot_val_prev[pot_ch][0] = pot_val[pot_ch];
-
-        pot_ch         = (pot_ch + 1) % POT_NUM;
-        pot_ch_counter = 0;
-
-#if 0
-        if (pot_ch == 0)
-        {
-            printf("mag = (%d, %d, %d, %d, %d, %d)\n", mag_val[0], mag_val[1], mag_val[2], mag_val[3], mag_val[4], mag_val[5]);
-            //  printf("pot = (%d, %d, %d, %d, %d, %d, %d, %d)\n", pot_val[0], pot_val[1], pot_val[2], pot_val[3], pot_val[4], pot_val[5], pot_val[6], pot_val[7]);
-        }
-#endif
-    }
-
-    for (int i = 0; i < MAG_SW_NUM; i++)
-    {
-        mag_val_ma[i][mag_ma_index[i]] = adc_val[i];
-        mag_ma_index[i]                = (mag_ma_index[i] + 1) % MAG_MA_SIZE;
-
-        float mag_sum = 0.0f;
-        for (int j = 0; j < MAG_MA_SIZE; j++)
-        {
-            mag_sum += (float) mag_val_ma[i][j];
-        }
-        mag_val[i] = round(mag_sum / (float) MAG_MA_SIZE);
-
-        if (mag_calibration_count < MAG_CALIBRATION_COUNT_MAX)
-        {
-            mag_offset_sum[i] += adc_val[i];
-        }
-        else if (mag_calibration_count == MAG_CALIBRATION_COUNT_MAX)
-        {
-            mag_offset[i] = mag_offset_sum[i] / MAG_CALIBRATION_COUNT_MAX;
-        }
-    }
-    if (mag_calibration_count <= MAG_CALIBRATION_COUNT_MAX)
-    {
-        mag_calibration_count++;
-    }
-
-    if (mag_calibration_count > MAG_CALIBRATION_COUNT_MAX)
-    {
-        int index[6] = {0, 5, 1, 2, 3, 4};
-        for (int j = 0; j < 6; j++)
-        {
-            int i = index[j];
-            if (i == 0 || i == 5)
-            {
-                if (mag_val[i] < mag_offset[i] + MAG_XFADE_CUTOFF)
-                {
-                    xfade[i] = 0.0f;
-                }
-                else if (mag_val[i] >= mag_offset[i] + MAG_XFADE_CUTOFF && mag_val[i] <= mag_offset[i] + MAG_XFADE_RANGE)
-                {
-                    xfade[i] = (float) (mag_val[i] - mag_offset[i] - MAG_XFADE_CUTOFF) / (float) MAG_XFADE_RANGE;
-                }
-                else if (mag_val[i] > mag_offset[i] + MAG_XFADE_RANGE)
-                {
-                    xfade[i] = 1.0f;
-                }
-
-                if (xfade[i] >= xfade_max[i])
-                {
-                    xfade_max[i] = xfade[i];
-
-                    if (i == 0)
-                    {
-                        xfade_min[1] = xfade_max[i];
-                    }
-                    else if (i == 5)
-                    {
-                        xfade_min[4] = xfade_max[i];
-                    }
-                }
-            }
-            else
-            {
-                if (mag_val[i] < mag_offset[i] + MAG_XFADE_CUTOFF)
-                {
-                    xfade[i] = 1.0f;
-                }
-                else if (mag_val[i] >= mag_offset[i] + MAG_XFADE_CUTOFF && mag_val[i] <= mag_offset[i] + MAG_XFADE_RANGE)
-                {
-                    xfade[i] = 1.0f - ((float) (mag_val[i] - mag_offset[i] - MAG_XFADE_CUTOFF) / (float) MAG_XFADE_RANGE);
-                }
-                else if (mag_val[i] > mag_offset[i] + MAG_XFADE_RANGE)
-                {
-                    xfade[i] = 0.0f;
-                }
-
-                if (xfade[i] <= xfade_min[i])
-                {
-                    xfade_min[i] = xfade[i];
-
-                    if (xfade_min[i] < 0.05f)
-                    {
-                        if (i == 1)
-                        {
-                            xfade_max[0] = 0.0f;
-                        }
-                        else if (i == 4)
-                        {
-                            xfade_max[5] = 0.0f;
-                        }
-                    }
-                }
-            }
-        }
-
-        bool xfadeA_changed = false;
-        bool xfadeB_changed = false;
-        for (int i = 0; i < 6; i++)
-        {
-            if (fabs(xfade[i] - xfade_prev[i]) > 0.01f)
-            {
-                // send_note(60 + (5 - i), (uint8_t) (127.0f - xfade[i] * 127.0f), 0);
-                send_control_change(10 + (5 - i), (uint8_t) (127.0f - xfade[i] * 127.0f), 0);
-
-                if (i == 0 || i == 1)
-                {
-                    xfadeB_changed = true;
-                }
-                if (i == 4 || i == 5)
-                {
-                    xfadeA_changed = true;
-                }
-
-                xfade_prev[i] = xfade[i];
-            }
-        }
-
-        if (xfadeA_changed)
-        {
-            const float xf = pow(xfade_max[5] * xfade_min[4], 1.0f / 3.0f);
-            set_dc_inputA(xf);
-
-            current_xfA_position = (uint8_t) (xf * 128.0f);
-        }
-
-        if (xfadeB_changed)
-        {
-            const float xf = pow(xfade_max[0] * xfade_min[1], 1.0f / 3.0f);
-            set_dc_inputB(xf);
-
-            current_xfB_position = (uint8_t) (xf * 128.0f);
-        }
-    }
-
-    while (tud_midi_available())
-    {
-        uint8_t packet[4];
-        tud_midi_packet_read(packet);
-
-        if ((packet[1] & 0xF0) == 0xC0)  // Program Change
-        {
-            switch (packet[2])
-            {
-            case CH1_LINE:
-                select_input_type(INPUT_CH1, INPUT_TYPE_LINE);
-                current_ch1_input_type = INPUT_TYPE_LINE;
-                if (current_xfA_assign == INPUT_SRC_CH1_PN || current_xfA_assign == INPUT_SRC_CH1_LN)
-                {
-                    current_xfA_assign = INPUT_SRC_CH1_LN;
-                }
-                if (current_xfB_assign == INPUT_SRC_CH1_PN || current_xfB_assign == INPUT_SRC_CH1_LN)
-                {
-                    current_xfB_assign = INPUT_SRC_CH1_LN;
-                }
-                if (current_xfpost_assign == INPUT_SRC_CH1_PN || current_xfpost_assign == INPUT_SRC_CH1_LN)
-                {
-                    current_xfpost_assign = INPUT_SRC_CH1_LN;
-                }
-                break;
-            case CH1_PHONO:
-                select_input_type(INPUT_CH1, INPUT_TYPE_PHONO);
-                current_ch1_input_type = INPUT_TYPE_PHONO;
-                if (current_xfA_assign == INPUT_SRC_CH1_PN || current_xfA_assign == INPUT_SRC_CH1_LN)
-                {
-                    current_xfA_assign = INPUT_SRC_CH1_PN;
-                }
-                if (current_xfB_assign == INPUT_SRC_CH1_PN || current_xfB_assign == INPUT_SRC_CH1_LN)
-                {
-                    current_xfB_assign = INPUT_SRC_CH1_PN;
-                }
-                if (current_xfpost_assign == INPUT_SRC_CH1_PN || current_xfpost_assign == INPUT_SRC_CH1_LN)
-                {
-                    current_xfpost_assign = INPUT_SRC_CH1_PN;
-                }
-                break;
-            case CH2_LINE:
-                select_input_type(INPUT_CH2, INPUT_TYPE_LINE);
-                current_ch2_input_type = INPUT_TYPE_LINE;
-                if (current_xfA_assign == INPUT_SRC_CH2_PN || current_xfA_assign == INPUT_SRC_CH2_LN)
-                {
-                    current_xfA_assign = INPUT_SRC_CH2_LN;
-                }
-                if (current_xfB_assign == INPUT_SRC_CH2_PN || current_xfB_assign == INPUT_SRC_CH2_LN)
-                {
-                    current_xfB_assign = INPUT_SRC_CH2_LN;
-                }
-                if (current_xfpost_assign == INPUT_SRC_CH2_PN || current_xfpost_assign == INPUT_SRC_CH2_LN)
-                {
-                    current_xfpost_assign = INPUT_SRC_CH2_LN;
-                }
-                break;
-            case CH2_PHONO:
-                select_input_type(INPUT_CH2, INPUT_TYPE_PHONO);
-                current_ch2_input_type = INPUT_TYPE_PHONO;
-                if (current_xfA_assign == INPUT_SRC_CH2_PN || current_xfA_assign == INPUT_SRC_CH2_LN)
-                {
-                    current_xfA_assign = INPUT_SRC_CH2_PN;
-                }
-                if (current_xfB_assign == INPUT_SRC_CH2_PN || current_xfB_assign == INPUT_SRC_CH2_LN)
-                {
-                    current_xfB_assign = INPUT_SRC_CH2_PN;
-                }
-                if (current_xfpost_assign == INPUT_SRC_CH2_PN || current_xfpost_assign == INPUT_SRC_CH2_LN)
-                {
-                    current_xfpost_assign = INPUT_SRC_CH2_PN;
-                }
-                break;
-            case XF_ASSIGN_A_CH1:
-                select_xf_assignA_source(INPUT_CH1);
-                if (current_ch1_input_type == INPUT_TYPE_PHONO)
-                {
-                    current_xfA_assign = INPUT_SRC_CH1_PN;
-                }
-                else
-                {
-                    current_xfA_assign = INPUT_SRC_CH1_LN;
-                }
-                break;
-            case XF_ASSIGN_A_CH2:
-                select_xf_assignA_source(INPUT_CH2);
-                if (current_ch2_input_type == INPUT_TYPE_PHONO)
-                {
-
-                    current_xfA_assign = INPUT_SRC_CH2_PN;
-                }
-                else
-                {
-                    current_xfA_assign = INPUT_SRC_CH2_LN;
-                }
-                break;
-            case XF_ASSIGN_A_USB:
-                select_xf_assignA_source(INPUT_USB);
-                current_xfA_assign = INPUT_SRC_USB;
-                break;
-            case XF_ASSIGN_B_CH1:
-                select_xf_assignB_source(INPUT_CH1);
-                if (current_ch1_input_type == INPUT_TYPE_PHONO)
-                {
-
-                    current_xfB_assign = INPUT_SRC_CH1_PN;
-                }
-                else
-                {
-                    current_xfB_assign = INPUT_SRC_CH1_LN;
-                }
-                break;
-            case XF_ASSIGN_B_CH2:
-                select_xf_assignB_source(INPUT_CH2);
-                if (current_ch2_input_type == INPUT_TYPE_PHONO)
-                {
-
-                    current_xfB_assign = INPUT_SRC_CH2_PN;
-                }
-                else
-                {
-                    current_xfB_assign = INPUT_SRC_CH2_LN;
-                }
-                break;
-            case XF_ASSIGN_B_USB:
-                select_xf_assignB_source(INPUT_USB);
-                current_xfB_assign = INPUT_SRC_USB;
-                break;
-            case XF_ASSIGN_POST_CH1:
-                select_xf_assignPost_source(INPUT_CH1);
-                if (current_ch1_input_type == INPUT_TYPE_PHONO)
-                {
-
-                    current_xfpost_assign = INPUT_SRC_CH1_PN;
-                }
-                else
-                {
-                    current_xfpost_assign = INPUT_SRC_CH1_LN;
-                }
-                break;
-            case XF_ASSIGN_POST_CH2:
-                select_xf_assignPost_source(INPUT_CH2);
-                if (current_ch2_input_type == INPUT_TYPE_PHONO)
-                {
-
-                    current_xfpost_assign = INPUT_SRC_CH2_PN;
-                }
-                else
-                {
-                    current_xfpost_assign = INPUT_SRC_CH2_LN;
-                }
-                break;
-            case XF_ASSIGN_POST_USB:
-                select_xf_assignPost_source(INPUT_USB);
-                current_xfpost_assign = INPUT_SRC_USB;
-                break;
-            default:
-                break;
-            }
-        }
-
-        SEGGER_RTT_printf(0, "MIDI RX: 0x%02X 0x%02X 0x%02X(%d) 0x%02X(%d)\n", packet[0], packet[1], packet[2], packet[2], packet[3], packet[3]);
-    }
-    is_adc_complete = false;
-}
-
-bool get_sr_changed_state(void)
-{
-    return is_sr_changed;
-}
-
-void reset_sr_changed_state(void)
-{
-    is_sr_changed = false;
-    __DMB();
-}
-
-void start_audio_control(void)
-{
-    is_start_audio_control = true;
-    __DMB();
-}
-
-bool is_started_audio_control(void)
-{
-    return is_start_audio_control;
-}
-
 static void dma_sai2_tx_half(DMA_HandleTypeDef* hdma)
 {
     (void) hdma;
@@ -1552,11 +799,11 @@ void HAL_SAI_ErrorCallback(SAI_HandleTypeDef* hsai)
 void start_sai(void)
 {
     // ========================================
-    // リングバッファをプリフィル（無音で初期化）
-    // SAI DMAが開始直後にHalf割り込みを発生させた時、
-    // リングバッファにデータがないとアンダーランになるため、
-    // 無音データを事前に投入しておく
-    // 96kHzではデータレートが2倍なのでプリフィルも2倍必要
+    // リングバッファを�Eリフィル�E�無音で初期化！E
+    // SAI DMAが開始直後にHalf割り込みを発生させた時、E
+    // リングバッファにチE�EタがなぁE��アンダーランになるため、E
+    // 無音チE�Eタを事前に投�Eしておく
+    // 96kHzではチE�Eタレートが2倍なのでプリフィルめE倍忁E��E
     // ========================================
     uint32_t prefill_size = SAI_TX_BUF_SIZE;
     memset(sai_tx_rng_buf, 0, prefill_size * sizeof(int32_t));
@@ -1584,7 +831,7 @@ void start_sai(void)
     dbg_tx_cplt_rewrite_events = 0u;
     dbg_rx_half_rewrite_events = 0u;
     dbg_rx_cplt_rewrite_events = 0u;
-    dbg_usb_read_size_min      = 0xFFFFu;
+    dbg_usb_read_size_min      = DBG_MIN_U16_INIT;
     dbg_usb_read_size_max      = 0u;
 #endif
 
@@ -1614,7 +861,7 @@ void start_sai(void)
         Error_Handler();
     }
 #endif
-    hsai_BlockA2.Instance->CR1 |= SAI_xCR1_DMAEN;  // ← ここが「DMAリクエスト有効化」
+    hsai_BlockA2.Instance->CR1 |= SAI_xCR1_DMAEN;  // ↁEここが「DMAリクエスト有効化、E
     __HAL_SAI_ENABLE(&hsai_BlockA2);
 
     osDelay(500);
@@ -1648,7 +895,7 @@ void start_sai(void)
         Error_Handler();
     }
 #endif
-    hsai_BlockA1.Instance->CR1 |= SAI_xCR1_DMAEN;  // ← ここが「DMAリクエスト有効化」
+    hsai_BlockA1.Instance->CR1 |= SAI_xCR1_DMAEN;  // ↁEここが「DMAリクエスト有効化、E
     __HAL_SAI_ENABLE(&hsai_BlockA1);
 }
 
@@ -1673,25 +920,25 @@ void copybuf_usb2ring(void)
         return;
     }
 
-    // USBは4ch、SAIも4ch（そのままコピー）
+    // USBは4ch、SAIめEch�E�そのままコピ�E�E�E
     // USB: [L1][R1][L2][R2][L1][R1][L2][R2]...
     // SAI: [L1][R1][L2][R2][L1][R1][L2][R2]...
 
-    uint32_t sai_words;  // SAIに書くword数（4ch分）
+    uint32_t sai_words;  // SAIに書くword数�E�Ech刁E��E
 
-    if (current_resolution == 16)
+    if (current_resolution == AUDIO_RESOLUTION_16BIT)
     {
-        // 16bit: USBデータはint16_tとして詰まっている (4ch)
+        // 16bit: USBチE�Eタはint16_tとして詰まってぁE�� (4ch)
         int16_t* usb_in_buf_16 = (int16_t*) usb_in_buf;
         uint32_t usb_samples   = spk_data_size / sizeof(int16_t);  // 16bitサンプル数
-        sai_words              = usb_samples;                      // SAIに書く4chデータのword数
+        sai_words              = usb_samples;                      // SAIに書ぁEchチE�Eタのword数
 
         if ((int32_t) sai_words > free)
         {
             sai_words = (uint32_t) free;
         }
 
-        // 4ch全てコピー、16bit→32bit左詰め変換
+        // 4ch全てコピ�E、E6bitↁE2bit左詰め変換
         for (uint32_t i = 0; i < sai_words; i++)
         {
             int32_t sample32                                              = ((int32_t) usb_in_buf_16[i]) << 16;
@@ -1701,7 +948,7 @@ void copybuf_usb2ring(void)
     }
     else
     {
-        // 24bit in 32bit slot: 4ch全てそのままコピー
+        // 24bit in 32bit slot: 4ch全てそ�Eままコピ�E
         sai_words = spk_data_size / sizeof(int32_t);
 
         if ((int32_t) sai_words > free)
@@ -1709,7 +956,7 @@ void copybuf_usb2ring(void)
             sai_words = (uint32_t) free;
         }
 
-        // 4ch全てコピー
+        // 4ch全てコピ�E
         for (uint32_t i = 0; i < sai_words; i++)
         {
             sai_tx_rng_buf[sai_tx_rng_buf_index & (SAI_RNG_BUF_SIZE - 1)] = usb_in_buf[i];
@@ -1726,10 +973,10 @@ static inline void fill_tx_half(uint32_t index0)
     const uint32_t frame_words = 4;  // 4ch x 32bit = 1 frame
     uint32_t pull_words        = n;
 
-    // index0のバウンドチェック
+    // index0のバウンドチェチE��
     if (index0 >= SAI_TX_BUF_SIZE)
     {
-        // 不正な値 - 無音で埋める
+        // 不正な値 - 無音で埋めめE
         return;
     }
 
@@ -1746,13 +993,13 @@ static inline void fill_tx_half(uint32_t index0)
 #endif
     if (used < 0)
     {
-        // 同期ズレは捨てて合わせ直す
+        // 同期ズレは捨てて合わせ直ぁE
         sai_transmit_index = sai_tx_rng_buf_index;
         used               = 0;
     }
 
-    // データ不足時は可能な分だけ再生し、残りは末尾フレーム保持で埋める。
-    // いきなり全無音にせずクリック感を抑える。
+    // チE�Eタ不足時�E可能な刁E��け�E生し、残りは末尾フレーム保持で埋める、E
+    // ぁE��なり�E無音にせずクリチE��感を抑える、E
     if (used < (int32_t) n)
     {
 #if AUDIO_DIAG_LOG
@@ -1771,24 +1018,24 @@ static inline void fill_tx_half(uint32_t index0)
         }
     }
 
-    // usedが大きすぎる場合も異常（オーバーフロー等）
+    // usedが大きすぎる場合も異常�E�オーバ�Eフロー等！E
     if (used > (int32_t) SAI_RNG_BUF_SIZE)
     {
-        // リセットして無音で埋める
+        // リセチE��して無音で埋めめE
         sai_transmit_index = sai_tx_rng_buf_index;
         memset(stereo_out_buf + index0, 0, n * sizeof(int32_t));
         return;
     }
 
-    // 長時間再生時の USB/SAI クロック差を吸収するため、
-    // リング水位に応じて 1 frame だけ消費量を増減する。
+    // 長時間再生時�E USB/SAI クロチE��差を吸収するため、E
+    // リング水位に応じて 1 frame だけ消費量を増減する、E
     const int32_t target_level = (int32_t) SAI_TX_TARGET_LEVEL_WORDS;
     const int32_t high_thr     = target_level + (int32_t) (SAI_TX_BUF_SIZE / 2);
     const int32_t low_thr      = target_level - (int32_t) (SAI_TX_BUF_SIZE / 2);
 
     if (used >= (int32_t) n && used > high_thr && used >= (int32_t) (n + frame_words))
     {
-        // バッファ過多 -> 1 frame 余分に消費して追従
+        // バッファ過夁E-> 1 frame 余�Eに消費して追征E
         pull_words = n + frame_words;
 #if AUDIO_DIAG_LOG
         dbg_tx_drift_up_events++;
@@ -1796,14 +1043,14 @@ static inline void fill_tx_half(uint32_t index0)
     }
     else if (used >= (int32_t) n && used < low_thr && n > frame_words)
     {
-        // バッファ不足傾向 -> 1 frame 少なく消費して追従
+        // バッファ不足傾吁E-> 1 frame 少なく消費して追征E
         pull_words = n - frame_words;
 #if AUDIO_DIAG_LOG
         dbg_tx_drift_dn_events++;
 #endif
     }
 
-    // 安全ガード
+    // 安�EガーチE
     if ((int32_t) pull_words > used)
     {
         pull_words = (uint32_t) used;
@@ -1830,7 +1077,7 @@ static inline void fill_tx_half(uint32_t index0)
 #if AUDIO_DIAG_LOG
         dbg_tx_partial_fill_events++;
 #endif
-        // 不足分は最後の1frameを繰り返してクリックノイズを抑える
+        // 不足刁E�E最後�E1frameを繰り返してクリチE��ノイズを抑える
         uint32_t* dst = (uint32_t*) (stereo_out_buf + index0 + pull_words);
         uint32_t* src = (uint32_t*) (stereo_out_buf + index0 + pull_words - frame_words);
         for (uint32_t i = pull_words; i < n; i += frame_words)
@@ -1848,7 +1095,7 @@ static inline void fill_tx_half(uint32_t index0)
 
 void copybuf_ring2sai(void)
 {
-    // ISRから立つ「更新要求」を取り出して、該当halfだけ1回更新する
+    // ISRから立つ「更新要求」を取り出して、該当halfだぁE回更新する
     uint8_t mask;
     uint32_t primask = __get_PRIMASK();
     __disable_irq();
@@ -1865,22 +1112,11 @@ void copybuf_ring2sai(void)
 // ==============================
 // SAI(RX) -> Ring -> USB(IN) path
 // ==============================
-static inline uint16_t tud_audio_write_atomic(void const* buf, uint16_t len)
-{
-    // TinyUSB 内部FIFOが USB IRQ 側でも触られる環境だと破壊→HardFault になり得るので、
-    // 最小区間だけ割り込み禁止で保護する。
-    uint32_t primask = __get_PRIMASK();
-    __disable_irq();
-    uint16_t w = tud_audio_write(buf, len);
-    __set_PRIMASK(primask);
-    return w;
-}
-
 static inline void fill_rx_half(uint32_t index0)
 {
-    const uint32_t n = (SAI_RX_BUF_SIZE / 2);  // 半分ぶん（word数）
+    const uint32_t n = (SAI_RX_BUF_SIZE / 2);  // 半�Eぶん！Eord数�E�E
 
-    // index0のバウンドチェック
+    // index0のバウンドチェチE��
     if (index0 >= SAI_RX_BUF_SIZE)
     {
         return;
@@ -1893,7 +1129,7 @@ static inline void fill_rx_half(uint32_t index0)
         used              = 0;
     }
 
-    // usedが大きすぎる場合も異常（オーバーフロー等）
+    // usedが大きすぎる場合も異常�E�オーバ�Eフロー等！E
     if (used > (int32_t) SAI_RNG_BUF_SIZE)
     {
         sai_receive_index = sai_rx_rng_buf_index;
@@ -1903,7 +1139,7 @@ static inline void fill_rx_half(uint32_t index0)
     int32_t free = (int32_t) (SAI_RNG_BUF_SIZE - 1) - used;
     if (free < (int32_t) n)
     {
-        // 追いつけないなら古いデータを捨てて空きを作る
+        // 追ぁE��けなぁE��ら古ぁE��ータを捨てて空きを作る
         sai_receive_index += (uint32_t) ((int32_t) n - free);
     }
 
@@ -1928,45 +1164,31 @@ static void copybuf_sai2ring(void)
     rx_pending_mask = 0;
     __set_PRIMASK(primask);
 
-    // 順序：half→cplt の順で処理（両方溜まっていた場合）
+    // 頁E��：half→cplt の頁E��処琁E��両方溜まってぁE��場合！E
     if (mask & 0x01)
         fill_rx_half(0);
     if (mask & 0x02)
         fill_rx_half(SAI_RX_BUF_SIZE / 2);
 }
 
-// 1msあたりのフレーム数
+// 1msあたり�Eフレーム数
 static uint32_t audio_frames_per_ms(void)
 {
-    // 例: 48kHz -> 48 frames/ms
-    return current_sample_rate / 1000u;
+    // 侁E 48kHz -> 48 frames/ms
+    return current_sample_rate / AUDIO_MS_PER_SECOND;
 }
 
 static uint16_t audio_out_bytes_per_ms(void)
 {
     // Host -> Device (speaker OUT) stream bytes per 1ms
     // 48/96kHz are integer frames per ms in this project.
-    uint32_t bytes_per_sample = (current_resolution == 16) ? 2u : 4u;
+    uint32_t bytes_per_sample = (current_resolution == AUDIO_RESOLUTION_16BIT) ? AUDIO_BYTES_PER_SAMPLE_16 : AUDIO_BYTES_PER_SAMPLE_32;
     uint32_t bytes            = audio_frames_per_ms() * CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX * bytes_per_sample;
     if (bytes > sizeof(usb_in_buf))
     {
         bytes = sizeof(usb_in_buf);
     }
     return (uint16_t) bytes;
-}
-
-// USB IRQ個別制御から、全割り込み禁止に変更
-// NVICの個別制御は状態不整合を起こす可能性があるため
-static inline uint32_t usb_irq_save(void)
-{
-    uint32_t primask = __get_PRIMASK();
-    __disable_irq();
-    return primask;
-}
-
-static inline void usb_irq_restore(uint32_t primask)
-{
-    __set_PRIMASK(primask);
 }
 
 static void copybuf_ring2usb_and_send(void)
@@ -1976,7 +1198,7 @@ static void copybuf_ring2usb_and_send(void)
         return;
     }
 
-    // IN(録音)側が streaming していないなら送らない
+    // IN(録音)側ぁEstreaming してぁE��ぁE��ら送らなぁE
     if (!s_streaming_in)
     {
         return;
@@ -1998,22 +1220,22 @@ static void copybuf_ring2usb_and_send(void)
     }
     if (used < (int32_t) sai_words)
     {
-        return;  // 足りないなら今回は送らない
+        return;  // 足りなぁE��ら今回は送らなぁE
     }
 
-    // USBは4ch、SAIも4ch
+    // USBは4ch、SAIめEch
     // SAI: [L1][R1][L2][R2][L1][R1][L2][R2]...
     // USB: [L1][R1][L2][R2][L1][R1][L2][R2]...
 
     uint32_t usb_bytes;
     uint16_t written;
 
-    if (current_resolution == 16)
+    if (current_resolution == AUDIO_RESOLUTION_16BIT)
     {
-        // 16bit: SAI(32bit 2ch) → USB(16bit 4ch) 変換
-        usb_bytes = frames * 4 * sizeof(int16_t);  // 4ch分
+        // 16bit: SAI(32bit 2ch) ↁEUSB(16bit 4ch) 変換
+        usb_bytes = frames * AUDIO_USB_FRAME_CHANNELS * sizeof(int16_t);  // 4ch刁E
 
-        // 安全: usb_out_buf が足りない設定なら絶対に書かない
+        // 安�E: usb_out_buf が足りなぁE��定なら絶対に書かなぁE
         if (usb_bytes > sizeof(usb_out_buf))
             return;
 
@@ -2021,23 +1243,23 @@ static void copybuf_ring2usb_and_send(void)
 
         for (uint32_t f = 0; f < frames; f++)
         {
-            uint32_t r_L1 = (sai_receive_index + f * 4 + 0) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_R1 = (sai_receive_index + f * 4 + 1) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_L2 = (sai_receive_index + f * 4 + 2) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_R2 = (sai_receive_index + f * 4 + 3) & (SAI_RNG_BUF_SIZE - 1);
-            // 32bit → 16bit (上位16bitを取り出す)
-            // SAIデータは符号付き32bitなので、算術右シフトで符号を保持
+            uint32_t r_L1 = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 0) & (SAI_RNG_BUF_SIZE - 1);
+            uint32_t r_R1 = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 1) & (SAI_RNG_BUF_SIZE - 1);
+            uint32_t r_L2 = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 2) & (SAI_RNG_BUF_SIZE - 1);
+            uint32_t r_R2 = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 3) & (SAI_RNG_BUF_SIZE - 1);
+            // 32bit ↁE16bit (上佁E6bitを取り�EぁE
+            // SAIチE�Eタは符号付き32bitなので、算術右シフトで符号を保持
             int32_t sample_L1         = sai_rx_rng_buf[r_L1];
             int32_t sample_R1         = sai_rx_rng_buf[r_R1];
             int32_t sample_L2         = sai_rx_rng_buf[r_L2];
             int32_t sample_R2         = sai_rx_rng_buf[r_R2];
-            usb_out_buf_16[f * 4 + 0] = (int16_t) (sample_L1 >> 16);  // L1
-            usb_out_buf_16[f * 4 + 1] = (int16_t) (sample_R1 >> 16);  // R1
-            usb_out_buf_16[f * 4 + 2] = (int16_t) (sample_L2 >> 16);  // L2
-            usb_out_buf_16[f * 4 + 3] = (int16_t) (sample_R2 >> 16);  // R2
+            usb_out_buf_16[f * AUDIO_USB_FRAME_CHANNELS + 0] = (int16_t) (sample_L1 >> 16);  // L1
+            usb_out_buf_16[f * AUDIO_USB_FRAME_CHANNELS + 1] = (int16_t) (sample_R1 >> 16);  // R1
+            usb_out_buf_16[f * AUDIO_USB_FRAME_CHANNELS + 2] = (int16_t) (sample_L2 >> 16);  // L2
+            usb_out_buf_16[f * AUDIO_USB_FRAME_CHANNELS + 3] = (int16_t) (sample_R2 >> 16);  // R2
         }
 
-        // ISRコンテキストから呼ばれるので通常版を使用
+        // ISRコンチE��ストから呼ばれるので通常版を使用
         written = tud_audio_write(usb_out_buf, (uint16_t) usb_bytes);
 
         if (written == 0)
@@ -2045,36 +1267,36 @@ static void copybuf_ring2usb_and_send(void)
             return;
         }
 
-        // 書けた分だけ読みポインタを進める
-        uint32_t written_frames = ((uint32_t) written) / (4 * sizeof(int16_t));
+        // 書けた刁E��け読みポインタを進める
+        uint32_t written_frames = ((uint32_t) written) / (AUDIO_USB_FRAME_CHANNELS * sizeof(int16_t));
         if (written_frames > frames)
             written_frames = frames;
         if (written_frames == 0)
             return;
-        sai_receive_index += written_frames * 4;  // SAIは4ch分
+        sai_receive_index += written_frames * AUDIO_RING_FRAME_WORDS;  // SAIは4ch刁E
     }
     else
     {
-        // 24bit in 32bit slot: SAI(2ch) → USB(4ch) 変換
-        usb_bytes = frames * 4 * sizeof(int32_t);  // 4ch分
+        // 24bit in 32bit slot: SAI(2ch) ↁEUSB(4ch) 変換
+        usb_bytes = frames * AUDIO_USB_FRAME_CHANNELS * sizeof(int32_t);  // 4ch刁E
 
-        // 安全: usb_out_buf が足りない設定なら絶対に書かない
+        // 安�E: usb_out_buf が足りなぁE��定なら絶対に書かなぁE
         if (usb_bytes > sizeof(usb_out_buf))
             return;
 
         for (uint32_t f = 0; f < frames; f++)
         {
-            uint32_t r_L1          = (sai_receive_index + f * 4 + 0) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_R1          = (sai_receive_index + f * 4 + 1) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_L2          = (sai_receive_index + f * 4 + 2) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_R2          = (sai_receive_index + f * 4 + 3) & (SAI_RNG_BUF_SIZE - 1);
-            usb_out_buf[f * 4 + 0] = sai_rx_rng_buf[r_L1];  // L1
-            usb_out_buf[f * 4 + 1] = sai_rx_rng_buf[r_R1];  // R1
-            usb_out_buf[f * 4 + 2] = sai_rx_rng_buf[r_L2];  // L2
-            usb_out_buf[f * 4 + 3] = sai_rx_rng_buf[r_R2];  // R2
+            uint32_t r_L1          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 0) & (SAI_RNG_BUF_SIZE - 1);
+            uint32_t r_R1          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 1) & (SAI_RNG_BUF_SIZE - 1);
+            uint32_t r_L2          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 2) & (SAI_RNG_BUF_SIZE - 1);
+            uint32_t r_R2          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 3) & (SAI_RNG_BUF_SIZE - 1);
+            usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 0] = sai_rx_rng_buf[r_L1];  // L1
+            usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 1] = sai_rx_rng_buf[r_R1];  // R1
+            usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 2] = sai_rx_rng_buf[r_L2];  // L2
+            usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 3] = sai_rx_rng_buf[r_R2];  // R2
         }
 
-        // ISRコンテキストから呼ばれるので通常版を使用
+        // ISRコンチE��ストから呼ばれるので通常版を使用
         written = tud_audio_write(usb_out_buf, (uint16_t) usb_bytes);
 
         if (written == 0)
@@ -2082,18 +1304,18 @@ static void copybuf_ring2usb_and_send(void)
             return;
         }
 
-        // 書けた分だけ読みポインタを進める
-        uint32_t written_frames = ((uint32_t) written) / (4 * sizeof(int32_t));
+        // 書けた刁E��け読みポインタを進める
+        uint32_t written_frames = ((uint32_t) written) / (AUDIO_USB_FRAME_CHANNELS * sizeof(int32_t));
         if (written_frames > frames)
             written_frames = frames;
         if (written_frames == 0)
             return;
-        sai_receive_index += written_frames * 4;  // SAIは4ch分
+        sai_receive_index += written_frames * AUDIO_RING_FRAME_WORDS;  // SAIは4ch刁E
     }
 }
 
-// TinyUSB TX完了コールバック - USB ISRコンテキストで呼ばれる
-// ISR内でFIFO操作を行うとRX処理と競合するため、フラグのみ設定
+// TinyUSB TX完亁E��ールバック - USB ISRコンチE��ストで呼ばれる
+// ISR冁E��FIFO操作を行うとRX処琁E��競合するため、フラグのみ設宁E
 bool tud_audio_tx_done_isr(uint8_t rhport, uint16_t n_bytes_sent, uint8_t func_id, uint8_t ep_in, uint8_t cur_alt_setting)
 {
     (void) rhport;
@@ -2102,32 +1324,22 @@ bool tud_audio_tx_done_isr(uint8_t rhport, uint16_t n_bytes_sent, uint8_t func_i
     (void) ep_in;
     (void) cur_alt_setting;
 
-    // ISRではフラグを立てるだけ - 実際の送信はタスクコンテキストで行う
+    // ISRではフラグを立てるだぁE- 実際の送信はタスクコンチE��ストで行う
     usb_tx_pending = true;
     return true;
-}
-
-#define USB_IRQn OTG_HS_IRQn
-
-static inline uint16_t tud_audio_available_usb_locked(void)
-{
-    uint32_t en = usb_irq_save();
-    uint16_t a  = tud_audio_available();
-    usb_irq_restore(en);
-    return a;
 }
 
 // audio_task()呼び出し頻度計測用
 static volatile uint32_t audio_task_call_count = 0;
 static volatile uint32_t audio_task_last_tick  = 0;
-static volatile uint32_t audio_task_frequency  = 0;  // 呼び出し回数/秒
+static volatile uint32_t audio_task_frequency  = 0;  // 呼び出し回数/私E
 
 void audio_task(void)
 {
     // 呼び出し頻度計測
     audio_task_call_count++;
     uint32_t now = HAL_GetTick();
-    if (now - audio_task_last_tick >= 1000)
+    if (now - audio_task_last_tick >= AUDIO_TASK_STATS_PERIOD_MS)
     {
         audio_task_frequency  = audio_task_call_count;
         audio_task_call_count = 0;
@@ -2141,7 +1353,7 @@ void audio_task(void)
             uint32_t sigma_err   = sigma_spi_it_write_errors;
             uint32_t sigma_to    = sigma_spi_it_write_timeouts;
             uint32_t sigma_mto   = sigma_spi_it_mutex_timeouts;
-            SEGGER_RTT_printf(0, "[AUD][TX] sr=%lu used_now=%ld used_min=%lu used_max=%lu und=%lu part=%lu drift+%lu drift-%lu usb0=%lu usbB=%lu usbMin=%u usbMax=%u txRw=(%lu,%lu) rxRw=(%lu,%lu) dmae=%lu txe=%lu rxe=%lu txer=0x%08lX rxer=0x%08lX txsr=0x%08lX rxsr=0x%08lX spiC=%lu spiE=%lu spiT=%lu spiM=%lu task_hz=%lu\r\n", (unsigned long) current_sample_rate, (long) tx_used_now, (unsigned long) ((dbg_tx_used_min == 0xFFFFFFFFu) ? 0u : dbg_tx_used_min), (unsigned long) dbg_tx_used_max, (unsigned long) dbg_tx_underrun_events, (unsigned long) dbg_tx_partial_fill_events, (unsigned long) dbg_tx_drift_up_events, (unsigned long) dbg_tx_drift_dn_events, (unsigned long) dbg_usb_read_zero_events, (unsigned long) dbg_usb_read_bytes, (unsigned int) ((dbg_usb_read_size_min == 0xFFFFu) ? 0u : dbg_usb_read_size_min), (unsigned int) dbg_usb_read_size_max, (unsigned long) dbg_tx_half_rewrite_events, (unsigned long) dbg_tx_cplt_rewrite_events, (unsigned long) dbg_rx_half_rewrite_events, (unsigned long) dbg_rx_cplt_rewrite_events, (unsigned long) dbg_dma_err_events, (unsigned long) dbg_sai_tx_err_events, (unsigned long) dbg_sai_rx_err_events, (unsigned long) dbg_sai_tx_last_err, (unsigned long) dbg_sai_rx_last_err, (unsigned long) dbg_sai_tx_sr_flags, (unsigned long) dbg_sai_rx_sr_flags, (unsigned long) (sigma_calls - dbg_sigma_calls_prev), (unsigned long) (sigma_err - dbg_sigma_err_prev), (unsigned long) (sigma_to - dbg_sigma_to_prev), (unsigned long) (sigma_mto - dbg_sigma_mto_prev), (unsigned long) audio_task_frequency);
+            SEGGER_RTT_printf(0, "[AUD][TX] sr=%lu used_now=%ld used_min=%lu used_max=%lu und=%lu part=%lu drift+%lu drift-%lu usb0=%lu usbB=%lu usbMin=%u usbMax=%u txRw=(%lu,%lu) rxRw=(%lu,%lu) dmae=%lu txe=%lu rxe=%lu txer=0x%08lX rxer=0x%08lX txsr=0x%08lX rxsr=0x%08lX spiC=%lu spiE=%lu spiT=%lu spiM=%lu task_hz=%lu\r\n", (unsigned long) current_sample_rate, (long) tx_used_now, (unsigned long) ((dbg_tx_used_min == 0xFFFFFFFFu) ? 0u : dbg_tx_used_min), (unsigned long) dbg_tx_used_max, (unsigned long) dbg_tx_underrun_events, (unsigned long) dbg_tx_partial_fill_events, (unsigned long) dbg_tx_drift_up_events, (unsigned long) dbg_tx_drift_dn_events, (unsigned long) dbg_usb_read_zero_events, (unsigned long) dbg_usb_read_bytes, (unsigned int) ((dbg_usb_read_size_min == DBG_MIN_U16_INIT) ? 0u : dbg_usb_read_size_min), (unsigned int) dbg_usb_read_size_max, (unsigned long) dbg_tx_half_rewrite_events, (unsigned long) dbg_tx_cplt_rewrite_events, (unsigned long) dbg_rx_half_rewrite_events, (unsigned long) dbg_rx_cplt_rewrite_events, (unsigned long) dbg_dma_err_events, (unsigned long) dbg_sai_tx_err_events, (unsigned long) dbg_sai_rx_err_events, (unsigned long) dbg_sai_tx_last_err, (unsigned long) dbg_sai_rx_last_err, (unsigned long) dbg_sai_tx_sr_flags, (unsigned long) dbg_sai_rx_sr_flags, (unsigned long) (sigma_calls - dbg_sigma_calls_prev), (unsigned long) (sigma_err - dbg_sigma_err_prev), (unsigned long) (sigma_to - dbg_sigma_to_prev), (unsigned long) (sigma_mto - dbg_sigma_mto_prev), (unsigned long) audio_task_frequency);
             dbg_sigma_calls_prev = sigma_calls;
             dbg_sigma_err_prev   = sigma_err;
             dbg_sigma_to_prev    = sigma_to;
@@ -2166,7 +1378,7 @@ void audio_task(void)
         dbg_tx_cplt_rewrite_events = 0u;
         dbg_rx_half_rewrite_events = 0u;
         dbg_rx_cplt_rewrite_events = 0u;
-        dbg_usb_read_size_min      = 0xFFFFu;
+        dbg_usb_read_size_min      = DBG_MIN_U16_INIT;
         dbg_usb_read_size_max      = 0u;
 #endif
     }
@@ -2180,8 +1392,8 @@ void audio_task(void)
     }
     else
     {
-        // Feedback EPがFIFO水位を使って送信レート制御するため、
-        // 毎msで「必要量だけ」読む。全量吸い出しは水位制御を壊す。
+        // Feedback EPがFIFO水位を使って送信レート制御するため、E
+        // 毎msで「忁E��E��だけ」読む。�E量吸ぁE�Eし�E水位制御を壊す、E
         spk_data_size = tud_audio_read(usb_in_buf, audio_out_bytes_per_ms());
 #if AUDIO_DIAG_LOG
         dbg_usb_read_bytes += spk_data_size;
@@ -2206,29 +1418,13 @@ void audio_task(void)
         // SAI -> USB
         copybuf_sai2ring();
 
-        // USB TX送信 (ISRからのフラグ通知、またはストリーミング中は常に試行)
+        // USB TX送信 (ISRからのフラグ通知、また�Eストリーミング中は常に試衁E
         if (usb_tx_pending || s_streaming_in)
         {
             usb_tx_pending = false;
             copybuf_ring2usb_and_send();
         }
 
-#if 0
-        if (spk_data_size == 0 && hpout_clear_count < 100)
-        {
-            hpout_clear_count++;
-
-            if (hpout_clear_count == 100)
-            {
-                memset(hpout_buf, 0, sizeof(hpout_buf));
-                hpout_clear_count = 101;
-            }
-        }
-        else
-        {
-            hpout_clear_count = 0;
-        }
-#endif
     }
 }
 
@@ -2245,7 +1441,7 @@ void AUDIO_SAI_Reset_ForNewRate(void)
     /* Stop ADC DMA to prevent parameter changes during ADAU1466 initialization */
     (void) HAL_ADC_Stop(&hadc1);
     (void) HAL_DMA_Abort(&handle_HPDMA1_Channel0);
-    is_adc_complete = false;
+    ui_control_set_adc_complete(false);
     __DSB();
 
     /* Disable interrupts during critical DMA/SAI stop sequence */
@@ -2272,7 +1468,6 @@ void AUDIO_SAI_Reset_ForNewRate(void)
     (void) HAL_SAI_DeInit(&hsai_BlockA2);
     (void) HAL_SAI_DeInit(&hsai_BlockA1);
 
-    hpout_clear_count    = 0;
     sai_tx_rng_buf_index = 0;
     sai_rx_rng_buf_index = 0;
     sai_transmit_index   = 0;
@@ -2300,7 +1495,7 @@ void AUDIO_SAI_Reset_ForNewRate(void)
     dbg_tx_cplt_rewrite_events = 0u;
     dbg_rx_half_rewrite_events = 0u;
     dbg_rx_cplt_rewrite_events = 0u;
-    dbg_usb_read_size_min      = 0xFFFFu;
+    dbg_usb_read_size_min      = DBG_MIN_U16_INIT;
     dbg_usb_read_size_max      = 0u;
 #endif
 
@@ -2417,7 +1612,7 @@ void AUDIO_SAI_Reset_ForNewRate(void)
     {
         Error_Handler();
     }
-    handle_HPDMA1_Channel0.XferCpltCallback = dma_adc_cplt;
+    handle_HPDMA1_Channel0.XferCpltCallback = ui_control_dma_adc_cplt;
     if (HAL_DMAEx_List_Start_IT(&handle_HPDMA1_Channel0) != HAL_OK)
     {
         Error_Handler();
