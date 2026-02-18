@@ -1330,6 +1330,66 @@ static void ui_control_process_mag(void)
     }
 }
 
+typedef void (*midi_program_handler_t)(uint8_t arg);
+
+typedef struct
+{
+    uint8_t                command;
+    midi_program_handler_t handler;
+    uint8_t                arg;
+} midi_program_cmd_t;
+
+static void midi_program_set_input_type(uint8_t arg)
+{
+    uint8_t input_ch   = (arg >> 4) & 0x0F;
+    uint8_t input_type = arg & 0x0F;
+    apply_input_type_change(input_ch, input_type);
+}
+
+static void midi_program_apply_xf_a(uint8_t input_ch)
+{
+    apply_xf_assign_a(input_ch);
+}
+
+static void midi_program_apply_xf_b(uint8_t input_ch)
+{
+    apply_xf_assign_b(input_ch);
+}
+
+static void midi_program_apply_xf_post(uint8_t input_ch)
+{
+    apply_xf_assign_post(input_ch);
+}
+
+static bool ui_control_dispatch_midi_program_change(uint8_t program)
+{
+    static const midi_program_cmd_t commands[] = {
+        {CH1_LINE, midi_program_set_input_type, (uint8_t) ((INPUT_CH1 << 4) | INPUT_TYPE_LINE)},
+        {CH1_PHONO, midi_program_set_input_type, (uint8_t) ((INPUT_CH1 << 4) | INPUT_TYPE_PHONO)},
+        {CH2_LINE, midi_program_set_input_type, (uint8_t) ((INPUT_CH2 << 4) | INPUT_TYPE_LINE)},
+        {CH2_PHONO, midi_program_set_input_type, (uint8_t) ((INPUT_CH2 << 4) | INPUT_TYPE_PHONO)},
+        {XF_ASSIGN_A_CH1, midi_program_apply_xf_a, INPUT_CH1},
+        {XF_ASSIGN_A_CH2, midi_program_apply_xf_a, INPUT_CH2},
+        {XF_ASSIGN_A_USB, midi_program_apply_xf_a, INPUT_USB},
+        {XF_ASSIGN_B_CH1, midi_program_apply_xf_b, INPUT_CH1},
+        {XF_ASSIGN_B_CH2, midi_program_apply_xf_b, INPUT_CH2},
+        {XF_ASSIGN_B_USB, midi_program_apply_xf_b, INPUT_USB},
+        {XF_ASSIGN_POST_CH1, midi_program_apply_xf_post, INPUT_CH1},
+        {XF_ASSIGN_POST_CH2, midi_program_apply_xf_post, INPUT_CH2},
+        {XF_ASSIGN_POST_USB, midi_program_apply_xf_post, INPUT_USB},
+    };
+
+    for (uint32_t i = 0; i < TU_ARRAY_SIZE(commands); i++)
+    {
+        if (commands[i].command == program)
+        {
+            commands[i].handler(commands[i].arg);
+            return true;
+        }
+    }
+    return false;
+}
+
 static void ui_control_process_midi_rx(void)
 {
     while (tud_midi_available())
@@ -1339,50 +1399,7 @@ static void ui_control_process_midi_rx(void)
 
         if ((packet[1] & 0xF0) == 0xC0)  // Program Change
         {
-            switch (packet[2])
-            {
-            case CH1_LINE:
-                apply_input_type_change(INPUT_CH1, INPUT_TYPE_LINE);
-                break;
-            case CH1_PHONO:
-                apply_input_type_change(INPUT_CH1, INPUT_TYPE_PHONO);
-                break;
-            case CH2_LINE:
-                apply_input_type_change(INPUT_CH2, INPUT_TYPE_LINE);
-                break;
-            case CH2_PHONO:
-                apply_input_type_change(INPUT_CH2, INPUT_TYPE_PHONO);
-                break;
-            case XF_ASSIGN_A_CH1:
-                apply_xf_assign_a(INPUT_CH1);
-                break;
-            case XF_ASSIGN_A_CH2:
-                apply_xf_assign_a(INPUT_CH2);
-                break;
-            case XF_ASSIGN_A_USB:
-                apply_xf_assign_a(INPUT_USB);
-                break;
-            case XF_ASSIGN_B_CH1:
-                apply_xf_assign_b(INPUT_CH1);
-                break;
-            case XF_ASSIGN_B_CH2:
-                apply_xf_assign_b(INPUT_CH2);
-                break;
-            case XF_ASSIGN_B_USB:
-                apply_xf_assign_b(INPUT_USB);
-                break;
-            case XF_ASSIGN_POST_CH1:
-                apply_xf_assign_post(INPUT_CH1);
-                break;
-            case XF_ASSIGN_POST_CH2:
-                apply_xf_assign_post(INPUT_CH2);
-                break;
-            case XF_ASSIGN_POST_USB:
-                apply_xf_assign_post(INPUT_USB);
-                break;
-            default:
-                break;
-            }
+            (void) ui_control_dispatch_midi_program_change(packet[2]);
         }
 
         SEGGER_RTT_printf(0, "MIDI RX: 0x%02X 0x%02X 0x%02X(%d) 0x%02X(%d)\n", packet[0], packet[1], packet[2], packet[2], packet[3], packet[3]);
