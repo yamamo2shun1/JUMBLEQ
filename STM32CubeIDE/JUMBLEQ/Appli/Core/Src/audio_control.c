@@ -56,35 +56,48 @@ enum
 static uint32_t tx_blink_interval_ms = BLINK_NOT_MOUNTED;
 static uint32_t rx_blink_interval_ms = BLINK_NOT_MOUNTED;
 
-uint8_t current_ch1_input_type = INPUT_TYPE_LINE;
-uint8_t current_ch2_input_type = INPUT_TYPE_LINE;
-
-uint8_t current_xfA_assign    = INPUT_SRC_CH2_LN;
-uint8_t current_xfB_assign    = INPUT_SRC_CH1_LN;
-uint8_t current_xfpost_assign = INPUT_SRC_USB;
-
-uint8_t current_xfA_position = 127;
-uint8_t current_xfB_position = 127;
-
 __attribute__((section("noncacheable_buffer"), aligned(32))) uint32_t adc_val[ADC_NUM] = {0};
 
-uint8_t pot_ch         = 0;
-uint8_t pot_ch_counter = 0;
+typedef struct
+{
+    uint8_t  current_ch1_input_type;
+    uint8_t  current_ch2_input_type;
+    uint8_t  current_xfA_assign;
+    uint8_t  current_xfB_assign;
+    uint8_t  current_xfpost_assign;
+    uint8_t  current_xfA_position;
+    uint8_t  current_xfB_position;
+    uint8_t  pot_ch;
+    uint8_t  pot_ch_counter;
+    uint16_t pot_ma_index[POT_NUM];
+    uint32_t pot_val_ma[POT_NUM][POT_MA_SIZE];
+    uint16_t pot_val[POT_NUM];
+    uint16_t pot_val_prev[POT_NUM][2];
+    uint16_t mag_calibration_count;
+    uint16_t mag_val[MAG_SW_NUM];
+    uint32_t mag_offset_sum[MAG_SW_NUM];
+    uint16_t mag_offset[MAG_SW_NUM];
+    float    xfade[MAG_SW_NUM];
+    float    xfade_prev[MAG_SW_NUM];
+    float    xfade_min[MAG_SW_NUM];
+    float    xfade_max[MAG_SW_NUM];
+    bool     is_start_audio_control;
+} ui_control_state_t;
 
-uint16_t pot_ma_index[POT_NUM]            = {0};
-uint32_t pot_val_ma[POT_NUM][POT_MA_SIZE] = {0};
-uint16_t pot_val[POT_NUM]                 = {0};
-uint16_t pot_val_prev[POT_NUM][2]         = {0};
-
-uint16_t mag_calibration_count               = 0;
-uint16_t mag_val[MAG_SW_NUM]                 = {0};
-uint32_t mag_offset_sum[MAG_SW_NUM]          = {0};
-uint16_t mag_offset[MAG_SW_NUM]              = {0};
-
-float xfade[MAG_SW_NUM]      = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
-float xfade_prev[MAG_SW_NUM] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
-float xfade_min[MAG_SW_NUM]  = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
-float xfade_max[MAG_SW_NUM]  = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+static ui_control_state_t s_ui = {
+    .current_ch1_input_type = INPUT_TYPE_LINE,
+    .current_ch2_input_type = INPUT_TYPE_LINE,
+    .current_xfA_assign     = INPUT_SRC_CH2_LN,
+    .current_xfB_assign     = INPUT_SRC_CH1_LN,
+    .current_xfpost_assign  = INPUT_SRC_USB,
+    .current_xfA_position   = 127,
+    .current_xfB_position   = 127,
+    .xfade                  = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},
+    .xfade_prev             = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},
+    .xfade_min              = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},
+    .xfade_max              = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
+    .is_start_audio_control = false,
+};
 
 volatile uint32_t sai_tx_rng_buf_index = 0;
 volatile uint32_t sai_rx_rng_buf_index = 0;
@@ -127,7 +140,6 @@ bool s_streaming_out = false;
 bool s_streaming_in  = false;
 
 bool is_sr_changed            = false;
-bool is_start_audio_control   = false;
 volatile bool is_adc_complete = false;
 
 const uint32_t sample_rates[] = {48000, 96000};
@@ -164,22 +176,22 @@ void reset_audio_buffer(void)
 
     for (uint16_t i = 0; i < POT_NUM; i++)
     {
-        pot_ma_index[i]    = 0;
-        pot_val[i]         = 0;
-        pot_val_prev[i][0] = 0;
-        pot_val_prev[i][1] = 0;
+        s_ui.pot_ma_index[i]    = 0;
+        s_ui.pot_val[i]         = 0;
+        s_ui.pot_val_prev[i][0] = 0;
+        s_ui.pot_val_prev[i][1] = 0;
         for (uint16_t j = 0; j < POT_MA_SIZE; j++)
         {
-            pot_val_ma[i][j] = 0;
+            s_ui.pot_val_ma[i][j] = 0;
         }
     }
 
-    mag_calibration_count = 0;
+    s_ui.mag_calibration_count = 0;
     for (uint16_t i = 0; i < MAG_SW_NUM; i++)
     {
-        mag_val[i]        = 0;
-        mag_offset_sum[i] = 0;
-        mag_offset[i]     = 0;
+        s_ui.mag_val[i]        = 0;
+        s_ui.mag_offset_sum[i] = 0;
+        s_ui.mag_offset[i]     = 0;
     }
 
     for (uint16_t i = 0; i < CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ / 4; i++)
@@ -223,32 +235,32 @@ uint32_t get_rx_blink_interval_ms(void)
 
 uint8_t get_current_xfA_position(void)
 {
-    return current_xfA_position;
+    return s_ui.current_xfA_position;
 }
 
 uint8_t get_current_xfB_position(void)
 {
-    return current_xfB_position;
+    return s_ui.current_xfB_position;
 }
 
 int16_t get_current_ch1_db(void)
 {
-    return convert_pot2dB_int(pot_val[6]);
+    return convert_pot2dB_int(s_ui.pot_val[6]);
 }
 
 int16_t get_current_ch2_db(void)
 {
-    return convert_pot2dB_int(pot_val[4]);
+    return convert_pot2dB_int(s_ui.pot_val[4]);
 }
 
 int16_t get_current_master_db(void)
 {
-    return convert_pot2dB_int(pot_val[5]);
+    return convert_pot2dB_int(s_ui.pot_val[5]);
 }
 
 int16_t get_current_dry_wet(void)
 {
-    int16_t pct = (int16_t) (((double) pot_val[7] / 1023.0 * 100.0) + 0.5);
+    int16_t pct = (int16_t) (((double) s_ui.pot_val[7] / 1023.0 * 100.0) + 0.5);
     if (pct < 0)
     {
         pct = 0;
@@ -262,7 +274,7 @@ int16_t get_current_dry_wet(void)
 
 char* get_current_input_typeA_str(void)
 {
-    switch (current_xfA_assign)
+    switch (s_ui.current_xfA_assign)
     {
     case INPUT_SRC_CH1_LN:
     case INPUT_SRC_CH2_LN:
@@ -277,7 +289,7 @@ char* get_current_input_typeA_str(void)
 
 char* get_current_input_typeB_str(void)
 {
-    switch (current_xfB_assign)
+    switch (s_ui.current_xfB_assign)
     {
     case INPUT_SRC_CH1_LN:
     case INPUT_SRC_CH2_LN:
@@ -292,7 +304,7 @@ char* get_current_input_typeB_str(void)
 
 char* get_current_input_srcA_str(void)
 {
-    switch (current_xfA_assign)
+    switch (s_ui.current_xfA_assign)
     {
     case INPUT_SRC_CH1_LN:
         return "A:Ch1";
@@ -311,7 +323,7 @@ char* get_current_input_srcA_str(void)
 
 char* get_current_input_srcB_str(void)
 {
-    switch (current_xfB_assign)
+    switch (s_ui.current_xfB_assign)
     {
     case INPUT_SRC_CH1_LN:
         return "B:Ch1";
@@ -330,7 +342,7 @@ char* get_current_input_srcB_str(void)
 
 char* get_current_input_srcP_str(void)
 {
-    switch (current_xfpost_assign)
+    switch (s_ui.current_xfpost_assign)
     {
     case INPUT_SRC_CH1_LN:
         return "THRU:Ch1[line]";
@@ -915,7 +927,7 @@ void start_adc(void)
     HAL_GPIO_WritePin(S0_GPIO_Port, S0_Pin, 0);
     HAL_GPIO_WritePin(S1_GPIO_Port, S1_Pin, 0);
     HAL_GPIO_WritePin(S2_GPIO_Port, S2_Pin, 0);
-    pot_ch = 1;
+    s_ui.pot_ch = 1;
 
     if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) != HAL_OK)
     {
@@ -923,9 +935,9 @@ void start_adc(void)
         Error_Handler();
     }
 
-    // ADC DMA request enable（ビット名はヘッダに合わせて）
+    // ADC DMA request enable�E�ビチE��名�Eヘッダに合わせて�E�E
     SET_BIT(hadc1.Instance->CFGR, ADC_CFGR_DMAEN);
-    SET_BIT(hadc1.Instance->CFGR, ADC_CFGR_DMACFG);  // circularにしたいなら
+    SET_BIT(hadc1.Instance->CFGR, ADC_CFGR_DMACFG);  // circularにしたぁE��めE
 
     handle_HPDMA1_Channel0.XferCpltCallback = dma_adc_cplt;
     if (HAL_DMAEx_List_Start_IT(&handle_HPDMA1_Channel0) != HAL_OK)
@@ -987,9 +999,9 @@ static uint8_t current_input_src_from_channel(uint8_t input_ch)
     switch (input_ch)
     {
     case INPUT_CH1:
-        return input_src_from_channel_type(INPUT_CH1, current_ch1_input_type);
+        return input_src_from_channel_type(INPUT_CH1, s_ui.current_ch1_input_type);
     case INPUT_CH2:
-        return input_src_from_channel_type(INPUT_CH2, current_ch2_input_type);
+        return input_src_from_channel_type(INPUT_CH2, s_ui.current_ch2_input_type);
     case INPUT_USB:
     default:
         return INPUT_SRC_USB;
@@ -1014,34 +1026,34 @@ static void apply_input_type_change(uint8_t input_ch, uint8_t input_type)
     select_input_type(input_ch, input_type);
     if (input_ch == INPUT_CH1)
     {
-        current_ch1_input_type = input_type;
+        s_ui.current_ch1_input_type = input_type;
     }
     else if (input_ch == INPUT_CH2)
     {
-        current_ch2_input_type = input_type;
+        s_ui.current_ch2_input_type = input_type;
     }
 
-    replace_assign_for_input_channel(&current_xfA_assign, input_ch, new_src);
-    replace_assign_for_input_channel(&current_xfB_assign, input_ch, new_src);
-    replace_assign_for_input_channel(&current_xfpost_assign, input_ch, new_src);
+    replace_assign_for_input_channel(&s_ui.current_xfA_assign, input_ch, new_src);
+    replace_assign_for_input_channel(&s_ui.current_xfB_assign, input_ch, new_src);
+    replace_assign_for_input_channel(&s_ui.current_xfpost_assign, input_ch, new_src);
 }
 
 static void apply_xf_assign_a(uint8_t input_ch)
 {
     select_xf_assignA_source(input_ch);
-    current_xfA_assign = current_input_src_from_channel(input_ch);
+    s_ui.current_xfA_assign = current_input_src_from_channel(input_ch);
 }
 
 static void apply_xf_assign_b(uint8_t input_ch)
 {
     select_xf_assignB_source(input_ch);
-    current_xfB_assign = current_input_src_from_channel(input_ch);
+    s_ui.current_xfB_assign = current_input_src_from_channel(input_ch);
 }
 
 static void apply_xf_assign_post(uint8_t input_ch)
 {
     select_xf_assignPost_source(input_ch);
-    current_xfpost_assign = current_input_src_from_channel(input_ch);
+    s_ui.current_xfpost_assign = current_input_src_from_channel(input_ch);
 }
 
 static void set_pot_mux_channel(uint8_t channel)
@@ -1121,54 +1133,54 @@ static uint32_t read_pot_sample_from_adc(uint8_t channel, uint32_t adc_raw)
 
 static void ui_control_process_pot(void)
 {
-    if (pot_ch_counter < POT_CH_SEL_WAIT)
+    if (s_ui.pot_ch_counter < POT_CH_SEL_WAIT)
     {
-        set_pot_mux_channel(pot_ch);
-        pot_ch_counter++;
+        set_pot_mux_channel(s_ui.pot_ch);
+        s_ui.pot_ch_counter++;
     }
-    else if (pot_ch_counter >= POT_CH_SEL_WAIT)
+    else if (s_ui.pot_ch_counter >= POT_CH_SEL_WAIT)
     {
-        pot_val_ma[pot_ch][pot_ma_index[pot_ch]] = read_pot_sample_from_adc(pot_ch, adc_val[6]);
-        // SEGGER_RTT_printf(0, "ch=%d, adc=%d, ma=[%d, %d, %d, %d, %d, %d, %d, %d]\n", pot_ch, adc_val[6], pot_val_ma[pot_ch][0], pot_val_ma[pot_ch][1], pot_val_ma[pot_ch][2], pot_val_ma[pot_ch][3], pot_val_ma[pot_ch][4], pot_val_ma[pot_ch][5], pot_val_ma[pot_ch][6], pot_val_ma[pot_ch][7]);
-        pot_ma_index[pot_ch] = (pot_ma_index[pot_ch] + 1) % POT_MA_SIZE;
+        s_ui.pot_val_ma[s_ui.pot_ch][s_ui.pot_ma_index[s_ui.pot_ch]] = read_pot_sample_from_adc(s_ui.pot_ch, adc_val[6]);
+        // SEGGER_RTT_printf(0, "ch=%d, adc=%d, ma=[%d, %d, %d, %d, %d, %d, %d, %d]\n", s_ui.pot_ch, adc_val[6], s_ui.pot_val_ma[s_ui.pot_ch][0], s_ui.pot_val_ma[s_ui.pot_ch][1], s_ui.pot_val_ma[s_ui.pot_ch][2], s_ui.pot_val_ma[s_ui.pot_ch][3], s_ui.pot_val_ma[s_ui.pot_ch][4], s_ui.pot_val_ma[s_ui.pot_ch][5], s_ui.pot_val_ma[s_ui.pot_ch][6], s_ui.pot_val_ma[s_ui.pot_ch][7]);
+        s_ui.pot_ma_index[s_ui.pot_ch] = (s_ui.pot_ma_index[s_ui.pot_ch] + 1) % POT_MA_SIZE;
 
         float pot_sum = 0.0f;
         for (int j = 0; j < POT_MA_SIZE; j++)
         {
-            pot_sum += (float) pot_val_ma[pot_ch][j];
+            pot_sum += (float) s_ui.pot_val_ma[s_ui.pot_ch][j];
         }
-        pot_val[pot_ch] = round(pot_sum / (float) POT_MA_SIZE);
+        s_ui.pot_val[s_ui.pot_ch] = round(pot_sum / (float) POT_MA_SIZE);
 
         uint8_t stable_count = 0;
-        if (pot_val[pot_ch] == pot_val_prev[pot_ch][0])
+        if (s_ui.pot_val[s_ui.pot_ch] == s_ui.pot_val_prev[s_ui.pot_ch][0])
         {
             stable_count++;
         }
-        if (pot_val[pot_ch] == pot_val_prev[pot_ch][1])
+        if (s_ui.pot_val[s_ui.pot_ch] == s_ui.pot_val_prev[s_ui.pot_ch][1])
         {
             stable_count++;
         }
-        if (pot_val_prev[pot_ch][0] == pot_val_prev[pot_ch][1])
+        if (s_ui.pot_val_prev[s_ui.pot_ch][0] == s_ui.pot_val_prev[s_ui.pot_ch][1])
         {
             stable_count++;
         }
 
         if (stable_count <= 1)
         {
-            apply_pot_value(pot_ch, pot_val[pot_ch]);
+            apply_pot_value(s_ui.pot_ch, s_ui.pot_val[s_ui.pot_ch]);
         }
 
-        pot_val_prev[pot_ch][1] = pot_val_prev[pot_ch][0];
-        pot_val_prev[pot_ch][0] = pot_val[pot_ch];
+        s_ui.pot_val_prev[s_ui.pot_ch][1] = s_ui.pot_val_prev[s_ui.pot_ch][0];
+        s_ui.pot_val_prev[s_ui.pot_ch][0] = s_ui.pot_val[s_ui.pot_ch];
 
-        pot_ch         = (pot_ch + 1) % POT_NUM;
-        pot_ch_counter = 0;
+        s_ui.pot_ch         = (s_ui.pot_ch + 1) % POT_NUM;
+        s_ui.pot_ch_counter = 0;
 
 #if 0
-        if (pot_ch == 0)
+        if (s_ui.pot_ch == 0)
         {
-            printf("mag = (%d, %d, %d, %d, %d, %d)\n", mag_val[0], mag_val[1], mag_val[2], mag_val[3], mag_val[4], mag_val[5]);
-            //  printf("pot = (%d, %d, %d, %d, %d, %d, %d, %d)\n", pot_val[0], pot_val[1], pot_val[2], pot_val[3], pot_val[4], pot_val[5], pot_val[6], pot_val[7]);
+            printf("mag = (%d, %d, %d, %d, %d, %d)\n", s_ui.mag_val[0], s_ui.mag_val[1], s_ui.mag_val[2], s_ui.mag_val[3], s_ui.mag_val[4], s_ui.mag_val[5]);
+            //  printf("pot = (%d, %d, %d, %d, %d, %d, %d, %d)\n", s_ui.pot_val[0], s_ui.pot_val[1], s_ui.pot_val[2], s_ui.pot_val[3], s_ui.pot_val[4], s_ui.pot_val[5], s_ui.pot_val[6], s_ui.pot_val[7]);
         }
 #endif
     }
@@ -1178,20 +1190,20 @@ static void ui_control_update_mag_samples(void)
 {
     for (int i = 0; i < MAG_SW_NUM; i++)
     {
-        mag_val[i] = (uint16_t) adc_val[i];
+        s_ui.mag_val[i] = (uint16_t) adc_val[i];
 
-        if (mag_calibration_count < MAG_CALIBRATION_COUNT_MAX)
+        if (s_ui.mag_calibration_count < MAG_CALIBRATION_COUNT_MAX)
         {
-            mag_offset_sum[i] += adc_val[i];
+            s_ui.mag_offset_sum[i] += adc_val[i];
         }
-        else if (mag_calibration_count == MAG_CALIBRATION_COUNT_MAX)
+        else if (s_ui.mag_calibration_count == MAG_CALIBRATION_COUNT_MAX)
         {
-            mag_offset[i] = mag_offset_sum[i] / MAG_CALIBRATION_COUNT_MAX;
+            s_ui.mag_offset[i] = s_ui.mag_offset_sum[i] / MAG_CALIBRATION_COUNT_MAX;
         }
     }
-    if (mag_calibration_count <= MAG_CALIBRATION_COUNT_MAX)
+    if (s_ui.mag_calibration_count <= MAG_CALIBRATION_COUNT_MAX)
     {
-        mag_calibration_count++;
+        s_ui.mag_calibration_count++;
     }
 }
 
@@ -1203,61 +1215,61 @@ static void ui_control_update_xfade_from_mag(void)
         int i = index[j];
         if (i == 0 || i == 5)
         {
-            if (mag_val[i] < mag_offset[i] + MAG_XFADE_CUTOFF)
+            if (s_ui.mag_val[i] < s_ui.mag_offset[i] + MAG_XFADE_CUTOFF)
             {
-                xfade[i] = 0.0f;
+                s_ui.xfade[i] = 0.0f;
             }
-            else if (mag_val[i] >= mag_offset[i] + MAG_XFADE_CUTOFF && mag_val[i] <= mag_offset[i] + MAG_XFADE_RANGE)
+            else if (s_ui.mag_val[i] >= s_ui.mag_offset[i] + MAG_XFADE_CUTOFF && s_ui.mag_val[i] <= s_ui.mag_offset[i] + MAG_XFADE_RANGE)
             {
-                xfade[i] = (float) (mag_val[i] - mag_offset[i] - MAG_XFADE_CUTOFF) / (float) MAG_XFADE_RANGE;
+                s_ui.xfade[i] = (float) (s_ui.mag_val[i] - s_ui.mag_offset[i] - MAG_XFADE_CUTOFF) / (float) MAG_XFADE_RANGE;
             }
-            else if (mag_val[i] > mag_offset[i] + MAG_XFADE_RANGE)
+            else if (s_ui.mag_val[i] > s_ui.mag_offset[i] + MAG_XFADE_RANGE)
             {
-                xfade[i] = 1.0f;
+                s_ui.xfade[i] = 1.0f;
             }
 
-            if (xfade[i] >= xfade_max[i])
+            if (s_ui.xfade[i] >= s_ui.xfade_max[i])
             {
-                xfade_max[i] = xfade[i];
+                s_ui.xfade_max[i] = s_ui.xfade[i];
 
                 if (i == 0)
                 {
-                    xfade_min[1] = xfade_max[i];
+                    s_ui.xfade_min[1] = s_ui.xfade_max[i];
                 }
                 else if (i == 5)
                 {
-                    xfade_min[4] = xfade_max[i];
+                    s_ui.xfade_min[4] = s_ui.xfade_max[i];
                 }
             }
         }
         else
         {
-            if (mag_val[i] < mag_offset[i] + MAG_XFADE_CUTOFF)
+            if (s_ui.mag_val[i] < s_ui.mag_offset[i] + MAG_XFADE_CUTOFF)
             {
-                xfade[i] = 1.0f;
+                s_ui.xfade[i] = 1.0f;
             }
-            else if (mag_val[i] >= mag_offset[i] + MAG_XFADE_CUTOFF && mag_val[i] <= mag_offset[i] + MAG_XFADE_RANGE)
+            else if (s_ui.mag_val[i] >= s_ui.mag_offset[i] + MAG_XFADE_CUTOFF && s_ui.mag_val[i] <= s_ui.mag_offset[i] + MAG_XFADE_RANGE)
             {
-                xfade[i] = 1.0f - ((float) (mag_val[i] - mag_offset[i] - MAG_XFADE_CUTOFF) / (float) MAG_XFADE_RANGE);
+                s_ui.xfade[i] = 1.0f - ((float) (s_ui.mag_val[i] - s_ui.mag_offset[i] - MAG_XFADE_CUTOFF) / (float) MAG_XFADE_RANGE);
             }
-            else if (mag_val[i] > mag_offset[i] + MAG_XFADE_RANGE)
+            else if (s_ui.mag_val[i] > s_ui.mag_offset[i] + MAG_XFADE_RANGE)
             {
-                xfade[i] = 0.0f;
+                s_ui.xfade[i] = 0.0f;
             }
 
-            if (xfade[i] <= xfade_min[i])
+            if (s_ui.xfade[i] <= s_ui.xfade_min[i])
             {
-                xfade_min[i] = xfade[i];
+                s_ui.xfade_min[i] = s_ui.xfade[i];
 
-                if (xfade_min[i] < 0.05f)
+                if (s_ui.xfade_min[i] < 0.05f)
                 {
                     if (i == 1)
                     {
-                        xfade_max[0] = 0.0f;
+                        s_ui.xfade_max[0] = 0.0f;
                     }
                     else if (i == 4)
                     {
-                        xfade_max[5] = 0.0f;
+                        s_ui.xfade_max[5] = 0.0f;
                     }
                 }
             }
@@ -1271,10 +1283,10 @@ static void ui_control_apply_xfade_updates(void)
     bool xfadeB_changed = false;
     for (int i = 0; i < MAG_SW_NUM; i++)
     {
-        if (fabs(xfade[i] - xfade_prev[i]) > 0.01f)
+        if (fabs(s_ui.xfade[i] - s_ui.xfade_prev[i]) > 0.01f)
         {
-            // send_note(60 + (5 - i), (uint8_t) (127.0f - xfade[i] * 127.0f), 0);
-            send_control_change(10 + (5 - i), (uint8_t) (127.0f - xfade[i] * 127.0f), 0);
+            // send_note(60 + (5 - i), (uint8_t) (127.0f - s_ui.xfade[i] * 127.0f), 0);
+            send_control_change(10 + (5 - i), (uint8_t) (127.0f - s_ui.xfade[i] * 127.0f), 0);
 
             if (i == 0 || i == 1)
             {
@@ -1285,22 +1297,22 @@ static void ui_control_apply_xfade_updates(void)
                 xfadeA_changed = true;
             }
 
-            xfade_prev[i] = xfade[i];
+            s_ui.xfade_prev[i] = s_ui.xfade[i];
         }
     }
 
     if (xfadeA_changed)
     {
-        const float xf = pow(xfade_max[5] * xfade_min[4], 1.0f / 3.0f);
+        const float xf = pow(s_ui.xfade_max[5] * s_ui.xfade_min[4], 1.0f / 3.0f);
         set_dc_inputA(xf);
-        current_xfA_position = (uint8_t) (xf * 128.0f);
+        s_ui.current_xfA_position = (uint8_t) (xf * 128.0f);
     }
 
     if (xfadeB_changed)
     {
-        const float xf = pow(xfade_max[0] * xfade_min[1], 1.0f / 3.0f);
+        const float xf = pow(s_ui.xfade_max[0] * s_ui.xfade_min[1], 1.0f / 3.0f);
         set_dc_inputB(xf);
-        current_xfB_position = (uint8_t) (xf * 128.0f);
+        s_ui.current_xfB_position = (uint8_t) (xf * 128.0f);
     }
 }
 
@@ -1308,7 +1320,7 @@ static void ui_control_process_mag(void)
 {
     ui_control_update_mag_samples();
 
-    if (mag_calibration_count > MAG_CALIBRATION_COUNT_MAX)
+    if (s_ui.mag_calibration_count > MAG_CALIBRATION_COUNT_MAX)
     {
         ui_control_update_xfade_from_mag();
         ui_control_apply_xfade_updates();
@@ -1412,13 +1424,13 @@ void ui_control_task(void)
 
 void start_audio_control(void)
 {
-    is_start_audio_control = true;
+    s_ui.is_start_audio_control = true;
     __DMB();
 }
 
 bool is_started_audio_control(void)
 {
-    return is_start_audio_control;
+    return s_ui.is_start_audio_control;
 }
 
 static void dma_sai2_tx_half(DMA_HandleTypeDef* hdma)
@@ -1504,11 +1516,11 @@ void HAL_SAI_ErrorCallback(SAI_HandleTypeDef* hsai)
 void start_sai(void)
 {
     // ========================================
-    // リングバッファをプリフィル（無音で初期化）
-    // SAI DMAが開始直後にHalf割り込みを発生させた時、
-    // リングバッファにデータがないとアンダーランになるため、
-    // 無音データを事前に投入しておく
-    // 96kHzではデータレートが2倍なのでプリフィルも2倍必要
+    // リングバッファを�Eリフィル�E�無音で初期化！E
+    // SAI DMAが開始直後にHalf割り込みを発生させた時、E
+    // リングバッファにチE�EタがなぁE��アンダーランになるため、E
+    // 無音チE�Eタを事前に投�Eしておく
+    // 96kHzではチE�Eタレートが2倍なのでプリフィルめE倍忁E��E
     // ========================================
     uint32_t prefill_size = SAI_TX_BUF_SIZE;
     memset(sai_tx_rng_buf, 0, prefill_size * sizeof(int32_t));
@@ -1566,7 +1578,7 @@ void start_sai(void)
         Error_Handler();
     }
 #endif
-    hsai_BlockA2.Instance->CR1 |= SAI_xCR1_DMAEN;  // ← ここが「DMAリクエスト有効化」
+    hsai_BlockA2.Instance->CR1 |= SAI_xCR1_DMAEN;  // ↁEここが「DMAリクエスト有効化、E
     __HAL_SAI_ENABLE(&hsai_BlockA2);
 
     osDelay(500);
@@ -1600,7 +1612,7 @@ void start_sai(void)
         Error_Handler();
     }
 #endif
-    hsai_BlockA1.Instance->CR1 |= SAI_xCR1_DMAEN;  // ← ここが「DMAリクエスト有効化」
+    hsai_BlockA1.Instance->CR1 |= SAI_xCR1_DMAEN;  // ↁEここが「DMAリクエスト有効化、E
     __HAL_SAI_ENABLE(&hsai_BlockA1);
 }
 
@@ -1625,25 +1637,25 @@ void copybuf_usb2ring(void)
         return;
     }
 
-    // USBは4ch、SAIも4ch（そのままコピー）
+    // USBは4ch、SAIめEch�E�そのままコピ�E�E�E
     // USB: [L1][R1][L2][R2][L1][R1][L2][R2]...
     // SAI: [L1][R1][L2][R2][L1][R1][L2][R2]...
 
-    uint32_t sai_words;  // SAIに書くword数（4ch分）
+    uint32_t sai_words;  // SAIに書くword数�E�Ech刁E��E
 
     if (current_resolution == 16)
     {
-        // 16bit: USBデータはint16_tとして詰まっている (4ch)
+        // 16bit: USBチE�Eタはint16_tとして詰まってぁE�� (4ch)
         int16_t* usb_in_buf_16 = (int16_t*) usb_in_buf;
         uint32_t usb_samples   = spk_data_size / sizeof(int16_t);  // 16bitサンプル数
-        sai_words              = usb_samples;                      // SAIに書く4chデータのword数
+        sai_words              = usb_samples;                      // SAIに書ぁEchチE�Eタのword数
 
         if ((int32_t) sai_words > free)
         {
             sai_words = (uint32_t) free;
         }
 
-        // 4ch全てコピー、16bit→32bit左詰め変換
+        // 4ch全てコピ�E、E6bitↁE2bit左詰め変換
         for (uint32_t i = 0; i < sai_words; i++)
         {
             int32_t sample32                                              = ((int32_t) usb_in_buf_16[i]) << 16;
@@ -1653,7 +1665,7 @@ void copybuf_usb2ring(void)
     }
     else
     {
-        // 24bit in 32bit slot: 4ch全てそのままコピー
+        // 24bit in 32bit slot: 4ch全てそ�Eままコピ�E
         sai_words = spk_data_size / sizeof(int32_t);
 
         if ((int32_t) sai_words > free)
@@ -1661,7 +1673,7 @@ void copybuf_usb2ring(void)
             sai_words = (uint32_t) free;
         }
 
-        // 4ch全てコピー
+        // 4ch全てコピ�E
         for (uint32_t i = 0; i < sai_words; i++)
         {
             sai_tx_rng_buf[sai_tx_rng_buf_index & (SAI_RNG_BUF_SIZE - 1)] = usb_in_buf[i];
@@ -1678,10 +1690,10 @@ static inline void fill_tx_half(uint32_t index0)
     const uint32_t frame_words = 4;  // 4ch x 32bit = 1 frame
     uint32_t pull_words        = n;
 
-    // index0のバウンドチェック
+    // index0のバウンドチェチE��
     if (index0 >= SAI_TX_BUF_SIZE)
     {
-        // 不正な値 - 無音で埋める
+        // 不正な値 - 無音で埋めめE
         return;
     }
 
@@ -1698,13 +1710,13 @@ static inline void fill_tx_half(uint32_t index0)
 #endif
     if (used < 0)
     {
-        // 同期ズレは捨てて合わせ直す
+        // 同期ズレは捨てて合わせ直ぁE
         sai_transmit_index = sai_tx_rng_buf_index;
         used               = 0;
     }
 
-    // データ不足時は可能な分だけ再生し、残りは末尾フレーム保持で埋める。
-    // いきなり全無音にせずクリック感を抑える。
+    // チE�Eタ不足時�E可能な刁E��け�E生し、残りは末尾フレーム保持で埋める、E
+    // ぁE��なり�E無音にせずクリチE��感を抑える、E
     if (used < (int32_t) n)
     {
 #if AUDIO_DIAG_LOG
@@ -1723,24 +1735,24 @@ static inline void fill_tx_half(uint32_t index0)
         }
     }
 
-    // usedが大きすぎる場合も異常（オーバーフロー等）
+    // usedが大きすぎる場合も異常�E�オーバ�Eフロー等！E
     if (used > (int32_t) SAI_RNG_BUF_SIZE)
     {
-        // リセットして無音で埋める
+        // リセチE��して無音で埋めめE
         sai_transmit_index = sai_tx_rng_buf_index;
         memset(stereo_out_buf + index0, 0, n * sizeof(int32_t));
         return;
     }
 
-    // 長時間再生時の USB/SAI クロック差を吸収するため、
-    // リング水位に応じて 1 frame だけ消費量を増減する。
+    // 長時間再生時�E USB/SAI クロチE��差を吸収するため、E
+    // リング水位に応じて 1 frame だけ消費量を増減する、E
     const int32_t target_level = (int32_t) SAI_TX_TARGET_LEVEL_WORDS;
     const int32_t high_thr     = target_level + (int32_t) (SAI_TX_BUF_SIZE / 2);
     const int32_t low_thr      = target_level - (int32_t) (SAI_TX_BUF_SIZE / 2);
 
     if (used >= (int32_t) n && used > high_thr && used >= (int32_t) (n + frame_words))
     {
-        // バッファ過多 -> 1 frame 余分に消費して追従
+        // バッファ過夁E-> 1 frame 余�Eに消費して追征E
         pull_words = n + frame_words;
 #if AUDIO_DIAG_LOG
         dbg_tx_drift_up_events++;
@@ -1748,14 +1760,14 @@ static inline void fill_tx_half(uint32_t index0)
     }
     else if (used >= (int32_t) n && used < low_thr && n > frame_words)
     {
-        // バッファ不足傾向 -> 1 frame 少なく消費して追従
+        // バッファ不足傾吁E-> 1 frame 少なく消費して追征E
         pull_words = n - frame_words;
 #if AUDIO_DIAG_LOG
         dbg_tx_drift_dn_events++;
 #endif
     }
 
-    // 安全ガード
+    // 安�EガーチE
     if ((int32_t) pull_words > used)
     {
         pull_words = (uint32_t) used;
@@ -1782,7 +1794,7 @@ static inline void fill_tx_half(uint32_t index0)
 #if AUDIO_DIAG_LOG
         dbg_tx_partial_fill_events++;
 #endif
-        // 不足分は最後の1frameを繰り返してクリックノイズを抑える
+        // 不足刁E�E最後�E1frameを繰り返してクリチE��ノイズを抑える
         uint32_t* dst = (uint32_t*) (stereo_out_buf + index0 + pull_words);
         uint32_t* src = (uint32_t*) (stereo_out_buf + index0 + pull_words - frame_words);
         for (uint32_t i = pull_words; i < n; i += frame_words)
@@ -1800,7 +1812,7 @@ static inline void fill_tx_half(uint32_t index0)
 
 void copybuf_ring2sai(void)
 {
-    // ISRから立つ「更新要求」を取り出して、該当halfだけ1回更新する
+    // ISRから立つ「更新要求」を取り出して、該当halfだぁE回更新する
     uint8_t mask;
     uint32_t primask = __get_PRIMASK();
     __disable_irq();
@@ -1819,9 +1831,9 @@ void copybuf_ring2sai(void)
 // ==============================
 static inline void fill_rx_half(uint32_t index0)
 {
-    const uint32_t n = (SAI_RX_BUF_SIZE / 2);  // 半分ぶん（word数）
+    const uint32_t n = (SAI_RX_BUF_SIZE / 2);  // 半�Eぶん！Eord数�E�E
 
-    // index0のバウンドチェック
+    // index0のバウンドチェチE��
     if (index0 >= SAI_RX_BUF_SIZE)
     {
         return;
@@ -1834,7 +1846,7 @@ static inline void fill_rx_half(uint32_t index0)
         used              = 0;
     }
 
-    // usedが大きすぎる場合も異常（オーバーフロー等）
+    // usedが大きすぎる場合も異常�E�オーバ�Eフロー等！E
     if (used > (int32_t) SAI_RNG_BUF_SIZE)
     {
         sai_receive_index = sai_rx_rng_buf_index;
@@ -1844,7 +1856,7 @@ static inline void fill_rx_half(uint32_t index0)
     int32_t free = (int32_t) (SAI_RNG_BUF_SIZE - 1) - used;
     if (free < (int32_t) n)
     {
-        // 追いつけないなら古いデータを捨てて空きを作る
+        // 追ぁE��けなぁE��ら古ぁE��ータを捨てて空きを作る
         sai_receive_index += (uint32_t) ((int32_t) n - free);
     }
 
@@ -1869,17 +1881,17 @@ static void copybuf_sai2ring(void)
     rx_pending_mask = 0;
     __set_PRIMASK(primask);
 
-    // 順序：half→cplt の順で処理（両方溜まっていた場合）
+    // 頁E��：half→cplt の頁E��処琁E��両方溜まってぁE��場合！E
     if (mask & 0x01)
         fill_rx_half(0);
     if (mask & 0x02)
         fill_rx_half(SAI_RX_BUF_SIZE / 2);
 }
 
-// 1msあたりのフレーム数
+// 1msあたり�Eフレーム数
 static uint32_t audio_frames_per_ms(void)
 {
-    // 例: 48kHz -> 48 frames/ms
+    // 侁E 48kHz -> 48 frames/ms
     return current_sample_rate / 1000u;
 }
 
@@ -1903,7 +1915,7 @@ static void copybuf_ring2usb_and_send(void)
         return;
     }
 
-    // IN(録音)側が streaming していないなら送らない
+    // IN(録音)側ぁEstreaming してぁE��ぁE��ら送らなぁE
     if (!s_streaming_in)
     {
         return;
@@ -1925,10 +1937,10 @@ static void copybuf_ring2usb_and_send(void)
     }
     if (used < (int32_t) sai_words)
     {
-        return;  // 足りないなら今回は送らない
+        return;  // 足りなぁE��ら今回は送らなぁE
     }
 
-    // USBは4ch、SAIも4ch
+    // USBは4ch、SAIめEch
     // SAI: [L1][R1][L2][R2][L1][R1][L2][R2]...
     // USB: [L1][R1][L2][R2][L1][R1][L2][R2]...
 
@@ -1937,10 +1949,10 @@ static void copybuf_ring2usb_and_send(void)
 
     if (current_resolution == 16)
     {
-        // 16bit: SAI(32bit 2ch) → USB(16bit 4ch) 変換
-        usb_bytes = frames * 4 * sizeof(int16_t);  // 4ch分
+        // 16bit: SAI(32bit 2ch) ↁEUSB(16bit 4ch) 変換
+        usb_bytes = frames * 4 * sizeof(int16_t);  // 4ch刁E
 
-        // 安全: usb_out_buf が足りない設定なら絶対に書かない
+        // 安�E: usb_out_buf が足りなぁE��定なら絶対に書かなぁE
         if (usb_bytes > sizeof(usb_out_buf))
             return;
 
@@ -1952,8 +1964,8 @@ static void copybuf_ring2usb_and_send(void)
             uint32_t r_R1 = (sai_receive_index + f * 4 + 1) & (SAI_RNG_BUF_SIZE - 1);
             uint32_t r_L2 = (sai_receive_index + f * 4 + 2) & (SAI_RNG_BUF_SIZE - 1);
             uint32_t r_R2 = (sai_receive_index + f * 4 + 3) & (SAI_RNG_BUF_SIZE - 1);
-            // 32bit → 16bit (上位16bitを取り出す)
-            // SAIデータは符号付き32bitなので、算術右シフトで符号を保持
+            // 32bit ↁE16bit (上佁E6bitを取り�EぁE
+            // SAIチE�Eタは符号付き32bitなので、算術右シフトで符号を保持
             int32_t sample_L1         = sai_rx_rng_buf[r_L1];
             int32_t sample_R1         = sai_rx_rng_buf[r_R1];
             int32_t sample_L2         = sai_rx_rng_buf[r_L2];
@@ -1964,7 +1976,7 @@ static void copybuf_ring2usb_and_send(void)
             usb_out_buf_16[f * 4 + 3] = (int16_t) (sample_R2 >> 16);  // R2
         }
 
-        // ISRコンテキストから呼ばれるので通常版を使用
+        // ISRコンチE��ストから呼ばれるので通常版を使用
         written = tud_audio_write(usb_out_buf, (uint16_t) usb_bytes);
 
         if (written == 0)
@@ -1972,20 +1984,20 @@ static void copybuf_ring2usb_and_send(void)
             return;
         }
 
-        // 書けた分だけ読みポインタを進める
+        // 書けた刁E��け読みポインタを進める
         uint32_t written_frames = ((uint32_t) written) / (4 * sizeof(int16_t));
         if (written_frames > frames)
             written_frames = frames;
         if (written_frames == 0)
             return;
-        sai_receive_index += written_frames * 4;  // SAIは4ch分
+        sai_receive_index += written_frames * 4;  // SAIは4ch刁E
     }
     else
     {
-        // 24bit in 32bit slot: SAI(2ch) → USB(4ch) 変換
-        usb_bytes = frames * 4 * sizeof(int32_t);  // 4ch分
+        // 24bit in 32bit slot: SAI(2ch) ↁEUSB(4ch) 変換
+        usb_bytes = frames * 4 * sizeof(int32_t);  // 4ch刁E
 
-        // 安全: usb_out_buf が足りない設定なら絶対に書かない
+        // 安�E: usb_out_buf が足りなぁE��定なら絶対に書かなぁE
         if (usb_bytes > sizeof(usb_out_buf))
             return;
 
@@ -2001,7 +2013,7 @@ static void copybuf_ring2usb_and_send(void)
             usb_out_buf[f * 4 + 3] = sai_rx_rng_buf[r_R2];  // R2
         }
 
-        // ISRコンテキストから呼ばれるので通常版を使用
+        // ISRコンチE��ストから呼ばれるので通常版を使用
         written = tud_audio_write(usb_out_buf, (uint16_t) usb_bytes);
 
         if (written == 0)
@@ -2009,18 +2021,18 @@ static void copybuf_ring2usb_and_send(void)
             return;
         }
 
-        // 書けた分だけ読みポインタを進める
+        // 書けた刁E��け読みポインタを進める
         uint32_t written_frames = ((uint32_t) written) / (4 * sizeof(int32_t));
         if (written_frames > frames)
             written_frames = frames;
         if (written_frames == 0)
             return;
-        sai_receive_index += written_frames * 4;  // SAIは4ch分
+        sai_receive_index += written_frames * 4;  // SAIは4ch刁E
     }
 }
 
-// TinyUSB TX完了コールバック - USB ISRコンテキストで呼ばれる
-// ISR内でFIFO操作を行うとRX処理と競合するため、フラグのみ設定
+// TinyUSB TX完亁E��ールバック - USB ISRコンチE��ストで呼ばれる
+// ISR冁E��FIFO操作を行うとRX処琁E��競合するため、フラグのみ設宁E
 bool tud_audio_tx_done_isr(uint8_t rhport, uint16_t n_bytes_sent, uint8_t func_id, uint8_t ep_in, uint8_t cur_alt_setting)
 {
     (void) rhport;
@@ -2029,7 +2041,7 @@ bool tud_audio_tx_done_isr(uint8_t rhport, uint16_t n_bytes_sent, uint8_t func_i
     (void) ep_in;
     (void) cur_alt_setting;
 
-    // ISRではフラグを立てるだけ - 実際の送信はタスクコンテキストで行う
+    // ISRではフラグを立てるだぁE- 実際の送信はタスクコンチE��ストで行う
     usb_tx_pending = true;
     return true;
 }
@@ -2037,7 +2049,7 @@ bool tud_audio_tx_done_isr(uint8_t rhport, uint16_t n_bytes_sent, uint8_t func_i
 // audio_task()呼び出し頻度計測用
 static volatile uint32_t audio_task_call_count = 0;
 static volatile uint32_t audio_task_last_tick  = 0;
-static volatile uint32_t audio_task_frequency  = 0;  // 呼び出し回数/秒
+static volatile uint32_t audio_task_frequency  = 0;  // 呼び出し回数/私E
 
 void audio_task(void)
 {
@@ -2097,8 +2109,8 @@ void audio_task(void)
     }
     else
     {
-        // Feedback EPがFIFO水位を使って送信レート制御するため、
-        // 毎msで「必要量だけ」読む。全量吸い出しは水位制御を壊す。
+        // Feedback EPがFIFO水位を使って送信レート制御するため、E
+        // 毎msで「忁E��E��だけ」読む。�E量吸ぁE�Eし�E水位制御を壊す、E
         spk_data_size = tud_audio_read(usb_in_buf, audio_out_bytes_per_ms());
 #if AUDIO_DIAG_LOG
         dbg_usb_read_bytes += spk_data_size;
@@ -2123,7 +2135,7 @@ void audio_task(void)
         // SAI -> USB
         copybuf_sai2ring();
 
-        // USB TX送信 (ISRからのフラグ通知、またはストリーミング中は常に試行)
+        // USB TX送信 (ISRからのフラグ通知、また�Eストリーミング中は常に試衁E
         if (usb_tx_pending || s_streaming_in)
         {
             usb_tx_pending = false;
