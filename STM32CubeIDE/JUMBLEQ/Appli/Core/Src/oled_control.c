@@ -1,6 +1,6 @@
 /*
  * oled_control.c
- *
+*
  *  Created on: 2026/01/26
  *      Author: Shnichi Yamamoto
  */
@@ -20,7 +20,7 @@ static void merge_dirty_pages(bool* dirty, uint8_t* dirty_start_page, uint8_t* d
 {
     if (!*dirty)
     {
-        *dirty           = true;
+        *dirty            = true;
         *dirty_start_page = page_start;
         *dirty_end_page   = page_end;
         return;
@@ -76,13 +76,13 @@ static bool wait_main_oled_ready(uint32_t timeout_ms)
     uint32_t start = HAL_GetTick();
 
     while ((HAL_GetTick() - start) < timeout_ms)
-    {
+{
         if (HAL_I2C_IsDeviceReady(&MAIN_OLED_I2C_PORT, MAIN_OLED_I2C_ADDR, 2, 20) == HAL_OK)
-        {
+{
             return true;
-        }
+}
         osDelay(10);
-    }
+}
 
     return false;
 }
@@ -93,8 +93,6 @@ void OLED_Init(void)
     (void) wait_main_oled_ready(500);
     main_oled_Init();
     main_oled_Fill(Black);
-    // main_oled_SetCursor(0, 22);
-    // main_oled_WriteString("A:C1(Ln)  B:C2(Ph)", Font_7x10, White);
     main_oled_UpdateScreen();
 
     sub_oled_Init();
@@ -113,17 +111,17 @@ void OLED_UpdateTask(void)
     char line2_dw[16];
     static char prev_line1_ch2[16] = {0};
     static char prev_line1_mst[16] = {0};
-    static char prev_line2_c1[16] = {0};
-    static char prev_line2_dw[16] = {0};
-    static char prev_srcA[32]   = {0};
-    static char prev_srcB[32]   = {0};
-    static char prev_typeA[32]  = {0};
-    static char prev_typeB[32]  = {0};
-    static char prev_srcP[32]   = {0};
-    static bool sub_initialized = false;
-    bool dirty                  = false;
-    uint8_t dirty_start_page    = 0xFF;
-    uint8_t dirty_end_page      = 0;
+    static char prev_line2_c1[16]  = {0};
+    static char prev_line2_dw[16]  = {0};
+    static char prev_srcA[32]      = {0};
+    static char prev_srcB[32]      = {0};
+    static char prev_typeA[32]     = {0};
+    static char prev_typeB[32]     = {0};
+    static char prev_srcP[32]      = {0};
+    static bool sub_initialized    = false;
+    bool dirty                     = false;
+    uint8_t dirty_start_page       = 0xFF;
+    uint8_t dirty_end_page         = 0;
 
     const uint8_t line1_ch2_x = 0;
     const uint8_t line1_mst_x = 64;
@@ -144,9 +142,9 @@ void OLED_UpdateTask(void)
     update_main_text_block(prev_line2_dw, sizeof(prev_line2_dw), line2_dw, 64, line2_y, 127, line2_y + 10, line2_dw_x, line2_y, 2, 3, &dirty, &dirty_start_page, &dirty_end_page);
 
     if (dirty)
-    {
+{
         main_oled_UpdateScreenPages(dirty_start_page, dirty_end_page);
-    }
+}
 
     const char* srcA  = nonnull_str(get_current_input_srcA_str());
     const char* srcB  = nonnull_str(get_current_input_srcB_str());
@@ -182,7 +180,7 @@ void OLED_UpdateTask(void)
     update_sub_text_block(prev_srcP, sizeof(prev_srcP), srcP, 0, 50, 127, 59, 1, 50, 6, 7, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
 
     if (sub_dirty)
-    {
+{
         sub_oled_UpdateScreenPages(sub_dirty_start_page, sub_dirty_end_page);
-    }
+}
 }
