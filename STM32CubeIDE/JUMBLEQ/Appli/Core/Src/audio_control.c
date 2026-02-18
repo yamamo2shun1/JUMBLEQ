@@ -252,22 +252,31 @@ uint8_t get_current_xfB_position(void)
 
 int16_t get_current_ch1_db(void)
 {
-    return (int16_t) convert_pot2dB(pot_val[6]);
+    return convert_pot2dB_int(pot_val[6]);
 }
 
 int16_t get_current_ch2_db(void)
 {
-    return (int16_t) convert_pot2dB(pot_val[4]);
+    return convert_pot2dB_int(pot_val[4]);
 }
 
 int16_t get_current_master_db(void)
 {
-    return (int16_t) convert_pot2dB(pot_val[5]);
+    return convert_pot2dB_int(pot_val[5]);
 }
 
 int16_t get_current_dry_wet(void)
 {
-    return (int16_t) ((double) pot_val[7] / 1023.0 * 100.0);
+    int16_t pct = (int16_t) (((double) pot_val[7] / 1023.0 * 100.0) + 0.5);
+    if (pct < 0)
+    {
+        pct = 0;
+    }
+    if (pct > 100)
+    {
+        pct = 100;
+    }
+    return pct;
 }
 
 char* get_current_input_typeA_str(void)
