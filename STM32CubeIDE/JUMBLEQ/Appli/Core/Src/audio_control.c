@@ -99,7 +99,6 @@ float xfade_prev[MAG_SW_NUM] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
 float xfade_min[MAG_SW_NUM]  = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
 float xfade_max[MAG_SW_NUM]  = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
 
-int16_t hpout_clear_count              = 0;
 volatile uint32_t sai_tx_rng_buf_index = 0;
 volatile uint32_t sai_rx_rng_buf_index = 0;
 volatile uint32_t sai_transmit_index   = 0;
@@ -1415,17 +1414,6 @@ void ui_control_task(void)
     is_adc_complete = false;
 }
 
-bool get_sr_changed_state(void)
-{
-    return is_sr_changed;
-}
-
-void reset_sr_changed_state(void)
-{
-    is_sr_changed = false;
-    __DMB();
-}
-
 void start_audio_control(void)
 {
     is_start_audio_control = true;
@@ -1833,17 +1821,6 @@ void copybuf_ring2sai(void)
 // ==============================
 // SAI(RX) -> Ring -> USB(IN) path
 // ==============================
-static inline uint16_t tud_audio_write_atomic(void const* buf, uint16_t len)
-{
-    // TinyUSB 内部FIFOが USB IRQ 側でも触られる環境だと破壊→HardFault になり得るので、
-    // 最小区間だけ割り込み禁止で保護する。
-    uint32_t primask = __get_PRIMASK();
-    __disable_irq();
-    uint16_t w = tud_audio_write(buf, len);
-    __set_PRIMASK(primask);
-    return w;
-}
-
 static inline void fill_rx_half(uint32_t index0)
 {
     const uint32_t n = (SAI_RX_BUF_SIZE / 2);  // 半分ぶん（word数）
@@ -1921,20 +1898,6 @@ static uint16_t audio_out_bytes_per_ms(void)
         bytes = sizeof(usb_in_buf);
     }
     return (uint16_t) bytes;
-}
-
-// USB IRQ個別制御から、全割り込み禁止に変更
-// NVICの個別制御は状態不整合を起こす可能性があるため
-static inline uint32_t usb_irq_save(void)
-{
-    uint32_t primask = __get_PRIMASK();
-    __disable_irq();
-    return primask;
-}
-
-static inline void usb_irq_restore(uint32_t primask)
-{
-    __set_PRIMASK(primask);
 }
 
 static void copybuf_ring2usb_and_send(void)
@@ -2075,16 +2038,6 @@ bool tud_audio_tx_done_isr(uint8_t rhport, uint16_t n_bytes_sent, uint8_t func_i
     return true;
 }
 
-#define USB_IRQn OTG_HS_IRQn
-
-static inline uint16_t tud_audio_available_usb_locked(void)
-{
-    uint32_t en = usb_irq_save();
-    uint16_t a  = tud_audio_available();
-    usb_irq_restore(en);
-    return a;
-}
-
 // audio_task()呼び出し頻度計測用
 static volatile uint32_t audio_task_call_count = 0;
 static volatile uint32_t audio_task_last_tick  = 0;
@@ -2181,22 +2134,6 @@ void audio_task(void)
             copybuf_ring2usb_and_send();
         }
 
-#if 0
-        if (spk_data_size == 0 && hpout_clear_count < 100)
-        {
-            hpout_clear_count++;
-
-            if (hpout_clear_count == 100)
-            {
-                memset(hpout_buf, 0, sizeof(hpout_buf));
-                hpout_clear_count = 101;
-            }
-        }
-        else
-        {
-            hpout_clear_count = 0;
-        }
-#endif
     }
 }
 
@@ -2240,7 +2177,6 @@ void AUDIO_SAI_Reset_ForNewRate(void)
     (void) HAL_SAI_DeInit(&hsai_BlockA2);
     (void) HAL_SAI_DeInit(&hsai_BlockA1);
 
-    hpout_clear_count    = 0;
     sai_tx_rng_buf_index = 0;
     sai_rx_rng_buf_index = 0;
     sai_transmit_index   = 0;

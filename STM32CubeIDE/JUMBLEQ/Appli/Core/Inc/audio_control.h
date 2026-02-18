@@ -59,9 +59,6 @@ void start_sai(void);
 
 void start_audio_control(void);
 bool is_started_audio_control(void);
-
-bool get_sr_changed_state(void);
-void reset_sr_changed_state(void);
 void AUDIO_SAI_Reset_ForNewRate(void);
 void audio_task(void);
 
