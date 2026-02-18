@@ -12,7 +12,7 @@
 #include "audio_control.h"
 
 #include "SigmaStudioFW.h"
-#include "oto_no_ita_dsp_ADAU146xSchematic_1_PARAM.h"
+#include "JUMBLEQ_DSP_ADAU146xSchematic_1_PARAM.h"
 
 #define RGB            3
 #define COL_BITS       8
@@ -50,11 +50,11 @@ enum
 static const float s_vu_db_thresholds[VU_LEVEL_COUNT] = {-45.0f, -36.0f, -27.0f, -18.0f, -9.0f};
 
 static const led_rgb_t s_vu_colors_low_to_high[VU_LEVEL_COUNT] = {
-    {0, 32, 0},
-    {30, 61, 0},
+    {0,   32, 0},
+    {30,  61, 0},
     {100, 70, 0},
     {120, 38, 0},
-    {127, 0, 0},
+    {127, 0,  0},
 };
 
 static const uint8_t s_vu_led_index_a[VU_LEVEL_COUNT] = {0, 1, 2, 3, 4};
@@ -236,7 +236,7 @@ static void layer_xf_position(uint8_t led_index, uint8_t white_level)
 
 void layer_xfA_position(void)
 {
-    static uint8_t blink_count_a = 0;
+    static uint8_t blink_count_a  = 0;
     const uint8_t xf_pos          = get_current_xfA_position();
     const uint8_t white_level     = calc_white_level(blink_count_a);
     const uint8_t slot            = calc_xf_slot(xf_pos);
@@ -248,7 +248,7 @@ void layer_xfA_position(void)
 
 void layer_xfB_position(void)
 {
-    static uint8_t blink_count_b = 0;
+    static uint8_t blink_count_b  = 0;
     const uint8_t xf_pos          = get_current_xfB_position();
     const uint8_t white_level     = calc_white_level(blink_count_b);
     const uint8_t slot            = calc_xf_slot(xf_pos);
