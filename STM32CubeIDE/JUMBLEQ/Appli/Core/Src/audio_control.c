@@ -987,6 +987,82 @@ void send_note(uint8_t note, uint8_t velocity, uint8_t channel)
     }
 }
 
+static uint8_t input_src_from_channel_type(uint8_t input_ch, uint8_t input_type)
+{
+    switch (input_ch)
+    {
+    case INPUT_CH1:
+        return (input_type == INPUT_TYPE_PHONO) ? INPUT_SRC_CH1_PN : INPUT_SRC_CH1_LN;
+    case INPUT_CH2:
+        return (input_type == INPUT_TYPE_PHONO) ? INPUT_SRC_CH2_PN : INPUT_SRC_CH2_LN;
+    case INPUT_USB:
+    default:
+        return INPUT_SRC_USB;
+    }
+}
+
+static uint8_t current_input_src_from_channel(uint8_t input_ch)
+{
+    switch (input_ch)
+    {
+    case INPUT_CH1:
+        return input_src_from_channel_type(INPUT_CH1, current_ch1_input_type);
+    case INPUT_CH2:
+        return input_src_from_channel_type(INPUT_CH2, current_ch2_input_type);
+    case INPUT_USB:
+    default:
+        return INPUT_SRC_USB;
+    }
+}
+
+static void replace_assign_for_input_channel(uint8_t* assign, uint8_t input_ch, uint8_t new_src)
+{
+    const uint8_t ln_src = input_src_from_channel_type(input_ch, INPUT_TYPE_LINE);
+    const uint8_t pn_src = input_src_from_channel_type(input_ch, INPUT_TYPE_PHONO);
+
+    if (*assign == ln_src || *assign == pn_src)
+    {
+        *assign = new_src;
+    }
+}
+
+static void apply_input_type_change(uint8_t input_ch, uint8_t input_type)
+{
+    const uint8_t new_src = input_src_from_channel_type(input_ch, input_type);
+
+    select_input_type(input_ch, input_type);
+    if (input_ch == INPUT_CH1)
+    {
+        current_ch1_input_type = input_type;
+    }
+    else if (input_ch == INPUT_CH2)
+    {
+        current_ch2_input_type = input_type;
+    }
+
+    replace_assign_for_input_channel(&current_xfA_assign, input_ch, new_src);
+    replace_assign_for_input_channel(&current_xfB_assign, input_ch, new_src);
+    replace_assign_for_input_channel(&current_xfpost_assign, input_ch, new_src);
+}
+
+static void apply_xf_assign_a(uint8_t input_ch)
+{
+    select_xf_assignA_source(input_ch);
+    current_xfA_assign = current_input_src_from_channel(input_ch);
+}
+
+static void apply_xf_assign_b(uint8_t input_ch)
+{
+    select_xf_assignB_source(input_ch);
+    current_xfB_assign = current_input_src_from_channel(input_ch);
+}
+
+static void apply_xf_assign_post(uint8_t input_ch)
+{
+    select_xf_assignPost_source(input_ch);
+    current_xfpost_assign = current_input_src_from_channel(input_ch);
+}
+
 void ui_control_task(void)
 {
 #if !ENABLE_DSP_RUNTIME_CONTROL
@@ -1291,151 +1367,43 @@ void ui_control_task(void)
             switch (packet[2])
             {
             case CH1_LINE:
-                select_input_type(INPUT_CH1, INPUT_TYPE_LINE);
-                current_ch1_input_type = INPUT_TYPE_LINE;
-                if (current_xfA_assign == INPUT_SRC_CH1_PN || current_xfA_assign == INPUT_SRC_CH1_LN)
-                {
-                    current_xfA_assign = INPUT_SRC_CH1_LN;
-                }
-                if (current_xfB_assign == INPUT_SRC_CH1_PN || current_xfB_assign == INPUT_SRC_CH1_LN)
-                {
-                    current_xfB_assign = INPUT_SRC_CH1_LN;
-                }
-                if (current_xfpost_assign == INPUT_SRC_CH1_PN || current_xfpost_assign == INPUT_SRC_CH1_LN)
-                {
-                    current_xfpost_assign = INPUT_SRC_CH1_LN;
-                }
+                apply_input_type_change(INPUT_CH1, INPUT_TYPE_LINE);
                 break;
             case CH1_PHONO:
-                select_input_type(INPUT_CH1, INPUT_TYPE_PHONO);
-                current_ch1_input_type = INPUT_TYPE_PHONO;
-                if (current_xfA_assign == INPUT_SRC_CH1_PN || current_xfA_assign == INPUT_SRC_CH1_LN)
-                {
-                    current_xfA_assign = INPUT_SRC_CH1_PN;
-                }
-                if (current_xfB_assign == INPUT_SRC_CH1_PN || current_xfB_assign == INPUT_SRC_CH1_LN)
-                {
-                    current_xfB_assign = INPUT_SRC_CH1_PN;
-                }
-                if (current_xfpost_assign == INPUT_SRC_CH1_PN || current_xfpost_assign == INPUT_SRC_CH1_LN)
-                {
-                    current_xfpost_assign = INPUT_SRC_CH1_PN;
-                }
+                apply_input_type_change(INPUT_CH1, INPUT_TYPE_PHONO);
                 break;
             case CH2_LINE:
-                select_input_type(INPUT_CH2, INPUT_TYPE_LINE);
-                current_ch2_input_type = INPUT_TYPE_LINE;
-                if (current_xfA_assign == INPUT_SRC_CH2_PN || current_xfA_assign == INPUT_SRC_CH2_LN)
-                {
-                    current_xfA_assign = INPUT_SRC_CH2_LN;
-                }
-                if (current_xfB_assign == INPUT_SRC_CH2_PN || current_xfB_assign == INPUT_SRC_CH2_LN)
-                {
-                    current_xfB_assign = INPUT_SRC_CH2_LN;
-                }
-                if (current_xfpost_assign == INPUT_SRC_CH2_PN || current_xfpost_assign == INPUT_SRC_CH2_LN)
-                {
-                    current_xfpost_assign = INPUT_SRC_CH2_LN;
-                }
+                apply_input_type_change(INPUT_CH2, INPUT_TYPE_LINE);
                 break;
             case CH2_PHONO:
-                select_input_type(INPUT_CH2, INPUT_TYPE_PHONO);
-                current_ch2_input_type = INPUT_TYPE_PHONO;
-                if (current_xfA_assign == INPUT_SRC_CH2_PN || current_xfA_assign == INPUT_SRC_CH2_LN)
-                {
-                    current_xfA_assign = INPUT_SRC_CH2_PN;
-                }
-                if (current_xfB_assign == INPUT_SRC_CH2_PN || current_xfB_assign == INPUT_SRC_CH2_LN)
-                {
-                    current_xfB_assign = INPUT_SRC_CH2_PN;
-                }
-                if (current_xfpost_assign == INPUT_SRC_CH2_PN || current_xfpost_assign == INPUT_SRC_CH2_LN)
-                {
-                    current_xfpost_assign = INPUT_SRC_CH2_PN;
-                }
+                apply_input_type_change(INPUT_CH2, INPUT_TYPE_PHONO);
                 break;
             case XF_ASSIGN_A_CH1:
-                select_xf_assignA_source(INPUT_CH1);
-                if (current_ch1_input_type == INPUT_TYPE_PHONO)
-                {
-                    current_xfA_assign = INPUT_SRC_CH1_PN;
-                }
-                else
-                {
-                    current_xfA_assign = INPUT_SRC_CH1_LN;
-                }
+                apply_xf_assign_a(INPUT_CH1);
                 break;
             case XF_ASSIGN_A_CH2:
-                select_xf_assignA_source(INPUT_CH2);
-                if (current_ch2_input_type == INPUT_TYPE_PHONO)
-                {
-
-                    current_xfA_assign = INPUT_SRC_CH2_PN;
-                }
-                else
-                {
-                    current_xfA_assign = INPUT_SRC_CH2_LN;
-                }
+                apply_xf_assign_a(INPUT_CH2);
                 break;
             case XF_ASSIGN_A_USB:
-                select_xf_assignA_source(INPUT_USB);
-                current_xfA_assign = INPUT_SRC_USB;
+                apply_xf_assign_a(INPUT_USB);
                 break;
             case XF_ASSIGN_B_CH1:
-                select_xf_assignB_source(INPUT_CH1);
-                if (current_ch1_input_type == INPUT_TYPE_PHONO)
-                {
-
-                    current_xfB_assign = INPUT_SRC_CH1_PN;
-                }
-                else
-                {
-                    current_xfB_assign = INPUT_SRC_CH1_LN;
-                }
+                apply_xf_assign_b(INPUT_CH1);
                 break;
             case XF_ASSIGN_B_CH2:
-                select_xf_assignB_source(INPUT_CH2);
-                if (current_ch2_input_type == INPUT_TYPE_PHONO)
-                {
-
-                    current_xfB_assign = INPUT_SRC_CH2_PN;
-                }
-                else
-                {
-                    current_xfB_assign = INPUT_SRC_CH2_LN;
-                }
+                apply_xf_assign_b(INPUT_CH2);
                 break;
             case XF_ASSIGN_B_USB:
-                select_xf_assignB_source(INPUT_USB);
-                current_xfB_assign = INPUT_SRC_USB;
+                apply_xf_assign_b(INPUT_USB);
                 break;
             case XF_ASSIGN_POST_CH1:
-                select_xf_assignPost_source(INPUT_CH1);
-                if (current_ch1_input_type == INPUT_TYPE_PHONO)
-                {
-
-                    current_xfpost_assign = INPUT_SRC_CH1_PN;
-                }
-                else
-                {
-                    current_xfpost_assign = INPUT_SRC_CH1_LN;
-                }
+                apply_xf_assign_post(INPUT_CH1);
                 break;
             case XF_ASSIGN_POST_CH2:
-                select_xf_assignPost_source(INPUT_CH2);
-                if (current_ch2_input_type == INPUT_TYPE_PHONO)
-                {
-
-                    current_xfpost_assign = INPUT_SRC_CH2_PN;
-                }
-                else
-                {
-                    current_xfpost_assign = INPUT_SRC_CH2_LN;
-                }
+                apply_xf_assign_post(INPUT_CH2);
                 break;
             case XF_ASSIGN_POST_USB:
-                select_xf_assignPost_source(INPUT_USB);
-                current_xfpost_assign = INPUT_SRC_USB;
+                apply_xf_assign_post(INPUT_USB);
                 break;
             default:
                 break;
