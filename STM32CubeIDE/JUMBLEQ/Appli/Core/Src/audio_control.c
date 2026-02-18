@@ -77,8 +77,6 @@ uint16_t pot_val[POT_NUM]                 = {0};
 uint16_t pot_val_prev[POT_NUM][2]         = {0};
 
 uint16_t mag_calibration_count               = 0;
-uint16_t mag_ma_index[MAG_SW_NUM]            = {0};
-uint32_t mag_val_ma[MAG_SW_NUM][MAG_MA_SIZE] = {0};
 uint16_t mag_val[MAG_SW_NUM]                 = {0};
 uint32_t mag_offset_sum[MAG_SW_NUM]          = {0};
 uint16_t mag_offset[MAG_SW_NUM]              = {0};
@@ -179,14 +177,9 @@ void reset_audio_buffer(void)
     mag_calibration_count = 0;
     for (uint16_t i = 0; i < MAG_SW_NUM; i++)
     {
-        mag_ma_index[i]   = 0;
         mag_val[i]        = 0;
         mag_offset_sum[i] = 0;
         mag_offset[i]     = 0;
-        for (uint16_t j = 0; j < MAG_MA_SIZE; j++)
-        {
-            mag_val_ma[i][j] = 0;
-        }
     }
 
     for (uint16_t i = 0; i < CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ / 4; i++)
@@ -1185,15 +1178,7 @@ static void ui_control_update_mag_samples(void)
 {
     for (int i = 0; i < MAG_SW_NUM; i++)
     {
-        mag_val_ma[i][mag_ma_index[i]] = adc_val[i];
-        mag_ma_index[i]                = (mag_ma_index[i] + 1) % MAG_MA_SIZE;
-
-        float mag_sum = 0.0f;
-        for (int j = 0; j < MAG_MA_SIZE; j++)
-        {
-            mag_sum += (float) mag_val_ma[i][j];
-        }
-        mag_val[i] = round(mag_sum / (float) MAG_MA_SIZE);
+        mag_val[i] = (uint16_t) adc_val[i];
 
         if (mag_calibration_count < MAG_CALIBRATION_COUNT_MAX)
         {
