@@ -3948,7 +3948,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "R_Potentiometer"
+		(property "Value" "10k"
 			(at 193.04 71.12 0)
 			(effects
 				(font
@@ -4021,7 +4021,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "DRV5055A3xDBZxQ1"
+		(property "Value" "DRV5056A3QDBZR"
 			(at 95.25 124.206 90)
 			(effects
 				(font
@@ -4747,7 +4747,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "R_Potentiometer"
+		(property "Value" "10k"
 			(at 227.33 49.53 0)
 			(effects
 				(font
@@ -4820,7 +4820,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "DRV5055A3xDBZxQ1"
+		(property "Value" "DRV5056A3QDBZR"
 			(at 166.37 124.206 90)
 			(effects
 				(font
@@ -5243,7 +5243,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "DRV5055A3xDBZxQ1"
+		(property "Value" "DRV5056A3QDBZR"
 			(at 130.81 124.206 90)
 			(effects
 				(font
@@ -5315,7 +5315,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "R_Potentiometer"
+		(property "Value" "10k"
 			(at 227.33 92.71 0)
 			(effects
 				(font
@@ -5921,7 +5921,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "R_Potentiometer"
+		(property "Value" "10k"
 			(at 193.04 92.71 0)
 			(effects
 				(font
@@ -6060,7 +6060,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "DRV5055A3xDBZxQ1"
+		(property "Value" "DRV5056A3QDBZR"
 			(at 237.49 124.206 90)
 			(effects
 				(font
@@ -6973,7 +6973,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "R_Potentiometer"
+		(property "Value" "10k"
 			(at 227.33 71.12 0)
 			(effects
 				(font
@@ -7392,7 +7392,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "DRV5055A3xDBZxQ1"
+		(property "Value" "DRV5056A3QDBZR"
 			(at 201.93 124.206 90)
 			(effects
 				(font
@@ -7464,7 +7464,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "R_Potentiometer"
+		(property "Value" "10k"
 			(at 193.04 27.94 0)
 			(effects
 				(font
@@ -7673,7 +7673,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "R_Potentiometer"
+		(property "Value" "10k"
 			(at 227.33 27.94 0)
 			(effects
 				(font
@@ -7881,7 +7881,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "R_Potentiometer"
+		(property "Value" "10k"
 			(at 193.04 49.53 0)
 			(effects
 				(font
@@ -8021,7 +8021,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "DRV5055A3xDBZxQ1"
+		(property "Value" "DRV5056A3QDBZR"
 			(at 59.69 124.206 90)
 			(effects
 				(font

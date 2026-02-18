@@ -12,6 +12,68 @@
 #include "oto_no_ita_dsp_ADAU146xSchematic_1_Defines.h"
 #include "oto_no_ita_dsp_ADAU146xSchematic_1_PARAM.h"
 
+#define ADAU1466_REG_PLL_ENABLE 0xF003U
+#define ADAU1466_REG_PLL_LOCK   0xF004U
+#define ADAU1466_REG_MCLK_OUT   0xF005U
+#define ADAU1466_REG_CLK_GEN1_M 0xF020U
+
+#define ADAU1466_PLL_LOCK_TIMEOUT_MS 200U
+
+typedef struct
+{
+    uint8_t clk_gen1_m;
+    uint8_t mclk_out;
+} adau1466_sample_rate_cfg_t;
+
+static bool adau1466_get_sample_rate_cfg(uint32_t hz, adau1466_sample_rate_cfg_t* cfg)
+{
+    if (cfg == NULL)
+    {
+        return false;
+    }
+
+    if (hz == 48000U)
+    {
+        cfg->clk_gen1_m = 0x06U;
+        cfg->mclk_out   = 0x05U;
+        return true;
+    }
+
+    if (hz == 96000U)
+    {
+        cfg->clk_gen1_m = 0x03U;
+        cfg->mclk_out   = 0x07U;
+        return true;
+    }
+
+    return false;
+}
+
+static void adau1466_write_reg_u16(uint16_t addr, uint8_t value)
+{
+    uint8_t data[2] = {0x00, value};
+    SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, addr, 2, data);
+}
+
+static bool adau1466_wait_pll_lock(uint32_t timeout_ms)
+{
+    uint8_t pll_lock[2] = {0};
+    uint32_t start_tick = HAL_GetTick();
+
+    while ((HAL_GetTick() - start_tick) < timeout_ms)
+    {
+        SIGMA_READ_REGISTER(DEVICE_ADDR_ADAU146XSCHEMATIC_1, ADAU1466_REG_PLL_LOCK, 2, pll_lock);
+        if ((pll_lock[1] & 0x01U) != 0U)
+        {
+            return true;
+        }
+        osDelay(1);
+    }
+
+    SEGGER_RTT_printf(0, "[ADAU1466] PLL lock timeout\n");
+    return false;
+}
+
 double convert_pot2dB(uint16_t adc_val)
 {
     double x  = (double) adc_val / 1023.0;
@@ -50,42 +112,40 @@ void AUDIO_Init_ADAU1466(uint32_t hz)
     osDelay(10);
     HAL_GPIO_WritePin(DSP_RESET_GPIO_Port, DSP_RESET_Pin, 1);
     osDelay(500);
+
+    (void) AUDIO_Update_ADAU1466_SampleRate(hz);
+}
+
+bool AUDIO_Update_ADAU1466_SampleRate(uint32_t hz)
+{
+    adau1466_sample_rate_cfg_t cfg;
+
+    if (!adau1466_get_sample_rate_cfg(hz, &cfg))
+    {
+        SEGGER_RTT_printf(0, "[ADAU1466] unsupported sample rate: %lu\n", (unsigned long) hz);
+        return false;
+    }
+
+    // Re-run SigmaStudio default register/program sequence without HW reset.
+    // This keeps runtime update deterministic and aligns with known-good init flow.
 #if RESET_FROM_FW
     default_download_ADAU146XSCHEMATIC_1();
-    osDelay(100);
+    osDelay(5);
 #endif
 
-    if (hz == 48000)
-    {
-        ADI_REG_TYPE Mode0_0[2] = {0x00, 0x06};
-        ADI_REG_TYPE Mode0_1[2] = {0x00, 0x05};
-        ADI_REG_TYPE Mode0_2[2] = {0x00, 0x00};
-        ADI_REG_TYPE Mode0_3[2] = {0x00, 0x01};
+    // Update PLL-related clock generation for selected sample rate.
+    adau1466_write_reg_u16(ADAU1466_REG_CLK_GEN1_M, cfg.clk_gen1_m);
+    adau1466_write_reg_u16(ADAU1466_REG_MCLK_OUT, cfg.mclk_out);
 
-        SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, 0xF020, 2, Mode0_0); /* CLK_GEN1_M */
-        SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, 0xF005, 2, Mode0_1); /* MCLK_OUT */
-        SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, 0xF003, 2, Mode0_2); /* PLL_ENABLE */
-        __DSB();
-        osDelay(100);
-        SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, 0xF003, 2, Mode0_3); /* PLL_ENABLE */
-    }
-    else if (hz == 96000)
-    {
-        ADI_REG_TYPE Mode1_0[2] = {0x00, 0x03};
-        ADI_REG_TYPE Mode1_1[2] = {0x00, 0x07};
-        ADI_REG_TYPE Mode1_2[2] = {0x00, 0x00};
-        ADI_REG_TYPE Mode1_3[2] = {0x00, 0x01};
-
-        SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, 0xF020, 2, Mode1_0); /* CLK_GEN1_M */
-        SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, 0xF005, 2, Mode1_1); /* MCLK_OUT */
-        SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, 0xF003, 2, Mode1_2); /* PLL_ENABLE */
-        __DSB();
-        osDelay(100);
-        SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, 0xF003, 2, Mode1_3); /* PLL_ENABLE */
-    }
-
-    osDelay(50);  // Wait for PLL to lock and stabilize
+    // Re-enable PLL and wait for lock.
+    adau1466_write_reg_u16(ADAU1466_REG_PLL_ENABLE, 0x00U);
     __DSB();
+    osDelay(1);
+    adau1466_write_reg_u16(ADAU1466_REG_PLL_ENABLE, 0x01U);
+
+    bool pll_locked = adau1466_wait_pll_lock(ADAU1466_PLL_LOCK_TIMEOUT_MS);
+
+    return pll_locked;
 }
 
 void set_dc_inputA(float xf_pos)
