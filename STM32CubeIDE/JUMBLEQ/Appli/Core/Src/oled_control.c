@@ -16,6 +16,61 @@
 #include <stdio.h>
 #include <string.h>
 
+static void merge_dirty_pages(bool* dirty, uint8_t* dirty_start_page, uint8_t* dirty_end_page, uint8_t page_start, uint8_t page_end)
+{
+    if (!*dirty)
+    {
+        *dirty           = true;
+        *dirty_start_page = page_start;
+        *dirty_end_page   = page_end;
+        return;
+    }
+
+    if (*dirty_start_page > page_start)
+    {
+        *dirty_start_page = page_start;
+    }
+    if (*dirty_end_page < page_end)
+    {
+        *dirty_end_page = page_end;
+    }
+}
+
+static void update_main_text_block(char* prev, size_t prev_size, const char* text, uint8_t clear_x1, uint8_t clear_y1, uint8_t clear_x2, uint8_t clear_y2, uint8_t cursor_x, uint8_t cursor_y, uint8_t page_start, uint8_t page_end, bool* dirty, uint8_t* dirty_start_page, uint8_t* dirty_end_page)
+{
+    if (strcmp(prev, text) == 0)
+    {
+        return;
+    }
+
+    main_oled_FillRectangle(clear_x1, clear_y1, clear_x2, clear_y2, Black);
+    main_oled_SetCursor(cursor_x, cursor_y);
+    main_oled_WriteString((char*) text, Font_7x10, White);
+    snprintf(prev, prev_size, "%s", text);
+
+    merge_dirty_pages(dirty, dirty_start_page, dirty_end_page, page_start, page_end);
+}
+
+static void update_sub_text_block(char* prev, size_t prev_size, const char* text, uint8_t clear_x1, uint8_t clear_y1, uint8_t clear_x2, uint8_t clear_y2, uint8_t cursor_x, uint8_t cursor_y, uint8_t page_start, uint8_t page_end, bool* dirty, uint8_t* dirty_start_page, uint8_t* dirty_end_page)
+{
+    if (strcmp(prev, text) == 0)
+    {
+        return;
+    }
+
+    sub_oled_FillRectangle(clear_x1, clear_y1, clear_x2, clear_y2, Black);
+    sub_oled_SetCursor(cursor_x, cursor_y);
+    sub_oled_WriteString((char*) text, Font_7x10, White);
+    snprintf(prev, prev_size, "%s", text);
+
+    merge_dirty_pages(dirty, dirty_start_page, dirty_end_page, page_start, page_end);
+}
+
+static const char* nonnull_str(const char* text)
+{
+    return (text == NULL) ? "" : text;
+}
+
 static bool wait_main_oled_ready(uint32_t timeout_ms)
 {
     uint32_t start = HAL_GetTick();
@@ -83,127 +138,21 @@ void OLED_UpdateTask(void)
     snprintf(line2_c1, sizeof(line2_c1), "C1:%3ddB", get_current_ch1_db());
     snprintf(line2_dw, sizeof(line2_dw), "D/W:%3d%%", get_current_dry_wet());
 
-    if (strcmp(prev_line1_ch2, line1_ch2) != 0)
-    {
-        main_oled_FillRectangle(0, line1_y, 63, line1_y + 10, Black);
-        main_oled_SetCursor(line1_ch2_x, line1_y);
-        main_oled_WriteString(line1_ch2, Font_7x10, White);
-        strcpy(prev_line1_ch2, line1_ch2);
-
-        dirty            = true;
-        dirty_start_page = 0;
-        dirty_end_page   = 1;
-    }
-
-    if (strcmp(prev_line1_mst, line1_mst) != 0)
-    {
-        main_oled_FillRectangle(64, line1_y, 127, line1_y + 10, Black);
-        main_oled_SetCursor(line1_mst_x, line1_y);
-        main_oled_WriteString(line1_mst, Font_7x10, White);
-        strcpy(prev_line1_mst, line1_mst);
-
-        if (!dirty)
-        {
-            dirty_start_page = 0;
-            dirty_end_page   = 1;
-        }
-        else
-        {
-            if (dirty_start_page > 0)
-            {
-                dirty_start_page = 0;
-            }
-            if (dirty_end_page < 1)
-            {
-                dirty_end_page = 1;
-            }
-        }
-        dirty = true;
-    }
-
-    if (strcmp(prev_line2_c1, line2_c1) != 0)
-    {
-        main_oled_FillRectangle(0, line2_y, 63, line2_y + 10, Black);
-        main_oled_SetCursor(line2_c1_x, line2_y);
-        main_oled_WriteString(line2_c1, Font_7x10, White);
-        strcpy(prev_line2_c1, line2_c1);
-
-        if (!dirty)
-        {
-            dirty_start_page = 2;
-            dirty_end_page   = 3;
-        }
-        else
-        {
-            if (dirty_start_page > 2)
-            {
-                dirty_start_page = 2;
-            }
-            if (dirty_end_page < 3)
-            {
-                dirty_end_page = 3;
-            }
-        }
-        dirty = true;
-    }
-
-    if (strcmp(prev_line2_dw, line2_dw) != 0)
-    {
-        main_oled_FillRectangle(64, line2_y, 127, line2_y + 10, Black);
-        main_oled_SetCursor(line2_dw_x, line2_y);
-        main_oled_WriteString(line2_dw, Font_7x10, White);
-        strcpy(prev_line2_dw, line2_dw);
-
-        if (!dirty)
-        {
-            dirty_start_page = 2;
-            dirty_end_page   = 3;
-        }
-        else
-        {
-            if (dirty_start_page > 2)
-            {
-                dirty_start_page = 2;
-            }
-            if (dirty_end_page < 3)
-            {
-                dirty_end_page = 3;
-            }
-        }
-        dirty = true;
-    }
+    update_main_text_block(prev_line1_ch2, sizeof(prev_line1_ch2), line1_ch2, 0, line1_y, 63, line1_y + 10, line1_ch2_x, line1_y, 0, 1, &dirty, &dirty_start_page, &dirty_end_page);
+    update_main_text_block(prev_line1_mst, sizeof(prev_line1_mst), line1_mst, 64, line1_y, 127, line1_y + 10, line1_mst_x, line1_y, 0, 1, &dirty, &dirty_start_page, &dirty_end_page);
+    update_main_text_block(prev_line2_c1, sizeof(prev_line2_c1), line2_c1, 0, line2_y, 63, line2_y + 10, line2_c1_x, line2_y, 2, 3, &dirty, &dirty_start_page, &dirty_end_page);
+    update_main_text_block(prev_line2_dw, sizeof(prev_line2_dw), line2_dw, 64, line2_y, 127, line2_y + 10, line2_dw_x, line2_y, 2, 3, &dirty, &dirty_start_page, &dirty_end_page);
 
     if (dirty)
     {
         main_oled_UpdateScreenPages(dirty_start_page, dirty_end_page);
     }
 
-    const char* srcA  = get_current_input_srcA_str();
-    const char* srcB  = get_current_input_srcB_str();
-    const char* typeA = get_current_input_typeA_str();
-    const char* typeB = get_current_input_typeB_str();
-    const char* srcP  = get_current_input_srcP_str();
-
-    if (srcA == NULL)
-    {
-        srcA = "";
-    }
-    if (srcB == NULL)
-    {
-        srcB = "";
-    }
-    if (typeA == NULL)
-    {
-        typeA = "";
-    }
-    if (typeB == NULL)
-    {
-        typeB = "";
-    }
-    if (srcP == NULL)
-    {
-        srcP = "";
-    }
+    const char* srcA  = nonnull_str(get_current_input_srcA_str());
+    const char* srcB  = nonnull_str(get_current_input_srcB_str());
+    const char* typeA = nonnull_str(get_current_input_typeA_str());
+    const char* typeB = nonnull_str(get_current_input_typeB_str());
+    const char* srcP  = nonnull_str(get_current_input_srcP_str());
 
     bool sub_dirty               = false;
     uint8_t sub_dirty_start_page = 0xFF;
@@ -226,135 +175,11 @@ void OLED_UpdateTask(void)
         sub_initialized      = true;
     }
 
-    if (strcmp(prev_srcA, srcA) != 0)
-    {
-        sub_oled_FillRectangle(0, 5, 55, 14, Black);
-        sub_oled_SetCursor(1, 5);
-        sub_oled_WriteString((char*) srcA, Font_7x10, White);
-        snprintf(prev_srcA, sizeof(prev_srcA), "%s", srcA);
-
-        if (!sub_dirty)
-        {
-            sub_dirty_start_page = 0;
-            sub_dirty_end_page   = 1;
-            sub_dirty            = true;
-        }
-        else
-        {
-            if (sub_dirty_start_page > 0)
-            {
-                sub_dirty_start_page = 0;
-            }
-            if (sub_dirty_end_page < 1)
-            {
-                sub_dirty_end_page = 1;
-            }
-        }
-    }
-
-    if (strcmp(prev_srcB, srcB) != 0)
-    {
-        sub_oled_FillRectangle(73, 5, 127, 14, Black);
-        sub_oled_SetCursor(90, 5);
-        sub_oled_WriteString((char*) srcB, Font_7x10, White);
-        snprintf(prev_srcB, sizeof(prev_srcB), "%s", srcB);
-
-        if (!sub_dirty)
-        {
-            sub_dirty_start_page = 0;
-            sub_dirty_end_page   = 1;
-            sub_dirty            = true;
-        }
-        else
-        {
-            if (sub_dirty_start_page > 0)
-            {
-                sub_dirty_start_page = 0;
-            }
-            if (sub_dirty_end_page < 1)
-            {
-                sub_dirty_end_page = 1;
-            }
-        }
-    }
-
-    if (strcmp(prev_typeA, typeA) != 0)
-    {
-        sub_oled_FillRectangle(0, 30, 55, 39, Black);
-        sub_oled_SetCursor(1, 30);
-        sub_oled_WriteString((char*) typeA, Font_7x10, White);
-        snprintf(prev_typeA, sizeof(prev_typeA), "%s", typeA);
-
-        if (!sub_dirty)
-        {
-            sub_dirty_start_page = 3;
-            sub_dirty_end_page   = 4;
-            sub_dirty            = true;
-        }
-        else
-        {
-            if (sub_dirty_start_page > 3)
-            {
-                sub_dirty_start_page = 3;
-            }
-            if (sub_dirty_end_page < 4)
-            {
-                sub_dirty_end_page = 4;
-            }
-        }
-    }
-
-    if (strcmp(prev_typeB, typeB) != 0)
-    {
-        sub_oled_FillRectangle(73, 30, 127, 39, Black);
-        sub_oled_SetCursor(77, 30);
-        sub_oled_WriteString((char*) typeB, Font_7x10, White);
-        snprintf(prev_typeB, sizeof(prev_typeB), "%s", typeB);
-
-        if (!sub_dirty)
-        {
-            sub_dirty_start_page = 3;
-            sub_dirty_end_page   = 4;
-            sub_dirty            = true;
-        }
-        else
-        {
-            if (sub_dirty_start_page > 3)
-            {
-                sub_dirty_start_page = 3;
-            }
-            if (sub_dirty_end_page < 4)
-            {
-                sub_dirty_end_page = 4;
-            }
-        }
-    }
-
-    if (strcmp(prev_srcP, srcP) != 0)
-    {
-        sub_oled_FillRectangle(0, 50, 127, 59, Black);
-        sub_oled_SetCursor(1, 50);
-        sub_oled_WriteString((char*) srcP, Font_7x10, White);
-        snprintf(prev_srcP, sizeof(prev_srcP), "%s", srcP);
-
-        if (!sub_dirty)
-        {
-            sub_dirty_start_page = 6;
-            sub_dirty_end_page   = 7;
-            sub_dirty            = true;
-        }
-        else
-        {
-            if (sub_dirty_start_page > 6)
-            {
-                sub_dirty_start_page = 6;
-            }
-            if (sub_dirty_end_page < 7)
-            {
-                sub_dirty_end_page = 7;
-            }
-        }
-    }
+    update_sub_text_block(prev_srcA, sizeof(prev_srcA), srcA, 0, 5, 55, 14, 1, 5, 0, 1, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
+    update_sub_text_block(prev_srcB, sizeof(prev_srcB), srcB, 73, 5, 127, 14, 90, 5, 0, 1, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
+    update_sub_text_block(prev_typeA, sizeof(prev_typeA), typeA, 0, 30, 55, 39, 1, 30, 3, 4, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
+    update_sub_text_block(prev_typeB, sizeof(prev_typeB), typeB, 73, 30, 127, 39, 77, 30, 3, 4, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
+    update_sub_text_block(prev_srcP, sizeof(prev_srcP), srcP, 0, 50, 127, 59, 1, 50, 6, 7, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
 
     if (sub_dirty)
     {
