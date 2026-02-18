@@ -1,6 +1,6 @@
 /*
  * oled_control.c
-*
+ *
  *  Created on: 2026/01/26
  *      Author: Shnichi Yamamoto
  */
@@ -21,13 +21,13 @@ static bool wait_main_oled_ready(uint32_t timeout_ms)
     uint32_t start = HAL_GetTick();
 
     while ((HAL_GetTick() - start) < timeout_ms)
-{
+    {
         if (HAL_I2C_IsDeviceReady(&MAIN_OLED_I2C_PORT, MAIN_OLED_I2C_ADDR, 2, 20) == HAL_OK)
-{
+        {
             return true;
-}
+        }
         osDelay(10);
-}
+    }
 
     return false;
 }
@@ -52,10 +52,14 @@ void OLED_Init(void)
 
 void OLED_UpdateTask(void)
 {
-    char line1[32];
-    char line2[32];
-    static char prev_line1[32]  = {0};
-    static char prev_line2[32]  = {0};
+    char line1_ch2[16];
+    char line1_mst[16];
+    char line2_c1[16];
+    char line2_dw[16];
+    static char prev_line1_ch2[16] = {0};
+    static char prev_line1_mst[16] = {0};
+    static char prev_line2_c1[16] = {0};
+    static char prev_line2_dw[16] = {0};
     static char prev_srcA[32]   = {0};
     static char prev_srcB[32]   = {0};
     static char prev_typeA[32]  = {0};
@@ -66,46 +70,108 @@ void OLED_UpdateTask(void)
     uint8_t dirty_start_page    = 0xFF;
     uint8_t dirty_end_page      = 0;
 
-    snprintf(line1, sizeof(line1), "C2:%ddB Mst:%ddB", get_current_ch2_db(), get_current_master_db());
-    snprintf(line2, sizeof(line2), "C1:%ddB D/W:%d%%", get_current_ch1_db(), get_current_dry_wet());
+    const uint8_t line1_ch2_x = 0;
+    const uint8_t line1_mst_x = 64;
+    const uint8_t line1_y     = 4;
 
-    if (strcmp(prev_line1, line1) != 0)
-{
-        main_oled_FillRectangle(0, 0, 127, 10, Black);
-        main_oled_SetCursor(0, 0);
-        main_oled_WriteString(line1, Font_7x10, White);
-        strcpy(prev_line1, line1);
+    snprintf(line1_ch2, sizeof(line1_ch2), "C2:%3ddB", get_current_ch2_db());
+    snprintf(line1_mst, sizeof(line1_mst), "Mst:%3ddB", get_current_master_db());
+    const uint8_t line2_c1_x = 0;
+    const uint8_t line2_dw_x = 64;
+    const uint8_t line2_y    = 18;
+
+    snprintf(line2_c1, sizeof(line2_c1), "C1:%3ddB", get_current_ch1_db());
+    snprintf(line2_dw, sizeof(line2_dw), "D/W:%3d%%", get_current_dry_wet());
+
+    if (strcmp(prev_line1_ch2, line1_ch2) != 0)
+    {
+        main_oled_FillRectangle(0, line1_y, 63, line1_y + 10, Black);
+        main_oled_SetCursor(line1_ch2_x, line1_y);
+        main_oled_WriteString(line1_ch2, Font_7x10, White);
+        strcpy(prev_line1_ch2, line1_ch2);
 
         dirty            = true;
         dirty_start_page = 0;
         dirty_end_page   = 1;
-}
+    }
 
-    if (strcmp(prev_line2, line2) != 0)
-{
-        main_oled_FillRectangle(0, 11, 127, 21, Black);
-        main_oled_SetCursor(0, 11);
-        main_oled_WriteString(line2, Font_7x10, White);
-        strcpy(prev_line2, line2);
+    if (strcmp(prev_line1_mst, line1_mst) != 0)
+    {
+        main_oled_FillRectangle(64, line1_y, 127, line1_y + 10, Black);
+        main_oled_SetCursor(line1_mst_x, line1_y);
+        main_oled_WriteString(line1_mst, Font_7x10, White);
+        strcpy(prev_line1_mst, line1_mst);
 
         if (!dirty)
-{
-            dirty_start_page = 1;
-            dirty_end_page   = 2;
-}
+        {
+            dirty_start_page = 0;
+            dirty_end_page   = 1;
+        }
         else
-{
-            if (dirty_start_page > 1)
-{
-                dirty_start_page = 1;
-}
-            if (dirty_end_page < 2)
-{
-                dirty_end_page = 2;
-}
-}
+        {
+            if (dirty_start_page > 0)
+            {
+                dirty_start_page = 0;
+            }
+            if (dirty_end_page < 1)
+            {
+                dirty_end_page = 1;
+            }
+        }
         dirty = true;
-}
+    }
+
+    if (strcmp(prev_line2_c1, line2_c1) != 0)
+    {
+        main_oled_FillRectangle(0, line2_y, 63, line2_y + 10, Black);
+        main_oled_SetCursor(line2_c1_x, line2_y);
+        main_oled_WriteString(line2_c1, Font_7x10, White);
+        strcpy(prev_line2_c1, line2_c1);
+
+        if (!dirty)
+        {
+            dirty_start_page = 2;
+            dirty_end_page   = 3;
+        }
+        else
+        {
+            if (dirty_start_page > 2)
+            {
+                dirty_start_page = 2;
+            }
+            if (dirty_end_page < 3)
+            {
+                dirty_end_page = 3;
+            }
+        }
+        dirty = true;
+    }
+
+    if (strcmp(prev_line2_dw, line2_dw) != 0)
+    {
+        main_oled_FillRectangle(64, line2_y, 127, line2_y + 10, Black);
+        main_oled_SetCursor(line2_dw_x, line2_y);
+        main_oled_WriteString(line2_dw, Font_7x10, White);
+        strcpy(prev_line2_dw, line2_dw);
+
+        if (!dirty)
+        {
+            dirty_start_page = 2;
+            dirty_end_page   = 3;
+        }
+        else
+        {
+            if (dirty_start_page > 2)
+            {
+                dirty_start_page = 2;
+            }
+            if (dirty_end_page < 3)
+            {
+                dirty_end_page = 3;
+            }
+        }
+        dirty = true;
+    }
 
     if (dirty)
     {
