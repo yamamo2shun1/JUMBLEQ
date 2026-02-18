@@ -8,9 +8,9 @@
 #include "adau1466.h"
 
 #include "SigmaStudioFW.h"
-#include "oto_no_ita_dsp_ADAU146xSchematic_1.h"
-#include "oto_no_ita_dsp_ADAU146xSchematic_1_Defines.h"
-#include "oto_no_ita_dsp_ADAU146xSchematic_1_PARAM.h"
+#include "JUMBLEQ_DSP_ADAU146xSchematic_1.h"
+#include "JUMBLEQ_DSP_ADAU146xSchematic_1_Defines.h"
+#include "JUMBLEQ_DSP_ADAU146xSchematic_1_PARAM.h"
 
 #define ADAU1466_REG_PLL_ENABLE 0xF003U
 #define ADAU1466_REG_PLL_LOCK   0xF004U
@@ -101,7 +101,7 @@ int16_t convert_pot2dB_int(uint16_t adc_val)
         return 10;
     }
 
-    double db = convert_pot2dB(adc_val);
+    double db    = convert_pot2dB(adc_val);
     int16_t db_i = (int16_t) ((db >= 0.0) ? (db + 0.5) : (db - 0.5));
     if (db_i < -80)
     {
