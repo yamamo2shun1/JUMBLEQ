@@ -15,6 +15,7 @@
 #include "linked_list.h"
 #include "sai.h"
 #include "sai.h"
+#include "eeprom.h"
 
 #include "FreeRTOS.h"  // for xPortGetFreeHeapSize
 #include "cmsis_os2.h"
@@ -30,8 +31,6 @@ enum
 {
     AUDIO_MS_PER_SECOND        = 1000u,
     AUDIO_TASK_STATS_PERIOD_MS = 1000u,
-    AUDIO_RESOLUTION_16BIT     = 16u,
-    AUDIO_BYTES_PER_SAMPLE_16  = 2u,
     AUDIO_BYTES_PER_SAMPLE_32  = 4u,
     AUDIO_USB_FRAME_CHANNELS   = 4u,
     AUDIO_RING_FRAME_WORDS     = 4u,
@@ -116,10 +115,6 @@ __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t stereo_in_b
 
 // Speaker data size received in the last frame
 uint16_t spk_data_size;
-// Resolution per format (24bit only)
-const uint8_t resolutions_per_format[CFG_TUD_AUDIO_FUNC_1_N_FORMATS] = {CFG_TUD_AUDIO_FUNC_1_FORMAT_1_RESOLUTION_RX};
-// Current resolution, update on format change
-uint8_t current_resolution;
 
 // Current states
 int8_t mute[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX + 1];     // +1 for master channel 0
@@ -158,6 +153,55 @@ void reset_audio_buffer(void)
     }
 
     __DSB();
+}
+
+void AUDIO_LoadAndApplyRoutingFromEEPROM(void)
+{
+    EEPROM_DeviceConfig_t cfg;
+    UI_ControlPersistState_t ui_state;
+
+    if (EEPROM_LoadConfig(&hi2c2, &cfg) == HAL_OK)
+    {
+        ui_state.current_ch1_input_type = cfg.current_ch1_input_type;
+        ui_state.current_ch2_input_type = cfg.current_ch2_input_type;
+        ui_state.current_xfA_assign     = cfg.current_xfA_assign;
+        ui_state.current_xfB_assign     = cfg.current_xfB_assign;
+        ui_state.current_xfpost_assign  = cfg.current_xfpost_assign;
+
+        if (ui_control_apply_persist_state(&ui_state))
+        {
+            SEGGER_RTT_printf(0,
+                              "EEPROM routing applied: CH1=%u CH2=%u XFA=%u XFB=%u XFP=%u\r\n",
+                              (unsigned)cfg.current_ch1_input_type,
+                              (unsigned)cfg.current_ch2_input_type,
+                              (unsigned)cfg.current_xfA_assign,
+                              (unsigned)cfg.current_xfB_assign,
+                              (unsigned)cfg.current_xfpost_assign);
+        }
+        else
+        {
+            SEGGER_RTT_printf(0, "EEPROM routing apply failed\r\n");
+        }
+    }
+    else
+    {
+        EEPROM_ConfigSetDefaults(&cfg);
+        ui_state.current_ch1_input_type = cfg.current_ch1_input_type;
+        ui_state.current_ch2_input_type = cfg.current_ch2_input_type;
+        ui_state.current_xfA_assign     = cfg.current_xfA_assign;
+        ui_state.current_xfB_assign     = cfg.current_xfB_assign;
+        ui_state.current_xfpost_assign  = cfg.current_xfpost_assign;
+        (void)ui_control_apply_persist_state(&ui_state);
+
+        if (EEPROM_SaveConfig(&hi2c2, &cfg) == HAL_OK)
+        {
+            SEGGER_RTT_printf(0, "EEPROM config initialized with defaults\r\n");
+        }
+        else
+        {
+            SEGGER_RTT_printf(0, "EEPROM default config save failed\r\n");
+        }
+    }
 }
 
 uint32_t get_tx_blink_interval_ms(void)
@@ -210,193 +254,8 @@ void tud_resume_cb(void)
 //--------------------------------------------------------------------+
 
 //--------------------------------------------------------------------+
-// UAC1 Helper Functions
-//--------------------------------------------------------------------+
-
-static bool audio10_set_req_ep(tusb_control_request_t const* p_request, uint8_t* pBuff)
-{
-    uint8_t ctrlSel = TU_U16_HIGH(p_request->wValue);
-
-    switch (ctrlSel)
-    {
-    case AUDIO10_EP_CTRL_SAMPLING_FREQ:
-        if (p_request->bRequest == AUDIO10_CS_REQ_SET_CUR)
-        {
-            // Request uses 3 bytes
-            TU_VERIFY(p_request->wLength == 3);
-
-            current_sample_rate = tu_unaligned_read32(pBuff) & 0x00FFFFFF;
-            is_sr_changed       = true;
-
-            TU_LOG2("EP set current freq: %" PRIu32 "\r\n", current_sample_rate);
-
-            return true;
-        }
-        break;
-
-    // Unknown/Unsupported control
-    default:
-        TU_BREAKPOINT();
-        return false;
-    }
-
-    return false;
-}
-
-static bool audio10_get_req_ep(uint8_t rhport, tusb_control_request_t const* p_request)
-{
-    uint8_t ctrlSel = TU_U16_HIGH(p_request->wValue);
-
-    switch (ctrlSel)
-    {
-    case AUDIO10_EP_CTRL_SAMPLING_FREQ:
-        if (p_request->bRequest == AUDIO10_CS_REQ_GET_CUR)
-        {
-            TU_LOG2("EP get current freq\r\n");
-
-            uint8_t freq[3];
-            freq[0] = (uint8_t) (current_sample_rate & 0xFF);
-            freq[1] = (uint8_t) ((current_sample_rate >> 8) & 0xFF);
-            freq[2] = (uint8_t) ((current_sample_rate >> 16) & 0xFF);
-            return tud_audio_buffer_and_schedule_control_xfer(rhport, p_request, freq, sizeof(freq));
-        }
-        break;
-
-    // Unknown/Unsupported control
-    default:
-        TU_BREAKPOINT();
-        return false;
-    }
-
-    return false;
-}
-
-static bool audio10_set_req_entity(tusb_control_request_t const* p_request, uint8_t* pBuff)
-{
-    uint8_t channelNum = TU_U16_LOW(p_request->wValue);
-    uint8_t ctrlSel    = TU_U16_HIGH(p_request->wValue);
-    uint8_t entityID   = TU_U16_HIGH(p_request->wIndex);
-
-    // If request is for our speaker feature unit
-    if (entityID == UAC1_ENTITY_STEREO_OUT_FEATURE_UNIT)
-    {
-        switch (ctrlSel)
-        {
-        case AUDIO10_FU_CTRL_MUTE:
-            switch (p_request->bRequest)
-            {
-            case AUDIO10_CS_REQ_SET_CUR:
-                // Only 1st form is supported
-                TU_VERIFY(p_request->wLength == 1);
-
-                mute[channelNum] = pBuff[0];
-
-                TU_LOG2("    Set Mute: %d of channel: %u\r\n", mute[channelNum], channelNum);
-                return true;
-
-            default:
-                return false;  // not supported
-            }
-
-        case AUDIO10_FU_CTRL_VOLUME:
-            switch (p_request->bRequest)
-            {
-            case AUDIO10_CS_REQ_SET_CUR:
-                // Only 1st form is supported
-                TU_VERIFY(p_request->wLength == 2);
-
-                volume[channelNum] = (int16_t) tu_unaligned_read16(pBuff) / 256;
-
-                TU_LOG2("    Set Volume: %d dB of channel: %u\r\n", volume[channelNum], channelNum);
-                return true;
-
-            default:
-                return false;  // not supported
-            }
-
-            // Unknown/Unsupported control
-        default:
-            TU_BREAKPOINT();
-            return false;
-        }
-    }
-
-    return false;
-}
-
-static bool audio10_get_req_entity(uint8_t rhport, tusb_control_request_t const* p_request)
-{
-    uint8_t channelNum = TU_U16_LOW(p_request->wValue);
-    uint8_t ctrlSel    = TU_U16_HIGH(p_request->wValue);
-    uint8_t entityID   = TU_U16_HIGH(p_request->wIndex);
-
-    // If request is for our speaker feature unit
-    if (entityID == UAC1_ENTITY_STEREO_OUT_FEATURE_UNIT)
-    {
-        switch (ctrlSel)
-        {
-        case AUDIO10_FU_CTRL_MUTE:
-            // Audio control mute cur parameter block consists of only one byte - we thus can send it right away
-            // There does not exist a range parameter block for mute
-            TU_LOG2("    Get Mute of channel: %u\r\n", channelNum);
-            return tud_audio_buffer_and_schedule_control_xfer(rhport, p_request, &mute[channelNum], 1);
-
-        case AUDIO10_FU_CTRL_VOLUME:
-            switch (p_request->bRequest)
-            {
-            case AUDIO10_CS_REQ_GET_CUR:
-                TU_LOG2("    Get Volume of channel: %u\r\n", channelNum);
-                {
-                    int16_t vol = (int16_t) volume[channelNum];
-                    vol         = vol * 256;  // convert to 1/256 dB units
-                    return tud_audio_buffer_and_schedule_control_xfer(rhport, p_request, &vol, sizeof(vol));
-                }
-
-            case AUDIO10_CS_REQ_GET_MIN:
-                TU_LOG2("    Get Volume min of channel: %u\r\n", channelNum);
-                {
-                    int16_t min = -90;        // -90 dB
-                    min         = min * 256;  // convert to 1/256 dB units
-                    return tud_audio_buffer_and_schedule_control_xfer(rhport, p_request, &min, sizeof(min));
-                }
-
-            case AUDIO10_CS_REQ_GET_MAX:
-                TU_LOG2("    Get Volume max of channel: %u\r\n", channelNum);
-                {
-                    int16_t max = 30;         // +30 dB
-                    max         = max * 256;  // convert to 1/256 dB units
-                    return tud_audio_buffer_and_schedule_control_xfer(rhport, p_request, &max, sizeof(max));
-                }
-
-            case AUDIO10_CS_REQ_GET_RES:
-                TU_LOG2("    Get Volume res of channel: %u\r\n", channelNum);
-                {
-                    int16_t res = 1;          // 1 dB
-                    res         = res * 256;  // convert to 1/256 dB units
-                    return tud_audio_buffer_and_schedule_control_xfer(rhport, p_request, &res, sizeof(res));
-                }
-                // Unknown/Unsupported control
-            default:
-                TU_BREAKPOINT();
-                return false;
-            }
-            break;
-
-            // Unknown/Unsupported control
-        default:
-            TU_BREAKPOINT();
-            return false;
-        }
-    }
-
-    return false;
-}
-
-//--------------------------------------------------------------------+
 // UAC2 Helper Functions
 //--------------------------------------------------------------------+
-
-#if TUD_OPT_HIGH_SPEED
 
 // Helper for clock get requests
 static bool audio20_clock_get_request(uint8_t rhport, audio20_control_request_t const* request)
@@ -564,79 +423,35 @@ static bool audio20_set_req_entity(uint8_t rhport, tusb_control_request_t const*
     return false;
 }
 
-#endif  // TUD_OPT_HIGH_SPEED
-
 // Invoked when audio class specific set request received for an EP
 bool tud_audio_set_req_ep_cb(uint8_t rhport, tusb_control_request_t const* p_request, uint8_t* pBuff)
 {
     (void) rhport;
     (void) pBuff;
-
-    if (tud_audio_version() == 1)
-    {
-        return audio10_set_req_ep(p_request, pBuff);
-    }
-    else if (tud_audio_version() == 2)
-    {
-        // We do not support any requests here
-    }
-
-    return false;  // Yet not implemented
+    (void) p_request;
+    return false;  // EP-specific requests are not used for UAC2 in this project.
 }
 
 // Invoked when audio class specific get request received for an EP
 bool tud_audio_get_req_ep_cb(uint8_t rhport, tusb_control_request_t const* p_request)
 {
     (void) rhport;
-
-    if (tud_audio_version() == 1)
-    {
-        return audio10_get_req_ep(rhport, p_request);
-    }
-    else if (tud_audio_version() == 2)
-    {
-        // We do not support any requests here
-    }
-
-    return false;  // Yet not implemented
+    (void) p_request;
+    return false;  // EP-specific requests are not used for UAC2 in this project.
 }
 
 // Invoked when audio class specific get request received for an entity
 bool tud_audio_get_req_entity_cb(uint8_t rhport, tusb_control_request_t const* p_request)
 {
     (void) rhport;
-
-    if (tud_audio_version() == 1)
-    {
-        return audio10_get_req_entity(rhport, p_request);
-#if TUD_OPT_HIGH_SPEED
-    }
-    else if (tud_audio_version() == 2)
-    {
-        return audio20_get_req_entity(rhport, p_request);
-#endif
-    }
-
-    return false;
+    return audio20_get_req_entity(rhport, p_request);
 }
 
 // Invoked when audio class specific set request received for an entity
 bool tud_audio_set_req_entity_cb(uint8_t rhport, tusb_control_request_t const* p_request, uint8_t* buf)
 {
     (void) rhport;
-
-    if (tud_audio_version() == 1)
-    {
-        return audio10_set_req_entity(p_request, buf);
-#if TUD_OPT_HIGH_SPEED
-    }
-    else if (tud_audio_version() == 2)
-    {
-        return audio20_set_req_entity(rhport, p_request, buf);
-#endif
-    }
-
-    return false;
+    return audio20_set_req_entity(rhport, p_request, buf);
 }
 
 bool tud_audio_set_itf_close_ep_cb(uint8_t rhport, tusb_control_request_t const* p_request)
@@ -690,12 +505,8 @@ bool tud_audio_set_itf_cb(uint8_t rhport, tusb_control_request_t const* p_reques
         s_streaming_in = true;
     }
 
-    // Clear buffer when streaming format is changed
+    // Clear buffer when streaming is changed
     spk_data_size = 0;
-    if (alt != 0)
-    {
-        current_resolution = resolutions_per_format[alt - 1];
-    }
 
     return true;
 }
@@ -924,44 +735,18 @@ void copybuf_usb2ring(void)
     // USB: [L1][R1][L2][R2][L1][R1][L2][R2]...
     // SAI: [L1][R1][L2][R2][L1][R1][L2][R2]...
 
-    uint32_t sai_words;  // SAIに書くword数�E�Ech刁E��E
+    // 24bit in 32bit slot: 4ch全てそのままコピー
+    uint32_t sai_words = spk_data_size / sizeof(int32_t);  // SAIに書くword数(4ch分)
 
-    if (current_resolution == AUDIO_RESOLUTION_16BIT)
+    if ((int32_t) sai_words > free)
     {
-        // 16bit: USBチE�Eタはint16_tとして詰まってぁE�� (4ch)
-        int16_t* usb_in_buf_16 = (int16_t*) usb_in_buf;
-        uint32_t usb_samples   = spk_data_size / sizeof(int16_t);  // 16bitサンプル数
-        sai_words              = usb_samples;                      // SAIに書ぁEchチE�Eタのword数
-
-        if ((int32_t) sai_words > free)
-        {
-            sai_words = (uint32_t) free;
-        }
-
-        // 4ch全てコピ�E、E6bitↁE2bit左詰め変換
-        for (uint32_t i = 0; i < sai_words; i++)
-        {
-            int32_t sample32                                              = ((int32_t) usb_in_buf_16[i]) << 16;
-            sai_tx_rng_buf[sai_tx_rng_buf_index & (SAI_RNG_BUF_SIZE - 1)] = sample32;
-            sai_tx_rng_buf_index++;
-        }
+        sai_words = (uint32_t) free;
     }
-    else
+
+    for (uint32_t i = 0; i < sai_words; i++)
     {
-        // 24bit in 32bit slot: 4ch全てそ�Eままコピ�E
-        sai_words = spk_data_size / sizeof(int32_t);
-
-        if ((int32_t) sai_words > free)
-        {
-            sai_words = (uint32_t) free;
-        }
-
-        // 4ch全てコピ�E
-        for (uint32_t i = 0; i < sai_words; i++)
-        {
-            sai_tx_rng_buf[sai_tx_rng_buf_index & (SAI_RNG_BUF_SIZE - 1)] = usb_in_buf[i];
-            sai_tx_rng_buf_index++;
-        }
+        sai_tx_rng_buf[sai_tx_rng_buf_index & (SAI_RNG_BUF_SIZE - 1)] = usb_in_buf[i];
+        sai_tx_rng_buf_index++;
     }
 
     // SEGGER_RTT_printf(0, " %d\n", sai_tx_rng_buf_index);
@@ -1182,8 +967,7 @@ static uint16_t audio_out_bytes_per_ms(void)
 {
     // Host -> Device (speaker OUT) stream bytes per 1ms
     // 48/96kHz are integer frames per ms in this project.
-    uint32_t bytes_per_sample = (current_resolution == AUDIO_RESOLUTION_16BIT) ? AUDIO_BYTES_PER_SAMPLE_16 : AUDIO_BYTES_PER_SAMPLE_32;
-    uint32_t bytes            = audio_frames_per_ms() * CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX * bytes_per_sample;
+    uint32_t bytes = audio_frames_per_ms() * CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX * AUDIO_BYTES_PER_SAMPLE_32;
     if (bytes > sizeof(usb_in_buf))
     {
         bytes = sizeof(usb_in_buf);
@@ -1227,91 +1011,40 @@ static void copybuf_ring2usb_and_send(void)
     // SAI: [L1][R1][L2][R2][L1][R1][L2][R2]...
     // USB: [L1][R1][L2][R2][L1][R1][L2][R2]...
 
-    uint32_t usb_bytes;
-    uint16_t written;
+    // 24bit in 32bit slot: SAI(2ch) -> USB(4ch) 変換
+    const uint32_t usb_bytes = frames * AUDIO_USB_FRAME_CHANNELS * sizeof(int32_t);  // 4ch分
 
-    if (current_resolution == AUDIO_RESOLUTION_16BIT)
+    // 安全: usb_out_buf が足りない想定なら絶対に書かない
+    if (usb_bytes > sizeof(usb_out_buf))
+        return;
+
+    for (uint32_t f = 0; f < frames; f++)
     {
-        // 16bit: SAI(32bit 2ch) ↁEUSB(16bit 4ch) 変換
-        usb_bytes = frames * AUDIO_USB_FRAME_CHANNELS * sizeof(int16_t);  // 4ch刁E
-
-        // 安�E: usb_out_buf が足りなぁE��定なら絶対に書かなぁE
-        if (usb_bytes > sizeof(usb_out_buf))
-            return;
-
-        int16_t* usb_out_buf_16 = (int16_t*) usb_out_buf;
-
-        for (uint32_t f = 0; f < frames; f++)
-        {
-            uint32_t r_L1 = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 0) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_R1 = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 1) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_L2 = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 2) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_R2 = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 3) & (SAI_RNG_BUF_SIZE - 1);
-            // 32bit ↁE16bit (上佁E6bitを取り�EぁE
-            // SAIチE�Eタは符号付き32bitなので、算術右シフトで符号を保持
-            int32_t sample_L1         = sai_rx_rng_buf[r_L1];
-            int32_t sample_R1         = sai_rx_rng_buf[r_R1];
-            int32_t sample_L2         = sai_rx_rng_buf[r_L2];
-            int32_t sample_R2         = sai_rx_rng_buf[r_R2];
-            usb_out_buf_16[f * AUDIO_USB_FRAME_CHANNELS + 0] = (int16_t) (sample_L1 >> 16);  // L1
-            usb_out_buf_16[f * AUDIO_USB_FRAME_CHANNELS + 1] = (int16_t) (sample_R1 >> 16);  // R1
-            usb_out_buf_16[f * AUDIO_USB_FRAME_CHANNELS + 2] = (int16_t) (sample_L2 >> 16);  // L2
-            usb_out_buf_16[f * AUDIO_USB_FRAME_CHANNELS + 3] = (int16_t) (sample_R2 >> 16);  // R2
-        }
-
-        // ISRコンチE��ストから呼ばれるので通常版を使用
-        written = tud_audio_write(usb_out_buf, (uint16_t) usb_bytes);
-
-        if (written == 0)
-        {
-            return;
-        }
-
-        // 書けた刁E��け読みポインタを進める
-        uint32_t written_frames = ((uint32_t) written) / (AUDIO_USB_FRAME_CHANNELS * sizeof(int16_t));
-        if (written_frames > frames)
-            written_frames = frames;
-        if (written_frames == 0)
-            return;
-        sai_receive_index += written_frames * AUDIO_RING_FRAME_WORDS;  // SAIは4ch刁E
+        uint32_t r_L1          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 0) & (SAI_RNG_BUF_SIZE - 1);
+        uint32_t r_R1          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 1) & (SAI_RNG_BUF_SIZE - 1);
+        uint32_t r_L2          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 2) & (SAI_RNG_BUF_SIZE - 1);
+        uint32_t r_R2          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 3) & (SAI_RNG_BUF_SIZE - 1);
+        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 0] = sai_rx_rng_buf[r_L1];  // L1
+        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 1] = sai_rx_rng_buf[r_R1];  // R1
+        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 2] = sai_rx_rng_buf[r_L2];  // L2
+        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 3] = sai_rx_rng_buf[r_R2];  // R2
     }
-    else
+
+    // ISRコンテキストから呼ばれるので通常版を使用
+    uint16_t written = tud_audio_write(usb_out_buf, (uint16_t) usb_bytes);
+
+    if (written == 0)
     {
-        // 24bit in 32bit slot: SAI(2ch) ↁEUSB(4ch) 変換
-        usb_bytes = frames * AUDIO_USB_FRAME_CHANNELS * sizeof(int32_t);  // 4ch刁E
-
-        // 安�E: usb_out_buf が足りなぁE��定なら絶対に書かなぁE
-        if (usb_bytes > sizeof(usb_out_buf))
-            return;
-
-        for (uint32_t f = 0; f < frames; f++)
-        {
-            uint32_t r_L1          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 0) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_R1          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 1) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_L2          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 2) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_R2          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 3) & (SAI_RNG_BUF_SIZE - 1);
-            usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 0] = sai_rx_rng_buf[r_L1];  // L1
-            usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 1] = sai_rx_rng_buf[r_R1];  // R1
-            usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 2] = sai_rx_rng_buf[r_L2];  // L2
-            usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 3] = sai_rx_rng_buf[r_R2];  // R2
-        }
-
-        // ISRコンチE��ストから呼ばれるので通常版を使用
-        written = tud_audio_write(usb_out_buf, (uint16_t) usb_bytes);
-
-        if (written == 0)
-        {
-            return;
-        }
-
-        // 書けた刁E��け読みポインタを進める
-        uint32_t written_frames = ((uint32_t) written) / (AUDIO_USB_FRAME_CHANNELS * sizeof(int32_t));
-        if (written_frames > frames)
-            written_frames = frames;
-        if (written_frames == 0)
-            return;
-        sai_receive_index += written_frames * AUDIO_RING_FRAME_WORDS;  // SAIは4ch刁E
+        return;
     }
+
+    // 書けた分だけ読みポインタを進める
+    uint32_t written_frames = ((uint32_t) written) / (AUDIO_USB_FRAME_CHANNELS * sizeof(int32_t));
+    if (written_frames > frames)
+        written_frames = frames;
+    if (written_frames == 0)
+        return;
+    sai_receive_index += written_frames * AUDIO_RING_FRAME_WORDS;  // SAIは4ch分
 }
 
 // TinyUSB TX完亁E��ールバック - USB ISRコンチE��ストで呼ばれる
@@ -1515,6 +1248,7 @@ void AUDIO_SAI_Reset_ForNewRate(void)
         SEGGER_RTT_printf(0, "[SAI] ADAU1466 sample-rate update failed (%lu Hz)\n", (unsigned long) new_hz);
         SEGGER_RTT_printf(0, "[SAI] fallback to ADAU1466 HW re-init\n");
         AUDIO_Init_ADAU1466(new_hz);
+        AUDIO_LoadAndApplyRoutingFromEEPROM();
     }
 #endif
 

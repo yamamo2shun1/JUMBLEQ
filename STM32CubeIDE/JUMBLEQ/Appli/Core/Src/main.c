@@ -33,6 +33,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "audio_control.h"
+#include "eeprom.h"
 #include "led_control.h"
 /* USER CODE END Includes */
 
@@ -139,6 +140,15 @@ int main(void)
     MX_I2C2_Init();
     MX_ADC2_Init();
     /* USER CODE BEGIN 2 */
+    if (EEPROM_CheckConnection(&hi2c2) == HAL_OK)
+    {
+        SEGGER_RTT_printf(0, "EEPROM CAT24C512 detected on I2C2 (0x50)\r\n");
+    }
+    else
+    {
+        SEGGER_RTT_printf(0, "EEPROM CAT24C512 not detected on I2C2 (0x50)\r\n");
+        Error_Handler();
+    }
 
     /* USER CODE END 2 */
 
