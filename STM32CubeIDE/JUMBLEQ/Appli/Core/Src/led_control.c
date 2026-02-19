@@ -12,7 +12,7 @@
 #include "audio_control.h"
 
 #include "SigmaStudioFW.h"
-#include "oto_no_ita_dsp_ADAU146xSchematic_1_PARAM.h"
+#include "JUMBLEQ_DSP_ADAU146xSchematic_1_PARAM.h"
 
 #define RGB            3
 #define COL_BITS       8
@@ -24,18 +24,61 @@
 #define WL_LED_ZERO    7
 
 #define BLINK_COUNT_MAX 64
+#define SAVE_BLINK_INTERVAL_MS 100U
+#define SAVE_BLINK_TOGGLE_COUNT 6U
 
 __attribute__((section("noncacheable_buffer"), aligned(32))) uint8_t led_buf[DMA_BUF_SIZE] = {0};
 
 uint8_t grb[LED_NUMS][RGB] = {0};
 
 volatile bool is_color_update = false;
+static volatile uint8_t s_save_blink_remaining = 0U;
+static uint32_t s_save_blink_last_ms = 0U;
 
 uint16_t test = 0;
+
+typedef struct
+{
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+} led_rgb_t;
+
+enum
+{
+    VU_LEVEL_COUNT   = 5,
+    XF_SLOT_COUNT    = 5,
+    XF_THRESHOLD_NUM = 4,
+};
+
+static const float s_vu_db_thresholds[VU_LEVEL_COUNT] = {-45.0f, -36.0f, -27.0f, -18.0f, -9.0f};
+
+static const led_rgb_t s_vu_colors_low_to_high[VU_LEVEL_COUNT] = {
+    {0,   32, 0},
+    {30,  61, 0},
+    {100, 70, 0},
+    {120, 38, 0},
+    {127, 0,  0},
+};
+
+static const uint8_t s_vu_led_index_a[VU_LEVEL_COUNT] = {0, 1, 2, 3, 4};
+static const uint8_t s_vu_led_index_b[VU_LEVEL_COUNT] = {9, 8, 7, 6, 5};
+
+static const uint8_t s_xf_thresholds[XF_THRESHOLD_NUM] = {32, 64, 96, 120};
+static const uint8_t s_xf_led_index_a[XF_SLOT_COUNT]   = {0, 1, 2, 3, 4};
+static const uint8_t s_xf_led_index_b[XF_SLOT_COUNT]   = {9, 8, 7, 6, 5};
+
+static const float s_xf_blink_peak_level = 80.0f;
 
 void update_color_state(void)
 {
     is_color_update = true;
+}
+
+void led_notify_save_success(void)
+{
+    s_save_blink_remaining = SAVE_BLINK_TOGGLE_COUNT;
+    s_save_blink_last_ms = 0U;
 }
 
 void reset_led_buffer(void)
@@ -118,299 +161,110 @@ void renew(void)
     HAL_TIM_PWM_Start_DMA(&htim1, TIM_CHANNEL_3, (uint32_t*) led_buf, DMA_BUF_SIZE);
 }
 
-void set_vu_meter_a(void)
+static float read_dbfs_from_sigma(uint16_t addr)
 {
     ADI_REG_TYPE rx_data[4] = {0};
-    SIGMA_READ_REGISTER(DEVICE_ADDR_ADAU146XSCHEMATIC_1, MOD_DSPREADBACK_A_VALUE_ADDR, 4, rx_data);
+    SIGMA_READ_REGISTER(DEVICE_ADDR_ADAU146XSCHEMATIC_1, addr, 4, rx_data);
     uint32_t val = rx_data[0] << 24 | rx_data[1] << 16 | rx_data[2] << 8 | rx_data[3];
-    float dbfs   = 0.0f;
+
     if (val == 0 || val == 0xFFFFFFFF)
     {
-        dbfs = -96.0f;
+        return -96.0f;
     }
-    else
+    return 20.0f * log((float) val / pow(2, 23));
+}
+
+static uint8_t vu_active_count(float dbfs)
+{
+    for (uint8_t i = 0; i < VU_LEVEL_COUNT; i++)
     {
-        dbfs = 20.0f * log((float) val / pow(2, 23));
+        if (dbfs <= s_vu_db_thresholds[i])
+        {
+            return i;
+        }
     }
-    if (dbfs > -9.0f)
+    return VU_LEVEL_COUNT;
+}
+
+static void set_vu_meter_generic(uint16_t sigma_addr, const uint8_t led_index_low_to_high[VU_LEVEL_COUNT])
+{
+    const float dbfs        = read_dbfs_from_sigma(sigma_addr);
+    const uint8_t active_on = vu_active_count(dbfs);
+
+    for (uint8_t i = 0; i < VU_LEVEL_COUNT; i++)
     {
-        set_led_color(4, 127, 0, 0);
-        set_led_color(3, 120, 38, 0);
-        set_led_color(2, 100, 70, 0);
-        set_led_color(1, 30, 61, 0);
-        set_led_color(0, 0, 32, 0);
+        if (i < active_on)
+        {
+            set_led_color(led_index_low_to_high[i], s_vu_colors_low_to_high[i].r, s_vu_colors_low_to_high[i].g, s_vu_colors_low_to_high[i].b);
+        }
+        else
+        {
+            set_led_color(led_index_low_to_high[i], 0, 0, 0);
+        }
     }
-    else if (dbfs > -18.0f)
-    {
-        set_led_color(4, 0, 0, 0);
-        set_led_color(3, 120, 38, 0);
-        set_led_color(2, 100, 70, 0);
-        set_led_color(1, 30, 61, 0);
-        set_led_color(0, 0, 32, 0);
-    }
-    else if (dbfs > -27.0f)
-    {
-        set_led_color(4, 0, 0, 0);
-        set_led_color(3, 0, 0, 0);
-        set_led_color(2, 100, 70, 0);
-        set_led_color(1, 30, 61, 0);
-        set_led_color(0, 0, 32, 0);
-    }
-    else if (dbfs > -36.0f)
-    {
-        set_led_color(4, 0, 0, 0);
-        set_led_color(3, 0, 0, 0);
-        set_led_color(2, 0, 0, 0);
-        set_led_color(1, 30, 61, 0);
-        set_led_color(0, 0, 32, 0);
-    }
-    else if (dbfs > -45.0f)
-    {
-        set_led_color(4, 0, 0, 0);
-        set_led_color(3, 0, 0, 0);
-        set_led_color(2, 0, 0, 0);
-        set_led_color(1, 0, 0, 0);
-        set_led_color(0, 0, 32, 0);
-    }
-    else
-    {
-        set_led_color(4, 0, 0, 0);
-        set_led_color(3, 0, 0, 0);
-        set_led_color(2, 0, 0, 0);
-        set_led_color(1, 0, 0, 0);
-        set_led_color(0, 0, 0, 0);
-    }
+}
+
+void set_vu_meter_a(void)
+{
+    set_vu_meter_generic(MOD_DSPREADBACK_A_VALUE_ADDR, s_vu_led_index_a);
 }
 
 void set_vu_meter_b(void)
 {
-    ADI_REG_TYPE rx_data[4] = {0};
-    SIGMA_READ_REGISTER(DEVICE_ADDR_ADAU146XSCHEMATIC_1, MOD_DSPREADBACK_B_VALUE_ADDR, 4, rx_data);
-    uint32_t val = rx_data[0] << 24 | rx_data[1] << 16 | rx_data[2] << 8 | rx_data[3];
-    float dbfs   = 0.0f;
-    if (val == 0 || val == 0xFFFFFFFF)
+    set_vu_meter_generic(MOD_DSPREADBACK_B_VALUE_ADDR, s_vu_led_index_b);
+}
+
+static uint8_t calc_white_level(uint8_t blink_count)
+{
+    if (blink_count < BLINK_COUNT_MAX / 2)
     {
-        dbfs = -96.0f;
+        return (uint8_t) (s_xf_blink_peak_level * ((float) blink_count / (float) (BLINK_COUNT_MAX / 2)));
     }
-    else
+    return (uint8_t) (s_xf_blink_peak_level * ((float) ((BLINK_COUNT_MAX - 1) - blink_count) / (float) (BLINK_COUNT_MAX / 2)));
+}
+
+static uint8_t calc_xf_slot(uint8_t xf_pos)
+{
+    for (uint8_t i = 0; i < XF_THRESHOLD_NUM; i++)
     {
-        dbfs = 20.0f * log((float) val / pow(2, 23));
+        if (xf_pos < s_xf_thresholds[i])
+        {
+            return i;
+        }
     }
-    if (dbfs > -9.0f)
+    return XF_SLOT_COUNT - 1;
+}
+
+static void layer_xf_position(uint8_t led_index, uint8_t white_level)
+{
+    for (uint8_t i = 0; i < LED_NUMS; i++)
     {
-        set_led_color(5, 127, 0, 0);
-        set_led_color(6, 120, 38, 0);
-        set_led_color(7, 100, 70, 0);
-        set_led_color(8, 30, 61, 0);
-        set_led_color(9, 0, 32, 0);
+        layer_led_color(i, 0, 0, 0);
     }
-    else if (dbfs > -18.0f)
-    {
-        set_led_color(5, 0, 0, 0);
-        set_led_color(6, 120, 38, 0);
-        set_led_color(7, 100, 70, 0);
-        set_led_color(8, 30, 61, 0);
-        set_led_color(9, 0, 32, 0);
-    }
-    else if (dbfs > -27.0f)
-    {
-        set_led_color(5, 0, 0, 0);
-        set_led_color(6, 0, 0, 0);
-        set_led_color(7, 100, 70, 0);
-        set_led_color(8, 30, 61, 0);
-        set_led_color(9, 0, 32, 0);
-    }
-    else if (dbfs > -36.0f)
-    {
-        set_led_color(5, 0, 0, 0);
-        set_led_color(6, 0, 0, 0);
-        set_led_color(7, 0, 0, 0);
-        set_led_color(8, 30, 61, 0);
-        set_led_color(9, 0, 32, 0);
-    }
-    else if (dbfs > -45.0f)
-    {
-        set_led_color(5, 0, 0, 0);
-        set_led_color(6, 0, 0, 0);
-        set_led_color(7, 0, 0, 0);
-        set_led_color(8, 0, 0, 0);
-        set_led_color(9, 0, 32, 0);
-    }
-    else
-    {
-        set_led_color(5, 0, 0, 0);
-        set_led_color(6, 0, 0, 0);
-        set_led_color(7, 0, 0, 0);
-        set_led_color(8, 0, 0, 0);
-        set_led_color(9, 0, 0, 0);
-    }
+    layer_led_color(led_index, white_level, white_level, white_level);
 }
 
 void layer_xfA_position(void)
 {
-    static uint8_t blink_count_a = 0;
-    uint8_t xf_pos               = get_current_xfA_position();
+    static uint8_t blink_count_a  = 0;
+    const uint8_t xf_pos          = get_current_xfA_position();
+    const uint8_t white_level     = calc_white_level(blink_count_a);
+    const uint8_t slot            = calc_xf_slot(xf_pos);
+    const uint8_t led_index_for_a = s_xf_led_index_a[slot];
+    layer_xf_position(led_index_for_a, white_level);
 
-    uint8_t white_level = 0;
-
-    if (blink_count_a < BLINK_COUNT_MAX / 2)
-    {
-        white_level = (uint8_t) (80.0f * ((float) blink_count_a / (float) (BLINK_COUNT_MAX / 2)));
-    }
-    else
-    {
-        white_level = (uint8_t) (80.0f * ((float) ((BLINK_COUNT_MAX - 1) - blink_count_a) / (float) (BLINK_COUNT_MAX / 2)));
-    }
-
-    if (xf_pos < 32)
-    {
-        layer_led_color(0, white_level, white_level, white_level);
-        layer_led_color(1, 0, 0, 0);
-        layer_led_color(2, 0, 0, 0);
-        layer_led_color(3, 0, 0, 0);
-        layer_led_color(4, 0, 0, 0);
-        layer_led_color(5, 0, 0, 0);
-        layer_led_color(6, 0, 0, 0);
-        layer_led_color(7, 0, 0, 0);
-        layer_led_color(8, 0, 0, 0);
-        layer_led_color(9, 0, 0, 0);
-    }
-    else if (xf_pos < 64)
-    {
-        layer_led_color(0, 0, 0, 0);
-        layer_led_color(1, white_level, white_level, white_level);
-        layer_led_color(2, 0, 0, 0);
-        layer_led_color(3, 0, 0, 0);
-        layer_led_color(4, 0, 0, 0);
-        layer_led_color(5, 0, 0, 0);
-        layer_led_color(6, 0, 0, 0);
-        layer_led_color(7, 0, 0, 0);
-        layer_led_color(8, 0, 0, 0);
-        layer_led_color(9, 0, 0, 0);
-    }
-    else if (xf_pos < 96)
-    {
-        layer_led_color(0, 0, 0, 0);
-        layer_led_color(1, 0, 0, 0);
-        layer_led_color(2, white_level, white_level, white_level);
-        layer_led_color(3, 0, 0, 0);
-        layer_led_color(4, 0, 0, 0);
-        layer_led_color(5, 0, 0, 0);
-        layer_led_color(6, 0, 0, 0);
-        layer_led_color(7, 0, 0, 0);
-        layer_led_color(8, 0, 0, 0);
-        layer_led_color(9, 0, 0, 0);
-    }
-    else if (xf_pos < 120)
-    {
-        layer_led_color(0, 0, 0, 0);
-        layer_led_color(1, 0, 0, 0);
-        layer_led_color(2, 0, 0, 0);
-        layer_led_color(3, white_level, white_level, white_level);
-        layer_led_color(4, 0, 0, 0);
-        layer_led_color(5, 0, 0, 0);
-        layer_led_color(6, 0, 0, 0);
-        layer_led_color(7, 0, 0, 0);
-        layer_led_color(8, 0, 0, 0);
-        layer_led_color(9, 0, 0, 0);
-    }
-    else
-    {
-        layer_led_color(0, 0, 0, 0);
-        layer_led_color(1, 0, 0, 0);
-        layer_led_color(2, 0, 0, 0);
-        layer_led_color(3, 0, 0, 0);
-        layer_led_color(4, white_level, white_level, white_level);
-        layer_led_color(5, 0, 0, 0);
-        layer_led_color(6, 0, 0, 0);
-        layer_led_color(7, 0, 0, 0);
-        layer_led_color(8, 0, 0, 0);
-        layer_led_color(9, 0, 0, 0);
-    }
     blink_count_a = (blink_count_a + 1) % BLINK_COUNT_MAX;
 }
 
 void layer_xfB_position(void)
 {
-    static uint8_t blink_count_b = 0;
-    uint8_t xf_pos               = get_current_xfB_position();
+    static uint8_t blink_count_b  = 0;
+    const uint8_t xf_pos          = get_current_xfB_position();
+    const uint8_t white_level     = calc_white_level(blink_count_b);
+    const uint8_t slot            = calc_xf_slot(xf_pos);
+    const uint8_t led_index_for_b = s_xf_led_index_b[slot];
+    layer_xf_position(led_index_for_b, white_level);
 
-    uint8_t white_level = 0;
-
-    if (blink_count_b < BLINK_COUNT_MAX / 2)
-    {
-        white_level = (uint8_t) (80.0f * ((float) blink_count_b / (float) (BLINK_COUNT_MAX / 2)));
-    }
-    else
-    {
-        white_level = (uint8_t) (80.0f * ((float) ((BLINK_COUNT_MAX - 1) - blink_count_b) / (float) (BLINK_COUNT_MAX / 2)));
-    }
-
-    if (xf_pos < 32)
-    {
-        layer_led_color(0, 0, 0, 0);
-        layer_led_color(1, 0, 0, 0);
-        layer_led_color(2, 0, 0, 0);
-        layer_led_color(3, 0, 0, 0);
-        layer_led_color(4, 0, 0, 0);
-        layer_led_color(5, 0, 0, 0);
-        layer_led_color(6, 0, 0, 0);
-        layer_led_color(7, 0, 0, 0);
-        layer_led_color(8, 0, 0, 0);
-        layer_led_color(9, white_level, white_level, white_level);
-    }
-    else if (xf_pos < 64)
-    {
-        layer_led_color(0, 0, 0, 0);
-        layer_led_color(1, 0, 0, 0);
-        layer_led_color(2, 0, 0, 0);
-        layer_led_color(3, 0, 0, 0);
-        layer_led_color(4, 0, 0, 0);
-        layer_led_color(5, 0, 0, 0);
-        layer_led_color(6, 0, 0, 0);
-        layer_led_color(7, 0, 0, 0);
-        layer_led_color(8, white_level, white_level, white_level);
-        layer_led_color(9, 0, 0, 0);
-    }
-    else if (xf_pos < 96)
-    {
-        layer_led_color(0, 0, 0, 0);
-        layer_led_color(1, 0, 0, 0);
-        layer_led_color(2, 0, 0, 0);
-        layer_led_color(3, 0, 0, 0);
-        layer_led_color(4, 0, 0, 0);
-        layer_led_color(5, 0, 0, 0);
-        layer_led_color(6, 0, 0, 0);
-        layer_led_color(7, white_level, white_level, white_level);
-        layer_led_color(8, 0, 0, 0);
-        layer_led_color(9, 0, 0, 0);
-    }
-    else if (xf_pos < 120)
-    {
-        layer_led_color(0, 0, 0, 0);
-        layer_led_color(1, 0, 0, 0);
-        layer_led_color(2, 0, 0, 0);
-        layer_led_color(3, 0, 0, 0);
-        layer_led_color(4, 0, 0, 0);
-        layer_led_color(5, 0, 0, 0);
-        layer_led_color(6, white_level, white_level, white_level);
-        layer_led_color(7, 0, 0, 0);
-        layer_led_color(8, 0, 0, 0);
-        layer_led_color(9, 0, 0, 0);
-    }
-    else
-    {
-        layer_led_color(0, 0, 0, 0);
-        layer_led_color(1, 0, 0, 0);
-        layer_led_color(2, 0, 0, 0);
-        layer_led_color(3, 0, 0, 0);
-        layer_led_color(4, 0, 0, 0);
-        layer_led_color(5, white_level, white_level, white_level);
-        layer_led_color(6, 0, 0, 0);
-        layer_led_color(7, 0, 0, 0);
-        layer_led_color(8, 0, 0, 0);
-        layer_led_color(9, 0, 0, 0);
-    }
     blink_count_b = (blink_count_b + 1) % BLINK_COUNT_MAX;
 }
 
@@ -421,6 +275,21 @@ void rgb_led_task(void)
     layer_xfA_position();
     layer_xfB_position();
     renew();
+
+    if (s_save_blink_remaining > 0U)
+    {
+        uint32_t now = HAL_GetTick();
+        if ((s_save_blink_last_ms == 0U) || ((now - s_save_blink_last_ms) >= SAVE_BLINK_INTERVAL_MS))
+        {
+            s_save_blink_last_ms = now;
+            HAL_GPIO_TogglePin(LED0_GPIO_Port, LED0_Pin);
+            s_save_blink_remaining--;
+            if (s_save_blink_remaining == 0U)
+            {
+                HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, GPIO_PIN_SET);
+            }
+        }
+    }
 
     if (is_color_update)
     {

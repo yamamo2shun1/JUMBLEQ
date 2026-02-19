@@ -348,6 +348,7 @@ void StartAudioTask(void* argument)
      * SigmaStudio+からダウンロードを実行すること。
      */
     AUDIO_Init_ADAU1466(48000);
+    AUDIO_LoadAndApplyRoutingFromEEPROM();
     osDelay(500);
 
     HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, 1);
