@@ -15,6 +15,7 @@
 #include "linked_list.h"
 #include "sai.h"
 #include "sai.h"
+#include "eeprom.h"
 
 #include "FreeRTOS.h"  // for xPortGetFreeHeapSize
 #include "cmsis_os2.h"
@@ -152,6 +153,55 @@ void reset_audio_buffer(void)
     }
 
     __DSB();
+}
+
+void AUDIO_LoadAndApplyRoutingFromEEPROM(void)
+{
+    EEPROM_DeviceConfig_t cfg;
+    UI_ControlPersistState_t ui_state;
+
+    if (EEPROM_LoadConfig(&hi2c2, &cfg) == HAL_OK)
+    {
+        ui_state.current_ch1_input_type = cfg.current_ch1_input_type;
+        ui_state.current_ch2_input_type = cfg.current_ch2_input_type;
+        ui_state.current_xfA_assign     = cfg.current_xfA_assign;
+        ui_state.current_xfB_assign     = cfg.current_xfB_assign;
+        ui_state.current_xfpost_assign  = cfg.current_xfpost_assign;
+
+        if (ui_control_apply_persist_state(&ui_state))
+        {
+            SEGGER_RTT_printf(0,
+                              "EEPROM routing applied: CH1=%u CH2=%u XFA=%u XFB=%u XFP=%u\r\n",
+                              (unsigned)cfg.current_ch1_input_type,
+                              (unsigned)cfg.current_ch2_input_type,
+                              (unsigned)cfg.current_xfA_assign,
+                              (unsigned)cfg.current_xfB_assign,
+                              (unsigned)cfg.current_xfpost_assign);
+        }
+        else
+        {
+            SEGGER_RTT_printf(0, "EEPROM routing apply failed\r\n");
+        }
+    }
+    else
+    {
+        EEPROM_ConfigSetDefaults(&cfg);
+        ui_state.current_ch1_input_type = cfg.current_ch1_input_type;
+        ui_state.current_ch2_input_type = cfg.current_ch2_input_type;
+        ui_state.current_xfA_assign     = cfg.current_xfA_assign;
+        ui_state.current_xfB_assign     = cfg.current_xfB_assign;
+        ui_state.current_xfpost_assign  = cfg.current_xfpost_assign;
+        (void)ui_control_apply_persist_state(&ui_state);
+
+        if (EEPROM_SaveConfig(&hi2c2, &cfg) == HAL_OK)
+        {
+            SEGGER_RTT_printf(0, "EEPROM config initialized with defaults\r\n");
+        }
+        else
+        {
+            SEGGER_RTT_printf(0, "EEPROM default config save failed\r\n");
+        }
+    }
 }
 
 uint32_t get_tx_blink_interval_ms(void)
@@ -1198,6 +1248,7 @@ void AUDIO_SAI_Reset_ForNewRate(void)
         SEGGER_RTT_printf(0, "[SAI] ADAU1466 sample-rate update failed (%lu Hz)\n", (unsigned long) new_hz);
         SEGGER_RTT_printf(0, "[SAI] fallback to ADAU1466 HW re-init\n");
         AUDIO_Init_ADAU1466(new_hz);
+        AUDIO_LoadAndApplyRoutingFromEEPROM();
     }
 #endif
 

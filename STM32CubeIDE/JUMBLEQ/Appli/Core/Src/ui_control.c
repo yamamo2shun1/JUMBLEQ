@@ -9,7 +9,10 @@
 #include "audio_control.h"
 
 #include "adc.h"
+#include "eeprom.h"
 #include "hpdma.h"
+#include "i2c.h"
+#include "led_control.h"
 #include "linked_list.h"
 
 #include "adau1466.h"
@@ -324,6 +327,31 @@ static void apply_xf_assign_post(uint8_t input_ch)
     s_ui.current_xfpost_assign = current_input_src_from_channel(input_ch);
 }
 
+static bool ui_control_assign_to_input_ch(uint8_t assign, uint8_t *input_ch)
+{
+    if (input_ch == NULL)
+    {
+        return false;
+    }
+
+    switch (assign)
+    {
+    case INPUT_SRC_CH1_LN:
+    case INPUT_SRC_CH1_PN:
+        *input_ch = INPUT_CH1;
+        return true;
+    case INPUT_SRC_CH2_LN:
+    case INPUT_SRC_CH2_PN:
+        *input_ch = INPUT_CH2;
+        return true;
+    case INPUT_SRC_USB:
+        *input_ch = INPUT_USB;
+        return true;
+    default:
+        return false;
+    }
+}
+
 static void set_pot_mux_channel(uint8_t channel)
 {
     static const uint8_t mux_bits[POT_NUM][3] = {
@@ -607,6 +635,29 @@ static void midi_program_apply_xf_post(uint8_t input_ch)
 
 static bool ui_control_dispatch_midi_program_change(uint8_t program)
 {
+    if (program == 127U)
+    {
+        EEPROM_DeviceConfig_t cfg;
+
+        EEPROM_ConfigCaptureCurrent(&cfg);
+        if (EEPROM_SaveConfig(&hi2c2, &cfg) == HAL_OK)
+        {
+            led_notify_save_success();
+            SEGGER_RTT_printf(0,
+                              "EEPROM config saved by MIDI PC127: CH1=%u CH2=%u XFA=%u XFB=%u XFP=%u\r\n",
+                              (unsigned)cfg.current_ch1_input_type,
+                              (unsigned)cfg.current_ch2_input_type,
+                              (unsigned)cfg.current_xfA_assign,
+                              (unsigned)cfg.current_xfB_assign,
+                              (unsigned)cfg.current_xfpost_assign);
+        }
+        else
+        {
+            SEGGER_RTT_printf(0, "EEPROM config save failed by MIDI PC127\r\n");
+        }
+        return true;
+    }
+
     static const midi_program_cmd_t commands[] = {
         {CH1_LINE, midi_program_set_input_type, (uint8_t) ((INPUT_CH1 << 4) | INPUT_TYPE_LINE)},
         {CH1_PHONO, midi_program_set_input_type, (uint8_t) ((INPUT_CH1 << 4) | INPUT_TYPE_PHONO)},
@@ -676,6 +727,53 @@ void start_audio_control(void)
 bool is_started_audio_control(void)
 {
     return s_ui.is_start_audio_control;
+}
+
+void ui_control_get_persist_state(UI_ControlPersistState_t *state)
+{
+    if (state == NULL)
+    {
+        return;
+    }
+
+    state->current_ch1_input_type = s_ui.current_ch1_input_type;
+    state->current_ch2_input_type = s_ui.current_ch2_input_type;
+    state->current_xfA_assign     = s_ui.current_xfA_assign;
+    state->current_xfB_assign     = s_ui.current_xfB_assign;
+    state->current_xfpost_assign  = s_ui.current_xfpost_assign;
+}
+
+bool ui_control_apply_persist_state(const UI_ControlPersistState_t *state)
+{
+    uint8_t input_ch_a;
+    uint8_t input_ch_b;
+    uint8_t input_ch_post;
+
+    if (state == NULL)
+    {
+        return false;
+    }
+
+    if ((state->current_ch1_input_type > INPUT_TYPE_PHONO) ||
+        (state->current_ch2_input_type > INPUT_TYPE_PHONO))
+    {
+        return false;
+    }
+
+    if (!ui_control_assign_to_input_ch(state->current_xfA_assign, &input_ch_a) ||
+        !ui_control_assign_to_input_ch(state->current_xfB_assign, &input_ch_b) ||
+        !ui_control_assign_to_input_ch(state->current_xfpost_assign, &input_ch_post))
+    {
+        return false;
+    }
+
+    apply_input_type_change(INPUT_CH1, state->current_ch1_input_type);
+    apply_input_type_change(INPUT_CH2, state->current_ch2_input_type);
+    apply_xf_assign_a(input_ch_a);
+    apply_xf_assign_b(input_ch_b);
+    apply_xf_assign_post(input_ch_post);
+
+    return true;
 }
 
 void ui_control_reset_state(void)
