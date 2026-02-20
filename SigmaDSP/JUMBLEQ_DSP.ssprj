@@ -2995,7 +2995,7 @@
                           "FS": 48000,
                           "Link": false,
                           "UserText": "SDATA_IN0\r\n(Ch.0-15)\r\nfrom STM32",
-                          "ResetSize": false,
+                          "ResetSize": true,
                           "RestrictResize": true
                         },
                         "Angle": 0.0,
@@ -3033,7 +3033,7 @@
                           "FS": 48000,
                           "Link": false,
                           "UserText": "SDATA_IN1\r\n(Ch.16-31)\r\nfrom AK4619",
-                          "ResetSize": true,
+                          "ResetSize": false,
                           "RestrictResize": true
                         },
                         "Angle": 0.0,
@@ -3071,7 +3071,7 @@
                           "FS": 48000,
                           "Link": false,
                           "UserText": "SDATA_OUT0\r\n(Ch.0-15)\r\nto STM32",
-                          "ResetSize": true,
+                          "ResetSize": false,
                           "RestrictResize": true
                         },
                         "Angle": 0.0,
@@ -3109,7 +3109,7 @@
                           "FS": 48000,
                           "Link": false,
                           "UserText": "SDATA_OUT1\r\n(Ch.16-31)\r\nto AK4619",
-                          "ResetSize": false,
+                          "ResetSize": true,
                           "RestrictResize": true
                         },
                         "Angle": 0.0,
@@ -3768,7 +3768,7 @@
                           "FS": 48000,
                           "Link": false,
                           "UserText": "SDATA_OUT1\r\n(Ch.16-31)\r\nto AK4619",
-                          "ResetSize": false,
+                          "ResetSize": true,
                           "RestrictResize": true
                         },
                         "Angle": 0.0,
