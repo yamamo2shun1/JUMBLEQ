@@ -924,8 +924,15 @@ static inline void fill_rx_half(uint32_t index0)
     int32_t free = (int32_t) (SAI_RNG_BUF_SIZE - 1) - used;
     if (free < (int32_t) n)
     {
-        // 追ぁE��けなぁE��ら古ぁE��ータを捨てて空きを作る
-        sai_receive_index += (uint32_t) ((int32_t) n - free);
+        // 追いつけない時は古いデータを捨てるが、必ず4chフレーム境界で進める。
+        int32_t drop_words = (int32_t) n - free;
+        const int32_t frame_words = (int32_t) AUDIO_RING_FRAME_WORDS;
+        drop_words = ((drop_words + frame_words - 1) / frame_words) * frame_words;
+        if (drop_words > used)
+        {
+            drop_words = (used / frame_words) * frame_words;
+        }
+        sai_receive_index += (uint32_t) drop_words;
     }
 
     uint32_t w     = sai_rx_rng_buf_index & (SAI_RNG_BUF_SIZE - 1);
@@ -993,8 +1000,8 @@ static void copybuf_ring2usb_and_send(void)
         return;
     }
 
-    const uint32_t frames    = audio_frames_per_ms();  // 48 or 96 frames/ms
-    const uint32_t sai_words = frames * 2;             // SAIは2ch
+    const uint32_t frames    = audio_frames_per_ms();     // 48 or 96 frames/ms
+    const uint32_t sai_words = frames * AUDIO_RING_FRAME_WORDS;  // 4ch(4word/frame)
 
     int32_t used = (int32_t) (sai_rx_rng_buf_index - sai_receive_index);
     if (used < 0)
