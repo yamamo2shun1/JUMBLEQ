@@ -106,21 +106,22 @@ typedef struct
 } SUB_OLED_VERTEX;
 
 // Procedure definitions
-void ssd1306_Init(void);
-void ssd1306_Fill(SSD1306_COLOR color);
-void ssd1306_UpdateScreen(void);
-void ssd1306_DrawPixel(uint8_t x, uint8_t y, SSD1306_COLOR color);
-char ssd1306_WriteChar(char ch, SSD1306_Font_t Font, SSD1306_COLOR color);
-char ssd1306_WriteString(char* str, SSD1306_Font_t Font, SSD1306_COLOR color);
-void ssd1306_SetCursor(uint8_t x, uint8_t y);
-void ssd1306_Line(uint8_t x1, uint8_t y1, uint8_t x2, uint8_t y2, SSD1306_COLOR color);
-void ssd1306_DrawArc(uint8_t x, uint8_t y, uint8_t radius, uint16_t start_angle, uint16_t sweep, SSD1306_COLOR color);
-void ssd1306_DrawArcWithRadiusLine(uint8_t x, uint8_t y, uint8_t radius, uint16_t start_angle, uint16_t sweep, SSD1306_COLOR color);
-void ssd1306_DrawCircle(uint8_t par_x, uint8_t par_y, uint8_t par_r, SSD1306_COLOR color);
-void ssd1306_FillCircle(uint8_t par_x, uint8_t par_y, uint8_t par_r, SSD1306_COLOR par_color);
-void ssd1306_Polyline(const SUB_OLED_VERTEX* par_vertex, uint16_t par_size, SSD1306_COLOR color);
-void ssd1306_DrawRectangle(uint8_t x1, uint8_t y1, uint8_t x2, uint8_t y2, SSD1306_COLOR color);
-void ssd1306_FillRectangle(uint8_t x1, uint8_t y1, uint8_t x2, uint8_t y2, SSD1306_COLOR color);
+void sub_oled_Init(void);
+void sub_oled_Fill(SSD1306_COLOR color);
+void sub_oled_UpdateScreen(void);
+void sub_oled_UpdateScreenPages(uint8_t start_page, uint8_t end_page);
+void sub_oled_DrawPixel(uint8_t x, uint8_t y, SSD1306_COLOR color);
+char sub_oled_WriteChar(char ch, SSD1306_Font_t Font, SSD1306_COLOR color);
+char sub_oled_WriteString(char* str, SSD1306_Font_t Font, SSD1306_COLOR color);
+void sub_oled_SetCursor(uint8_t x, uint8_t y);
+void sub_oled_Line(uint8_t x1, uint8_t y1, uint8_t x2, uint8_t y2, SSD1306_COLOR color);
+void sub_oled_DrawArc(uint8_t x, uint8_t y, uint8_t radius, uint16_t start_angle, uint16_t sweep, SSD1306_COLOR color);
+void sub_oled_DrawArcWithRadiusLine(uint8_t x, uint8_t y, uint8_t radius, uint16_t start_angle, uint16_t sweep, SSD1306_COLOR color);
+void sub_oled_DrawCircle(uint8_t par_x, uint8_t par_y, uint8_t par_r, SSD1306_COLOR color);
+void sub_oled_FillCircle(uint8_t par_x, uint8_t par_y, uint8_t par_r, SSD1306_COLOR par_color);
+void sub_oled_Polyline(const SUB_OLED_VERTEX* par_vertex, uint16_t par_size, SSD1306_COLOR color);
+void sub_oled_DrawRectangle(uint8_t x1, uint8_t y1, uint8_t x2, uint8_t y2, SSD1306_COLOR color);
+void sub_oled_FillRectangle(uint8_t x1, uint8_t y1, uint8_t x2, uint8_t y2, SSD1306_COLOR color);
 
 /**
  * @brief Invert color of pixels in rectangle (include border)
@@ -131,9 +132,9 @@ void ssd1306_FillRectangle(uint8_t x1, uint8_t y1, uint8_t x2, uint8_t y2, SSD13
  * @param y2 Y Coordinate of bottom right corner
  * @return SUB_OLED_Error_t status
  */
-SSD1306_Error_t ssd1306_InvertRectangle(uint8_t x1, uint8_t y1, uint8_t x2, uint8_t y2);
+SSD1306_Error_t sub_oled_InvertRectangle(uint8_t x1, uint8_t y1, uint8_t x2, uint8_t y2);
 
-void ssd1306_DrawBitmap(uint8_t x, uint8_t y, const unsigned char* bitmap, uint8_t w, uint8_t h, SSD1306_COLOR color);
+void sub_oled_DrawBitmap(uint8_t x, uint8_t y, const unsigned char* bitmap, uint8_t w, uint8_t h, SSD1306_COLOR color);
 
 /**
  * @brief Sets the contrast of the display.
@@ -141,26 +142,26 @@ void ssd1306_DrawBitmap(uint8_t x, uint8_t y, const unsigned char* bitmap, uint8
  * @note Contrast increases as the value increases.
  * @note RESET = 7Fh.
  */
-void ssd1306_SetContrast(const uint8_t value);
+void sub_oled_SetContrast(const uint8_t value);
 
 /**
  * @brief Set Display ON/OFF.
  * @param[in] on 0 for OFF, any for ON.
  */
-void ssd1306_SetDisplayOn(const uint8_t on);
+void sub_oled_SetDisplayOn(const uint8_t on);
 
 /**
  * @brief Reads DisplayOn state.
  * @return  0: OFF.
  *          1: ON.
  */
-uint8_t ssd1306_GetDisplayOn();
+uint8_t sub_oled_GetDisplayOn();
 
 // Low-level procedures
-void ssd1306_Reset(void);
-void ssd1306_WriteCommand(uint8_t byte);
-void ssd1306_WriteData(uint8_t* buffer, size_t buff_size);
-SSD1306_Error_t ssd1306_FillBuffer(uint8_t* buf, uint32_t len);
+void sub_oled_Reset(void);
+void sub_oled_WriteCommand(uint8_t byte);
+void sub_oled_WriteData(uint8_t* buffer, size_t buff_size);
+SSD1306_Error_t sub_oled_FillBuffer(uint8_t* buf, uint32_t len);
 
 _END_STD_C
 

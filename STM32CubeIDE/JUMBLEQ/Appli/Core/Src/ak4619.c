@@ -85,6 +85,24 @@ void AUDIO_Init_AK4619(uint32_t hz)
         }
     }
 
+    // ADC digital volume
+    if (ak4619_write_reg(0x06, 0x30) != HAL_OK)  // ADC1 Lch 0x00(24dB) -> 0x18(12dB) -> 0x30(0dB)
+    {
+        return;
+    }
+    if (ak4619_write_reg(0x07, 0x30) != HAL_OK)  // ADC1 Rch 0x00(24dB) -> 0x18(12dB) -> 0x30(0dB)
+    {
+        return;
+    }
+    if (ak4619_write_reg(0x08, 0x30) != HAL_OK)  // ADC2 Lch 0x00(24dB) -> 0x18(12dB) -> 0x30(0dB)
+    {
+        return;
+    }
+    if (ak4619_write_reg(0x09, 0x30) != HAL_OK)  // ADC2 Rch 0x00(24dB) -> 0x18(12dB) -> 0x30(0dB)
+    {
+        return;
+    }
+
     // ADC Input Setting
     if (ak4619_write_reg(0x0B, 0x55) != HAL_OK)  // 01 01 01 01 (AIN1L, AIN1R, AIN4L, AIN4R)
     {
@@ -94,6 +112,24 @@ void AUDIO_Init_AK4619(uint32_t hz)
     // DAC Input Select Setting
     // sndData[0] = 0x0E;  // 00 00 11 10 (ADC1 -> DAC1, ADC2 -> DAC2)
     if (ak4619_write_reg(0x12, 0x04) != HAL_OK)  // 00 00 01 00 (SDIN2 -> DAC2, SDIN1 -> DAC1)
+    {
+        return;
+    }
+
+    // DAC digital volume
+    if (ak4619_write_reg(0x0E, 0x18) != HAL_OK)  // DAC1 Lch 0x18(0dB) -> 0xFF(-inf dB)
+    {
+        return;
+    }
+    if (ak4619_write_reg(0x0F, 0x18) != HAL_OK)  // DAC1 Rch 0x18(0dB) -> 0xFF(-inf dB)
+    {
+        return;
+    }
+    if (ak4619_write_reg(0x10, 0x18) != HAL_OK)  // DAC2 Lch 0x18(0dB) -> 0xFF(-inf dB)
+    {
+        return;
+    }
+    if (ak4619_write_reg(0x11, 0x18) != HAL_OK)  // DAC2 Rch 0x18(0dB) -> 0xFF(-infdB)
     {
         return;
     }
