@@ -12,6 +12,8 @@
 #include "JUMBLEQ_DSP_ADAU146xSchematic_1_Defines.h"
 #include "JUMBLEQ_DSP_ADAU146xSchematic_1_PARAM.h"
 
+#include "cmsis_os2.h"
+
 #define ADAU1466_REG_PLL_ENABLE 0xF003U
 #define ADAU1466_REG_PLL_LOCK   0xF004U
 #define ADAU1466_REG_MCLK_OUT   0xF005U

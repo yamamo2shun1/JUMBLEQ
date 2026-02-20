@@ -12,5 +12,6 @@
 
 void OLED_Init(void);
 void OLED_UpdateTask(void);
+void OLED_ShowInitStatus(const char* text);
 
 #endif /* INC_OLED_CONTROL_H_ */
