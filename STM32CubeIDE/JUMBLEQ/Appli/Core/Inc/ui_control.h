@@ -17,6 +17,8 @@ typedef struct
     uint8_t current_xfA_assign;
     uint8_t current_xfB_assign;
     uint8_t current_xfpost_assign;
+    uint8_t current_ch1_dvs_enable;
+    uint8_t current_ch2_dvs_enable;
 } UI_ControlPersistState_t;
 
 uint8_t get_current_xfA_position(void);
