@@ -131,7 +131,7 @@
       <Algorithm name="SignalMerger_11" friendlyname="Automatically Lowers Levels Proportional to the number of Inputs">
         <Link pin="Output" dir="out" link="Link_279" id="Link_279" />
         <Link pin="Input0" dir="in" link="Link_197" id="Link_283" />
-        <Link pin="Input1" dir="in" link="Link_273" id="Link_287" />
+        <Link pin="Input1" dir="in" link="Link_273" id="Link_292" />
       </Algorithm>
     </Schematic>
   </Core>
