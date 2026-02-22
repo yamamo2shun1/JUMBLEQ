@@ -221,8 +221,8 @@ static char const* string_desc_arr[] =
         "Yamamoto Works Ltd.", // 1: Manufacturer
         "JUMBLEQ", // 2: Product
         NULL, // 3: Serials will use unique ID if possible
-        "JUMBLEQ Stereo OUT", // 4: Function
-        "JUMBLEQ Stereo IN", // 5: Function
+        "JUMBLEQ Audio OUT", // 4: Function
+        "JUMBLEQ Audio IN", // 5: Function
 #if CFG_TUD_MIDI
         "JUMBLEQ MIDI", // 6: Function
 #endif
