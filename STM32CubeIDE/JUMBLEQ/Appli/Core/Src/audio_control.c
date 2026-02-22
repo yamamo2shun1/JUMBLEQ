@@ -19,6 +19,7 @@
 
 #include "FreeRTOS.h"  // for xPortGetFreeHeapSize
 #include "cmsis_os2.h"
+#include "task.h"
 
 #include "ak4619.h"
 #include "adau1466.h"
@@ -69,6 +70,27 @@ volatile uint32_t sai_receive_index    = 0;
 static volatile uint8_t tx_pending_mask = 0;      // bit0: first-half, bit1: second-half
 static volatile uint8_t rx_pending_mask = 0;      // bit0: first-half, bit1: second-half
 static volatile bool usb_tx_pending     = false;  // USB TX送信要求フラグ (ISR→Task通知用)
+static volatile bool usb_rx_pending     = false;  // USB RX受信通知フラグ (ISR→Task通知用)
+static TaskHandle_t s_audio_task_handle = NULL;
+static uint32_t s_last_usb_io_tick      = 0xFFFFFFFFu;
+static volatile uint32_t s_last_rx_notify_tick = 0xFFFFFFFFu;
+
+void audio_control_register_task(void)
+{
+    s_audio_task_handle = xTaskGetCurrentTaskHandle();
+}
+
+static inline void audio_task_notify_from_isr(void)
+{
+    if (s_audio_task_handle == NULL)
+    {
+        return;
+    }
+
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    vTaskNotifyGiveFromISR(s_audio_task_handle, &xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
 
 #if AUDIO_DIAG_LOG
 static volatile uint32_t dbg_tx_used_min            = 0xFFFFFFFFu;
@@ -127,6 +149,7 @@ void control_input_from_usb_gain(uint8_t ch, int16_t db);
 void reset_audio_buffer(void)
 {
     ui_control_reset_state();
+    s_last_usb_io_tick = 0xFFFFFFFFu;
 
     for (uint16_t i = 0; i < CFG_TUD_AUDIO_FUNC_2_EP_IN_SW_BUF_SZ / 4; i++)
     {
@@ -474,6 +497,9 @@ bool tud_audio_set_itf_close_ep_cb(uint8_t rhport, tusb_control_request_t const*
         tx_blink_interval_ms = BLINK_MOUNTED;
         s_streaming_out      = false;
         spk_data_size        = 0;
+        usb_rx_pending       = false;
+        s_last_usb_io_tick   = 0xFFFFFFFFu;
+        s_last_rx_notify_tick = 0xFFFFFFFFu;
         sai_tx_rng_buf_index = 0;
         sai_transmit_index   = 0;
         tx_pending_mask      = 0;  // DMAフラグをクリア
@@ -483,6 +509,7 @@ bool tud_audio_set_itf_close_ep_cb(uint8_t rhport, tusb_control_request_t const*
     {
         rx_blink_interval_ms = BLINK_MOUNTED;
         s_streaming_in       = false;
+        s_last_usb_io_tick   = 0xFFFFFFFFu;
         sai_rx_rng_buf_index = 0;
         sai_receive_index    = 0;
         rx_pending_mask      = 0;  // DMAフラグをクリア
@@ -504,13 +531,17 @@ bool tud_audio_set_itf_cb(uint8_t rhport, tusb_control_request_t const* p_reques
 
         s_streaming_out = true;
         spk_data_size   = 0;
+        usb_rx_pending  = false;
+        s_last_usb_io_tick = 0xFFFFFFFFu;
+        s_last_rx_notify_tick = 0xFFFFFFFFu;
     }
 
     if (ITF_NUM_AUDIO_STREAMING_STEREO_IN == itf && alt != 0)
     {
         rx_blink_interval_ms = BLINK_STREAMING;
 
-        s_streaming_in = true;
+        s_streaming_in    = true;
+        s_last_usb_io_tick = 0xFFFFFFFFu;
     }
 
     // Clear buffer when streaming is changed
@@ -549,6 +580,7 @@ static void dma_sai2_tx_half(DMA_HandleTypeDef* hdma)
 #endif
     tx_pending_mask |= 0x01;
     __DMB();
+    audio_task_notify_from_isr();
 }
 static void dma_sai2_tx_cplt(DMA_HandleTypeDef* hdma)
 {
@@ -561,6 +593,7 @@ static void dma_sai2_tx_cplt(DMA_HandleTypeDef* hdma)
 #endif
     tx_pending_mask |= 0x02;
     __DMB();
+    audio_task_notify_from_isr();
 }
 
 static void dma_sai1_rx_half(DMA_HandleTypeDef* hdma)
@@ -574,6 +607,7 @@ static void dma_sai1_rx_half(DMA_HandleTypeDef* hdma)
 #endif
     rx_pending_mask |= 0x01;
     __DMB();
+    audio_task_notify_from_isr();
 }
 static void dma_sai1_rx_cplt(DMA_HandleTypeDef* hdma)
 {
@@ -586,6 +620,7 @@ static void dma_sai1_rx_cplt(DMA_HandleTypeDef* hdma)
 #endif
     rx_pending_mask |= 0x02;
     __DMB();
+    audio_task_notify_from_isr();
 }
 
 static void dma_sai_error(DMA_HandleTypeDef* hdma)
@@ -993,6 +1028,27 @@ static uint16_t audio_out_bytes_per_ms(void)
     return (uint16_t) bytes;
 }
 
+static uint16_t audio_out_bytes_for_elapsed_ms(uint32_t elapsed_ms)
+{
+    uint32_t bytes_per_ms = audio_out_bytes_per_ms();
+    if (elapsed_ms == 0U)
+    {
+        elapsed_ms = 1U;
+    }
+    // Catch up delayed task wakeups without requesting an excessively large burst.
+    if (elapsed_ms > 4U)
+    {
+        elapsed_ms = 4U;
+    }
+
+    uint32_t bytes = bytes_per_ms * elapsed_ms;
+    if (bytes > sizeof(usb_in_buf))
+    {
+        bytes = sizeof(usb_in_buf);
+    }
+    return (uint16_t) bytes;
+}
+
 static void copybuf_ring2usb_and_send(void)
 {
     if (!tud_audio_n_mounted(AUDIO_FUNC_ID_IN))
@@ -1083,11 +1139,31 @@ bool tud_audio_tx_done_isr(uint8_t rhport, uint16_t n_bytes_sent, uint8_t func_i
     return true;
 }
 
+bool tud_audio_rx_done_isr(uint8_t rhport, uint16_t n_bytes_received, uint8_t func_id, uint8_t ep_out, uint8_t cur_alt_setting)
+{
+    (void) rhport;
+    (void) n_bytes_received;
+    (void) ep_out;
+    (void) cur_alt_setting;
+    if (func_id != AUDIO_FUNC_ID_OUT)
+    {
+        return true;
+    }
+
+    usb_rx_pending = true;
+    uint32_t now = HAL_GetTick();
+    if (now != s_last_rx_notify_tick)
+    {
+        s_last_rx_notify_tick = now;
+        audio_task_notify_from_isr();
+    }
+    return true;
+}
+
 // audio_task()呼び出し頻度計測用
 static volatile uint32_t audio_task_call_count = 0;
 static volatile uint32_t audio_task_last_tick  = 0;
 static volatile uint32_t audio_task_frequency  = 0;  // 呼び出し回数/私E
-
 void audio_task(void)
 {
     // 呼び出し頻度計測
@@ -1146,9 +1222,65 @@ void audio_task(void)
     }
     else
     {
+        bool usb_io_slot = (now != s_last_usb_io_tick);
+        uint32_t usb_io_elapsed_ms = 1U;
+        bool usb_rx_event = false;
+        if (usb_io_slot)
+        {
+            if (s_last_usb_io_tick != 0xFFFFFFFFu)
+            {
+                usb_io_elapsed_ms = now - s_last_usb_io_tick;
+            }
+            s_last_usb_io_tick = now;
+        }
+
+        if (usb_rx_pending)
+        {
+            uint32_t primask = __get_PRIMASK();
+            __disable_irq();
+            if (usb_rx_pending)
+            {
+                usb_rx_pending = false;
+                usb_rx_event   = true;
+            }
+            __set_PRIMASK(primask);
+        }
+
         // Feedback EPがFIFO水位を使って送信レート制御するため、E
         // 毎msで「忁E��E��だけ」読む。�E量吸ぁE�Eし�E水位制御を壊す、E
-        spk_data_size = tud_audio_n_read(AUDIO_FUNC_ID_OUT, usb_in_buf, audio_out_bytes_per_ms());
+        if (usb_io_slot || usb_rx_event)
+        {
+            uint16_t budget = audio_out_bytes_for_elapsed_ms(usb_io_elapsed_ms);
+            uint16_t min_budget = audio_out_bytes_per_ms();
+            if (budget < min_budget)
+            {
+                budget = min_budget;
+            }
+
+            uint16_t avail = tud_audio_n_available(AUDIO_FUNC_ID_OUT);
+            uint16_t to_read = avail;
+            if (to_read > budget)
+            {
+                to_read = budget;
+            }
+            if (to_read > sizeof(usb_in_buf))
+            {
+                to_read = (uint16_t) sizeof(usb_in_buf);
+            }
+
+            if (to_read > 0U)
+            {
+                spk_data_size = tud_audio_n_read(AUDIO_FUNC_ID_OUT, usb_in_buf, to_read);
+            }
+            else
+            {
+                spk_data_size = 0;
+            }
+        }
+        else
+        {
+            spk_data_size = 0;
+        }
 #if AUDIO_DIAG_LOG
         dbg_usb_read_bytes += spk_data_size;
         if (s_streaming_out && spk_data_size == 0)
@@ -1166,14 +1298,17 @@ void audio_task(void)
 #endif
 
         // USB -> SAI
-        copybuf_usb2ring();
+        if (spk_data_size > 0)
+        {
+            copybuf_usb2ring();
+        }
         copybuf_ring2sai();
 
         // SAI -> USB
         copybuf_sai2ring();
 
         // USB TX送信 (ISRからのフラグ通知、また�Eストリーミング中は常に試衁E
-        if (usb_tx_pending || s_streaming_in)
+        if (usb_io_slot && (usb_tx_pending || s_streaming_in))
         {
             usb_tx_pending = false;
             copybuf_ring2usb_and_send();
@@ -1226,6 +1361,7 @@ void AUDIO_SAI_Reset_ForNewRate(void)
     sai_rx_rng_buf_index = 0;
     sai_transmit_index   = 0;
     sai_receive_index    = 0;
+    s_last_usb_io_tick   = 0xFFFFFFFFu;
     tx_pending_mask      = 0;
     rx_pending_mask      = 0;
 

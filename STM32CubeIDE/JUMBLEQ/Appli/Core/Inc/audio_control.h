@@ -45,6 +45,7 @@ void AUDIO_Init_ADAU1466(uint32_t hz);
 void start_sai(void);
 
 void AUDIO_SAI_Reset_ForNewRate(void);
+void audio_control_register_task(void);
 void audio_task(void);
 
 #endif /* INC_AUDIO_CONTROL_H_ */
