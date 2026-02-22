@@ -24,13 +24,20 @@ When you connect the USB cable while holding down SW3, it is recognized as a USB
 ```
 
 ## Block Diagram
-<img width="1217" height="842" alt="JUMBLEQ drawio" src="https://github.com/user-attachments/assets/cbeb1f4e-1354-4cfa-bd1b-a0ead0e7d694" />
+<img width="811" height="701" alt="JUMBLEQ_diagram" src="https://github.com/user-attachments/assets/09df1829-d854-44bf-9779-de79fafe3dac" />
 
 ## Pinout (main board rev.C)
 ![JUMBLEQ_main_pinout_revC](https://github.com/user-attachments/assets/fcb13605-1c4f-45cb-ab58-35bc1016bd3e)
 
-## CODEC module
-[AK4619 Audio Module](https://github.com/YamamotoWorksDev/AK4619_Module)
+## Modules
+- Original  
+[AK4619 Audio Module](https://github.com/YamamotoWorksDev/AK4619_Module)  
+Magnetic Switch & POT Module
+
+- Third party  
+[0.96インチ 128×64ドット有機ELディスプレイ(OLED) 白色](https://akizukidenshi.com/catalog/g/g112031/)  
+[SparkFun Qwiic OLED Display (0.91 in., 128x32)](https://www.sparkfun.com/sparkfun-qwiic-oled-display-0-91-in-128x32-lcd-24606.html)  
+[SparkFun Qwiic EEPROM Breakout - 512Kbit](https://www.sparkfun.com/sparkfun-qwiic-eeprom-breakout-512kbit.html)
 
 ## Byte Options
 

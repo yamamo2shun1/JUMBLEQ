@@ -15,9 +15,11 @@
 #include "linked_list.h"
 #include "sai.h"
 #include "sai.h"
+#include "eeprom.h"
 
 #include "FreeRTOS.h"  // for xPortGetFreeHeapSize
 #include "cmsis_os2.h"
+#include "task.h"
 
 #include "ak4619.h"
 #include "adau1466.h"
@@ -30,12 +32,12 @@ enum
 {
     AUDIO_MS_PER_SECOND        = 1000u,
     AUDIO_TASK_STATS_PERIOD_MS = 1000u,
-    AUDIO_RESOLUTION_16BIT     = 16u,
-    AUDIO_BYTES_PER_SAMPLE_16  = 2u,
     AUDIO_BYTES_PER_SAMPLE_32  = 4u,
     AUDIO_USB_FRAME_CHANNELS   = 4u,
     AUDIO_RING_FRAME_WORDS     = 4u,
     DBG_MIN_U16_INIT           = 0xFFFFu,
+    AUDIO_FUNC_ID_OUT          = 0u,
+    AUDIO_FUNC_ID_IN           = 1u,
 };
 
 extern DMA_QListTypeDef List_GPDMA1_Channel2;
@@ -68,6 +70,27 @@ volatile uint32_t sai_receive_index    = 0;
 static volatile uint8_t tx_pending_mask = 0;      // bit0: first-half, bit1: second-half
 static volatile uint8_t rx_pending_mask = 0;      // bit0: first-half, bit1: second-half
 static volatile bool usb_tx_pending     = false;  // USB TX送信要求フラグ (ISR→Task通知用)
+static volatile bool usb_rx_pending     = false;  // USB RX受信通知フラグ (ISR→Task通知用)
+static TaskHandle_t s_audio_task_handle = NULL;
+static uint32_t s_last_usb_io_tick      = 0xFFFFFFFFu;
+static volatile uint32_t s_last_rx_notify_tick = 0xFFFFFFFFu;
+
+void audio_control_register_task(void)
+{
+    s_audio_task_handle = xTaskGetCurrentTaskHandle();
+}
+
+static inline void audio_task_notify_from_isr(void)
+{
+    if (s_audio_task_handle == NULL)
+    {
+        return;
+    }
+
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    vTaskNotifyGiveFromISR(s_audio_task_handle, &xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
 
 #if AUDIO_DIAG_LOG
 static volatile uint32_t dbg_tx_used_min            = 0xFFFFFFFFu;
@@ -105,7 +128,7 @@ bool is_sr_changed            = false;
 const uint32_t sample_rates[] = {48000, 96000};
 uint32_t current_sample_rate  = sample_rates[0];
 
-__attribute__((section("noncacheable_buffer"), aligned(32))) int32_t usb_out_buf[CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ / 4] = {0};
+__attribute__((section("noncacheable_buffer"), aligned(32))) int32_t usb_out_buf[CFG_TUD_AUDIO_FUNC_2_EP_IN_SW_BUF_SZ / 4] = {0};
 __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t usb_in_buf[CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ / 4] = {0};
 
 __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t sai_tx_rng_buf[SAI_RNG_BUF_SIZE] = {0};
@@ -116,10 +139,6 @@ __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t stereo_in_b
 
 // Speaker data size received in the last frame
 uint16_t spk_data_size;
-// Resolution per format (24bit only)
-const uint8_t resolutions_per_format[CFG_TUD_AUDIO_FUNC_1_N_FORMATS] = {CFG_TUD_AUDIO_FUNC_1_FORMAT_1_RESOLUTION_RX};
-// Current resolution, update on format change
-uint8_t current_resolution;
 
 // Current states
 int8_t mute[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX + 1];     // +1 for master channel 0
@@ -130,8 +149,9 @@ void control_input_from_usb_gain(uint8_t ch, int16_t db);
 void reset_audio_buffer(void)
 {
     ui_control_reset_state();
+    s_last_usb_io_tick = 0xFFFFFFFFu;
 
-    for (uint16_t i = 0; i < CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ / 4; i++)
+    for (uint16_t i = 0; i < CFG_TUD_AUDIO_FUNC_2_EP_IN_SW_BUF_SZ / 4; i++)
     {
         usb_out_buf[i] = 0;
     }
@@ -158,6 +178,61 @@ void reset_audio_buffer(void)
     }
 
     __DSB();
+}
+
+void AUDIO_LoadAndApplyRoutingFromEEPROM(void)
+{
+    EEPROM_DeviceConfig_t cfg;
+    UI_ControlPersistState_t ui_state;
+
+    if (EEPROM_LoadConfig(&hi2c2, &cfg) == HAL_OK)
+    {
+        ui_state.current_ch1_input_type = cfg.current_ch1_input_type;
+        ui_state.current_ch2_input_type = cfg.current_ch2_input_type;
+        ui_state.current_xfA_assign     = cfg.current_xfA_assign;
+        ui_state.current_xfB_assign     = cfg.current_xfB_assign;
+        ui_state.current_xfpost_assign  = cfg.current_xfpost_assign;
+        ui_state.current_ch1_dvs_enable = cfg.current_ch1_dvs_enable;
+        ui_state.current_ch2_dvs_enable = cfg.current_ch2_dvs_enable;
+
+        if (ui_control_apply_persist_state(&ui_state))
+        {
+            SEGGER_RTT_printf(0,
+                              "EEPROM routing applied: CH1=%u CH2=%u XFA=%u XFB=%u XFP=%u DVS1=%u DVS2=%u\r\n",
+                              (unsigned)cfg.current_ch1_input_type,
+                              (unsigned)cfg.current_ch2_input_type,
+                              (unsigned)cfg.current_xfA_assign,
+                              (unsigned)cfg.current_xfB_assign,
+                              (unsigned)cfg.current_xfpost_assign,
+                              (unsigned)cfg.current_ch1_dvs_enable,
+                              (unsigned)cfg.current_ch2_dvs_enable);
+        }
+        else
+        {
+            SEGGER_RTT_printf(0, "EEPROM routing apply failed\r\n");
+        }
+    }
+    else
+    {
+        EEPROM_ConfigSetDefaults(&cfg);
+        ui_state.current_ch1_input_type = cfg.current_ch1_input_type;
+        ui_state.current_ch2_input_type = cfg.current_ch2_input_type;
+        ui_state.current_xfA_assign     = cfg.current_xfA_assign;
+        ui_state.current_xfB_assign     = cfg.current_xfB_assign;
+        ui_state.current_xfpost_assign  = cfg.current_xfpost_assign;
+        ui_state.current_ch1_dvs_enable = cfg.current_ch1_dvs_enable;
+        ui_state.current_ch2_dvs_enable = cfg.current_ch2_dvs_enable;
+        (void)ui_control_apply_persist_state(&ui_state);
+
+        if (EEPROM_SaveConfig(&hi2c2, &cfg) == HAL_OK)
+        {
+            SEGGER_RTT_printf(0, "EEPROM config initialized with defaults\r\n");
+        }
+        else
+        {
+            SEGGER_RTT_printf(0, "EEPROM default config save failed\r\n");
+        }
+    }
 }
 
 uint32_t get_tx_blink_interval_ms(void)
@@ -216,7 +291,7 @@ void tud_resume_cb(void)
 // Helper for clock get requests
 static bool audio20_clock_get_request(uint8_t rhport, audio20_control_request_t const* request)
 {
-    TU_ASSERT(request->bEntityID == UAC2_ENTITY_CLOCK);
+    TU_ASSERT((request->bEntityID == UAC2_ENTITY_CLOCK_OUT) || (request->bEntityID == UAC2_ENTITY_CLOCK_IN));
 
     if (request->bControlSelector == AUDIO20_CS_CTRL_SAM_FREQ)
     {
@@ -259,7 +334,7 @@ static bool audio20_clock_set_request(uint8_t rhport, audio20_control_request_t 
 {
     (void) rhport;
 
-    TU_ASSERT(request->bEntityID == UAC2_ENTITY_CLOCK);
+    TU_ASSERT((request->bEntityID == UAC2_ENTITY_CLOCK_OUT) || (request->bEntityID == UAC2_ENTITY_CLOCK_IN));
     TU_VERIFY(request->bRequest == AUDIO20_CS_REQ_CUR);
 
     if (request->bControlSelector == AUDIO20_CS_CTRL_SAM_FREQ)
@@ -355,7 +430,7 @@ static bool audio20_get_req_entity(uint8_t rhport, tusb_control_request_t const*
 {
     audio20_control_request_t const* request = (audio20_control_request_t const*) p_request;
 
-    if (request->bEntityID == UAC2_ENTITY_CLOCK)
+    if ((request->bEntityID == UAC2_ENTITY_CLOCK_OUT) || (request->bEntityID == UAC2_ENTITY_CLOCK_IN))
         return audio20_clock_get_request(rhport, request);
     if (request->bEntityID == UAC2_ENTITY_STEREO_OUT_FEATURE_UNIT)
         return audio20_feature_unit_get_request(rhport, request);
@@ -372,7 +447,7 @@ static bool audio20_set_req_entity(uint8_t rhport, tusb_control_request_t const*
 
     if (request->bEntityID == UAC2_ENTITY_STEREO_OUT_FEATURE_UNIT)
         return audio20_feature_unit_set_request(rhport, request, buf);
-    if (request->bEntityID == UAC2_ENTITY_CLOCK)
+    if ((request->bEntityID == UAC2_ENTITY_CLOCK_OUT) || (request->bEntityID == UAC2_ENTITY_CLOCK_IN))
         return audio20_clock_set_request(rhport, request, buf);
     TU_LOG1("Set request not handled, entity = %d, selector = %d, request = %d\r\n", request->bEntityID, request->bControlSelector, request->bRequest);
 
@@ -422,6 +497,9 @@ bool tud_audio_set_itf_close_ep_cb(uint8_t rhport, tusb_control_request_t const*
         tx_blink_interval_ms = BLINK_MOUNTED;
         s_streaming_out      = false;
         spk_data_size        = 0;
+        usb_rx_pending       = false;
+        s_last_usb_io_tick   = 0xFFFFFFFFu;
+        s_last_rx_notify_tick = 0xFFFFFFFFu;
         sai_tx_rng_buf_index = 0;
         sai_transmit_index   = 0;
         tx_pending_mask      = 0;  // DMAフラグをクリア
@@ -431,6 +509,7 @@ bool tud_audio_set_itf_close_ep_cb(uint8_t rhport, tusb_control_request_t const*
     {
         rx_blink_interval_ms = BLINK_MOUNTED;
         s_streaming_in       = false;
+        s_last_usb_io_tick   = 0xFFFFFFFFu;
         sai_rx_rng_buf_index = 0;
         sai_receive_index    = 0;
         rx_pending_mask      = 0;  // DMAフラグをクリア
@@ -452,21 +531,21 @@ bool tud_audio_set_itf_cb(uint8_t rhport, tusb_control_request_t const* p_reques
 
         s_streaming_out = true;
         spk_data_size   = 0;
+        usb_rx_pending  = false;
+        s_last_usb_io_tick = 0xFFFFFFFFu;
+        s_last_rx_notify_tick = 0xFFFFFFFFu;
     }
 
     if (ITF_NUM_AUDIO_STREAMING_STEREO_IN == itf && alt != 0)
     {
         rx_blink_interval_ms = BLINK_STREAMING;
 
-        s_streaming_in = true;
+        s_streaming_in    = true;
+        s_last_usb_io_tick = 0xFFFFFFFFu;
     }
 
-    // Clear buffer when streaming format is changed
+    // Clear buffer when streaming is changed
     spk_data_size = 0;
-    if (alt != 0)
-    {
-        current_resolution = resolutions_per_format[alt - 1];
-    }
 
     return true;
 }
@@ -474,8 +553,11 @@ bool tud_audio_set_itf_cb(uint8_t rhport, tusb_control_request_t const* p_reques
 #if CFG_TUD_AUDIO_ENABLE_EP_OUT && CFG_TUD_AUDIO_ENABLE_FEEDBACK_EP
 void tud_audio_feedback_params_cb(uint8_t func_id, uint8_t alt_itf, audio_feedback_params_t* feedback_param)
 {
-    (void) func_id;
     (void) alt_itf;
+    if (func_id != AUDIO_FUNC_ID_OUT)
+    {
+        return;
+    }
 
     // Use TinyUSB's FIFO-count based feedback so host OUT packet rate follows
     // this device's effective consume rate and suppresses long-term drift.
@@ -498,6 +580,7 @@ static void dma_sai2_tx_half(DMA_HandleTypeDef* hdma)
 #endif
     tx_pending_mask |= 0x01;
     __DMB();
+    audio_task_notify_from_isr();
 }
 static void dma_sai2_tx_cplt(DMA_HandleTypeDef* hdma)
 {
@@ -510,6 +593,7 @@ static void dma_sai2_tx_cplt(DMA_HandleTypeDef* hdma)
 #endif
     tx_pending_mask |= 0x02;
     __DMB();
+    audio_task_notify_from_isr();
 }
 
 static void dma_sai1_rx_half(DMA_HandleTypeDef* hdma)
@@ -523,6 +607,7 @@ static void dma_sai1_rx_half(DMA_HandleTypeDef* hdma)
 #endif
     rx_pending_mask |= 0x01;
     __DMB();
+    audio_task_notify_from_isr();
 }
 static void dma_sai1_rx_cplt(DMA_HandleTypeDef* hdma)
 {
@@ -535,6 +620,7 @@ static void dma_sai1_rx_cplt(DMA_HandleTypeDef* hdma)
 #endif
     rx_pending_mask |= 0x02;
     __DMB();
+    audio_task_notify_from_isr();
 }
 
 static void dma_sai_error(DMA_HandleTypeDef* hdma)
@@ -695,44 +781,18 @@ void copybuf_usb2ring(void)
     // USB: [L1][R1][L2][R2][L1][R1][L2][R2]...
     // SAI: [L1][R1][L2][R2][L1][R1][L2][R2]...
 
-    uint32_t sai_words;  // SAIに書くword数�E�Ech刁E��E
+    // 24bit in 32bit slot: 4ch全てそのままコピー
+    uint32_t sai_words = spk_data_size / sizeof(int32_t);  // SAIに書くword数(4ch分)
 
-    if (current_resolution == AUDIO_RESOLUTION_16BIT)
+    if ((int32_t) sai_words > free)
     {
-        // 16bit: USBチE�Eタはint16_tとして詰まってぁE�� (4ch)
-        int16_t* usb_in_buf_16 = (int16_t*) usb_in_buf;
-        uint32_t usb_samples   = spk_data_size / sizeof(int16_t);  // 16bitサンプル数
-        sai_words              = usb_samples;                      // SAIに書ぁEchチE�Eタのword数
-
-        if ((int32_t) sai_words > free)
-        {
-            sai_words = (uint32_t) free;
-        }
-
-        // 4ch全てコピ�E、E6bitↁE2bit左詰め変換
-        for (uint32_t i = 0; i < sai_words; i++)
-        {
-            int32_t sample32                                              = ((int32_t) usb_in_buf_16[i]) << 16;
-            sai_tx_rng_buf[sai_tx_rng_buf_index & (SAI_RNG_BUF_SIZE - 1)] = sample32;
-            sai_tx_rng_buf_index++;
-        }
+        sai_words = (uint32_t) free;
     }
-    else
+
+    for (uint32_t i = 0; i < sai_words; i++)
     {
-        // 24bit in 32bit slot: 4ch全てそ�Eままコピ�E
-        sai_words = spk_data_size / sizeof(int32_t);
-
-        if ((int32_t) sai_words > free)
-        {
-            sai_words = (uint32_t) free;
-        }
-
-        // 4ch全てコピ�E
-        for (uint32_t i = 0; i < sai_words; i++)
-        {
-            sai_tx_rng_buf[sai_tx_rng_buf_index & (SAI_RNG_BUF_SIZE - 1)] = usb_in_buf[i];
-            sai_tx_rng_buf_index++;
-        }
+        sai_tx_rng_buf[sai_tx_rng_buf_index & (SAI_RNG_BUF_SIZE - 1)] = usb_in_buf[i];
+        sai_tx_rng_buf_index++;
     }
 
     // SEGGER_RTT_printf(0, " %d\n", sai_tx_rng_buf_index);
@@ -910,8 +970,15 @@ static inline void fill_rx_half(uint32_t index0)
     int32_t free = (int32_t) (SAI_RNG_BUF_SIZE - 1) - used;
     if (free < (int32_t) n)
     {
-        // 追ぁE��けなぁE��ら古ぁE��ータを捨てて空きを作る
-        sai_receive_index += (uint32_t) ((int32_t) n - free);
+        // 追いつけない時は古いデータを捨てるが、必ず4chフレーム境界で進める。
+        int32_t drop_words = (int32_t) n - free;
+        const int32_t frame_words = (int32_t) AUDIO_RING_FRAME_WORDS;
+        drop_words = ((drop_words + frame_words - 1) / frame_words) * frame_words;
+        if (drop_words > used)
+        {
+            drop_words = (used / frame_words) * frame_words;
+        }
+        sai_receive_index += (uint32_t) drop_words;
     }
 
     uint32_t w     = sai_rx_rng_buf_index & (SAI_RNG_BUF_SIZE - 1);
@@ -953,8 +1020,28 @@ static uint16_t audio_out_bytes_per_ms(void)
 {
     // Host -> Device (speaker OUT) stream bytes per 1ms
     // 48/96kHz are integer frames per ms in this project.
-    uint32_t bytes_per_sample = (current_resolution == AUDIO_RESOLUTION_16BIT) ? AUDIO_BYTES_PER_SAMPLE_16 : AUDIO_BYTES_PER_SAMPLE_32;
-    uint32_t bytes            = audio_frames_per_ms() * CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX * bytes_per_sample;
+    uint32_t bytes = audio_frames_per_ms() * CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX * AUDIO_BYTES_PER_SAMPLE_32;
+    if (bytes > sizeof(usb_in_buf))
+    {
+        bytes = sizeof(usb_in_buf);
+    }
+    return (uint16_t) bytes;
+}
+
+static uint16_t audio_out_bytes_for_elapsed_ms(uint32_t elapsed_ms)
+{
+    uint32_t bytes_per_ms = audio_out_bytes_per_ms();
+    if (elapsed_ms == 0U)
+    {
+        elapsed_ms = 1U;
+    }
+    // Catch up delayed task wakeups without requesting an excessively large burst.
+    if (elapsed_ms > 4U)
+    {
+        elapsed_ms = 4U;
+    }
+
+    uint32_t bytes = bytes_per_ms * elapsed_ms;
     if (bytes > sizeof(usb_in_buf))
     {
         bytes = sizeof(usb_in_buf);
@@ -964,7 +1051,7 @@ static uint16_t audio_out_bytes_per_ms(void)
 
 static void copybuf_ring2usb_and_send(void)
 {
-    if (!tud_audio_mounted())
+    if (!tud_audio_n_mounted(AUDIO_FUNC_ID_IN))
     {
         return;
     }
@@ -975,13 +1062,13 @@ static void copybuf_ring2usb_and_send(void)
         return;
     }
 
-    if (tud_audio_get_ep_in_ff() == NULL)
+    if (tud_audio_n_get_ep_in_ff(AUDIO_FUNC_ID_IN) == NULL)
     {
         return;
     }
 
-    const uint32_t frames    = audio_frames_per_ms();  // 48 or 96 frames/ms
-    const uint32_t sai_words = frames * 2;             // SAIは2ch
+    const uint32_t frames    = audio_frames_per_ms();     // 48 or 96 frames/ms
+    const uint32_t sai_words = frames * AUDIO_RING_FRAME_WORDS;  // 4ch(4word/frame)
 
     int32_t used = (int32_t) (sai_rx_rng_buf_index - sai_receive_index);
     if (used < 0)
@@ -998,91 +1085,40 @@ static void copybuf_ring2usb_and_send(void)
     // SAI: [L1][R1][L2][R2][L1][R1][L2][R2]...
     // USB: [L1][R1][L2][R2][L1][R1][L2][R2]...
 
-    uint32_t usb_bytes;
-    uint16_t written;
+    // 24bit in 32bit slot: SAI(2ch) -> USB(4ch) 変換
+    const uint32_t usb_bytes = frames * AUDIO_USB_FRAME_CHANNELS * sizeof(int32_t);  // 4ch分
 
-    if (current_resolution == AUDIO_RESOLUTION_16BIT)
+    // 安全: usb_out_buf が足りない想定なら絶対に書かない
+    if (usb_bytes > sizeof(usb_out_buf))
+        return;
+
+    for (uint32_t f = 0; f < frames; f++)
     {
-        // 16bit: SAI(32bit 2ch) ↁEUSB(16bit 4ch) 変換
-        usb_bytes = frames * AUDIO_USB_FRAME_CHANNELS * sizeof(int16_t);  // 4ch刁E
-
-        // 安�E: usb_out_buf が足りなぁE��定なら絶対に書かなぁE
-        if (usb_bytes > sizeof(usb_out_buf))
-            return;
-
-        int16_t* usb_out_buf_16 = (int16_t*) usb_out_buf;
-
-        for (uint32_t f = 0; f < frames; f++)
-        {
-            uint32_t r_L1 = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 0) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_R1 = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 1) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_L2 = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 2) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_R2 = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 3) & (SAI_RNG_BUF_SIZE - 1);
-            // 32bit ↁE16bit (上佁E6bitを取り�EぁE
-            // SAIチE�Eタは符号付き32bitなので、算術右シフトで符号を保持
-            int32_t sample_L1         = sai_rx_rng_buf[r_L1];
-            int32_t sample_R1         = sai_rx_rng_buf[r_R1];
-            int32_t sample_L2         = sai_rx_rng_buf[r_L2];
-            int32_t sample_R2         = sai_rx_rng_buf[r_R2];
-            usb_out_buf_16[f * AUDIO_USB_FRAME_CHANNELS + 0] = (int16_t) (sample_L1 >> 16);  // L1
-            usb_out_buf_16[f * AUDIO_USB_FRAME_CHANNELS + 1] = (int16_t) (sample_R1 >> 16);  // R1
-            usb_out_buf_16[f * AUDIO_USB_FRAME_CHANNELS + 2] = (int16_t) (sample_L2 >> 16);  // L2
-            usb_out_buf_16[f * AUDIO_USB_FRAME_CHANNELS + 3] = (int16_t) (sample_R2 >> 16);  // R2
-        }
-
-        // ISRコンチE��ストから呼ばれるので通常版を使用
-        written = tud_audio_write(usb_out_buf, (uint16_t) usb_bytes);
-
-        if (written == 0)
-        {
-            return;
-        }
-
-        // 書けた刁E��け読みポインタを進める
-        uint32_t written_frames = ((uint32_t) written) / (AUDIO_USB_FRAME_CHANNELS * sizeof(int16_t));
-        if (written_frames > frames)
-            written_frames = frames;
-        if (written_frames == 0)
-            return;
-        sai_receive_index += written_frames * AUDIO_RING_FRAME_WORDS;  // SAIは4ch刁E
+        uint32_t r_L1          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 0) & (SAI_RNG_BUF_SIZE - 1);
+        uint32_t r_R1          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 1) & (SAI_RNG_BUF_SIZE - 1);
+        uint32_t r_L2          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 2) & (SAI_RNG_BUF_SIZE - 1);
+        uint32_t r_R2          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 3) & (SAI_RNG_BUF_SIZE - 1);
+        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 0] = sai_rx_rng_buf[r_L1];  // L1
+        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 1] = sai_rx_rng_buf[r_R1];  // R1
+        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 2] = sai_rx_rng_buf[r_L2];  // L2
+        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 3] = sai_rx_rng_buf[r_R2];  // R2
     }
-    else
+
+    // ISRコンテキストから呼ばれるので通常版を使用
+    uint16_t written = tud_audio_n_write(AUDIO_FUNC_ID_IN, usb_out_buf, (uint16_t) usb_bytes);
+
+    if (written == 0)
     {
-        // 24bit in 32bit slot: SAI(2ch) ↁEUSB(4ch) 変換
-        usb_bytes = frames * AUDIO_USB_FRAME_CHANNELS * sizeof(int32_t);  // 4ch刁E
-
-        // 安�E: usb_out_buf が足りなぁE��定なら絶対に書かなぁE
-        if (usb_bytes > sizeof(usb_out_buf))
-            return;
-
-        for (uint32_t f = 0; f < frames; f++)
-        {
-            uint32_t r_L1          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 0) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_R1          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 1) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_L2          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 2) & (SAI_RNG_BUF_SIZE - 1);
-            uint32_t r_R2          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 3) & (SAI_RNG_BUF_SIZE - 1);
-            usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 0] = sai_rx_rng_buf[r_L1];  // L1
-            usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 1] = sai_rx_rng_buf[r_R1];  // R1
-            usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 2] = sai_rx_rng_buf[r_L2];  // L2
-            usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 3] = sai_rx_rng_buf[r_R2];  // R2
-        }
-
-        // ISRコンチE��ストから呼ばれるので通常版を使用
-        written = tud_audio_write(usb_out_buf, (uint16_t) usb_bytes);
-
-        if (written == 0)
-        {
-            return;
-        }
-
-        // 書けた刁E��け読みポインタを進める
-        uint32_t written_frames = ((uint32_t) written) / (AUDIO_USB_FRAME_CHANNELS * sizeof(int32_t));
-        if (written_frames > frames)
-            written_frames = frames;
-        if (written_frames == 0)
-            return;
-        sai_receive_index += written_frames * AUDIO_RING_FRAME_WORDS;  // SAIは4ch刁E
+        return;
     }
+
+    // 書けた分だけ読みポインタを進める
+    uint32_t written_frames = ((uint32_t) written) / (AUDIO_USB_FRAME_CHANNELS * sizeof(int32_t));
+    if (written_frames > frames)
+        written_frames = frames;
+    if (written_frames == 0)
+        return;
+    sai_receive_index += written_frames * AUDIO_RING_FRAME_WORDS;  // SAIは4ch分
 }
 
 // TinyUSB TX完亁E��ールバック - USB ISRコンチE��ストで呼ばれる
@@ -1091,12 +1127,36 @@ bool tud_audio_tx_done_isr(uint8_t rhport, uint16_t n_bytes_sent, uint8_t func_i
 {
     (void) rhport;
     (void) n_bytes_sent;
-    (void) func_id;
     (void) ep_in;
     (void) cur_alt_setting;
+    if (func_id != AUDIO_FUNC_ID_IN)
+    {
+        return true;
+    }
 
     // ISRではフラグを立てるだぁE- 実際の送信はタスクコンチE��ストで行う
     usb_tx_pending = true;
+    return true;
+}
+
+bool tud_audio_rx_done_isr(uint8_t rhport, uint16_t n_bytes_received, uint8_t func_id, uint8_t ep_out, uint8_t cur_alt_setting)
+{
+    (void) rhport;
+    (void) n_bytes_received;
+    (void) ep_out;
+    (void) cur_alt_setting;
+    if (func_id != AUDIO_FUNC_ID_OUT)
+    {
+        return true;
+    }
+
+    usb_rx_pending = true;
+    uint32_t now = HAL_GetTick();
+    if (now != s_last_rx_notify_tick)
+    {
+        s_last_rx_notify_tick = now;
+        audio_task_notify_from_isr();
+    }
     return true;
 }
 
@@ -1104,7 +1164,6 @@ bool tud_audio_tx_done_isr(uint8_t rhport, uint16_t n_bytes_sent, uint8_t func_i
 static volatile uint32_t audio_task_call_count = 0;
 static volatile uint32_t audio_task_last_tick  = 0;
 static volatile uint32_t audio_task_frequency  = 0;  // 呼び出し回数/私E
-
 void audio_task(void)
 {
     // 呼び出し頻度計測
@@ -1163,9 +1222,65 @@ void audio_task(void)
     }
     else
     {
+        bool usb_io_slot = (now != s_last_usb_io_tick);
+        uint32_t usb_io_elapsed_ms = 1U;
+        bool usb_rx_event = false;
+        if (usb_io_slot)
+        {
+            if (s_last_usb_io_tick != 0xFFFFFFFFu)
+            {
+                usb_io_elapsed_ms = now - s_last_usb_io_tick;
+            }
+            s_last_usb_io_tick = now;
+        }
+
+        if (usb_rx_pending)
+        {
+            uint32_t primask = __get_PRIMASK();
+            __disable_irq();
+            if (usb_rx_pending)
+            {
+                usb_rx_pending = false;
+                usb_rx_event   = true;
+            }
+            __set_PRIMASK(primask);
+        }
+
         // Feedback EPがFIFO水位を使って送信レート制御するため、E
         // 毎msで「忁E��E��だけ」読む。�E量吸ぁE�Eし�E水位制御を壊す、E
-        spk_data_size = tud_audio_read(usb_in_buf, audio_out_bytes_per_ms());
+        if (usb_io_slot || usb_rx_event)
+        {
+            uint16_t budget = audio_out_bytes_for_elapsed_ms(usb_io_elapsed_ms);
+            uint16_t min_budget = audio_out_bytes_per_ms();
+            if (budget < min_budget)
+            {
+                budget = min_budget;
+            }
+
+            uint16_t avail = tud_audio_n_available(AUDIO_FUNC_ID_OUT);
+            uint16_t to_read = avail;
+            if (to_read > budget)
+            {
+                to_read = budget;
+            }
+            if (to_read > sizeof(usb_in_buf))
+            {
+                to_read = (uint16_t) sizeof(usb_in_buf);
+            }
+
+            if (to_read > 0U)
+            {
+                spk_data_size = tud_audio_n_read(AUDIO_FUNC_ID_OUT, usb_in_buf, to_read);
+            }
+            else
+            {
+                spk_data_size = 0;
+            }
+        }
+        else
+        {
+            spk_data_size = 0;
+        }
 #if AUDIO_DIAG_LOG
         dbg_usb_read_bytes += spk_data_size;
         if (s_streaming_out && spk_data_size == 0)
@@ -1183,14 +1298,17 @@ void audio_task(void)
 #endif
 
         // USB -> SAI
-        copybuf_usb2ring();
+        if (spk_data_size > 0)
+        {
+            copybuf_usb2ring();
+        }
         copybuf_ring2sai();
 
         // SAI -> USB
         copybuf_sai2ring();
 
         // USB TX送信 (ISRからのフラグ通知、また�Eストリーミング中は常に試衁E
-        if (usb_tx_pending || s_streaming_in)
+        if (usb_io_slot && (usb_tx_pending || s_streaming_in))
         {
             usb_tx_pending = false;
             copybuf_ring2usb_and_send();
@@ -1243,6 +1361,7 @@ void AUDIO_SAI_Reset_ForNewRate(void)
     sai_rx_rng_buf_index = 0;
     sai_transmit_index   = 0;
     sai_receive_index    = 0;
+    s_last_usb_io_tick   = 0xFFFFFFFFu;
     tx_pending_mask      = 0;
     rx_pending_mask      = 0;
 
@@ -1286,6 +1405,7 @@ void AUDIO_SAI_Reset_ForNewRate(void)
         SEGGER_RTT_printf(0, "[SAI] ADAU1466 sample-rate update failed (%lu Hz)\n", (unsigned long) new_hz);
         SEGGER_RTT_printf(0, "[SAI] fallback to ADAU1466 HW re-init\n");
         AUDIO_Init_ADAU1466(new_hz);
+        AUDIO_LoadAndApplyRoutingFromEEPROM();
     }
 #endif
 

@@ -116,6 +116,24 @@ void AUDIO_Init_AK4619(uint32_t hz)
         return;
     }
 
+    // DAC digital volume
+    if (ak4619_write_reg(0x0E, 0x18) != HAL_OK)  // DAC1 Lch 0x18(0dB) -> 0xFF(-inf dB)
+    {
+        return;
+    }
+    if (ak4619_write_reg(0x0F, 0x18) != HAL_OK)  // DAC1 Rch 0x18(0dB) -> 0xFF(-inf dB)
+    {
+        return;
+    }
+    if (ak4619_write_reg(0x10, 0x18) != HAL_OK)  // DAC2 Lch 0x18(0dB) -> 0xFF(-inf dB)
+    {
+        return;
+    }
+    if (ak4619_write_reg(0x11, 0x18) != HAL_OK)  // DAC2 Rch 0x18(0dB) -> 0xFF(-infdB)
+    {
+        return;
+    }
+
     // Power Management
     (void) ak4619_write_reg(0x00, 0x37);  // 00 11 0 11 1
     // HAL_I2C_Mem_Read(&hi2c3, (0b0010001 << 1) | 1, 0x00, I2C_MEMADD_SIZE_8BIT, rcvData, sizeof(rcvData), 10000);
