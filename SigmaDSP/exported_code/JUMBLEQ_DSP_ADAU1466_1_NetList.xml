@@ -111,6 +111,28 @@
       <Algorithm name="SingleSlewExtVol_wet" friendlyname="External Control of the Volume Gain" />
       <Algorithm name="DCInput_dryA" friendlyname="Use this control to test a DC voltage input" />
       <Algorithm name="SingleSlewExtVol_dryA" friendlyname="External Control of the Volume Gain" />
+      <Algorithm name="DVS_SW_1" friendlyname="Allows selecting a stereo input value and route it into variable number of signal paths" />
+      <Algorithm name="DVS_SW_2" friendlyname="Allows selecting a stereo input value and route it into variable number of signal paths" />
+      <Algorithm name="SignalMerger_8" friendlyname="Automatically Lowers Levels Proportional to the number of Inputs">
+        <Link pin="Output" dir="out" link="Link_276" id="Link_276" />
+        <Link pin="Input0" dir="in" link="Link_193" id="Link_280" />
+        <Link pin="Input1" dir="in" link="Link_274" id="Link_284" />
+      </Algorithm>
+      <Algorithm name="SignalMerger_9" friendlyname="Automatically Lowers Levels Proportional to the number of Inputs">
+        <Link pin="Output" dir="out" link="Link_277" id="Link_277" />
+        <Link pin="Input0" dir="in" link="Link_192" id="Link_281" />
+        <Link pin="Input1" dir="in" link="Link_275" id="Link_285" />
+      </Algorithm>
+      <Algorithm name="SignalMerger_10" friendlyname="Automatically Lowers Levels Proportional to the number of Inputs">
+        <Link pin="Output" dir="out" link="Link_278" id="Link_278" />
+        <Link pin="Input0" dir="in" link="Link_196" id="Link_282" />
+        <Link pin="Input1" dir="in" link="Link_272" id="Link_286" />
+      </Algorithm>
+      <Algorithm name="SignalMerger_11" friendlyname="Automatically Lowers Levels Proportional to the number of Inputs">
+        <Link pin="Output" dir="out" link="Link_279" id="Link_279" />
+        <Link pin="Input0" dir="in" link="Link_197" id="Link_283" />
+        <Link pin="Input1" dir="in" link="Link_273" id="Link_292" />
+      </Algorithm>
     </Schematic>
   </Core>
 </IC>

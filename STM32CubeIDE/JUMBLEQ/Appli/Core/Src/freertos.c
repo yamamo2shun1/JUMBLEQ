@@ -42,6 +42,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define TASK_INIT_DONE_TARGET_COUNT 4U  /* USB, Audio, LED, ADC */
 
 /* USER CODE END PD */
 
@@ -56,6 +57,17 @@
 // configAPPLICATION_ALLOCATED_HEAP=1 で有効化
 __attribute__((aligned(8)))
 uint8_t ucHeap[configTOTAL_HEAP_SIZE];
+static volatile uint32_t s_task_init_done_count = 0U;
+
+static void mark_task_init_done(void)
+{
+    taskENTER_CRITICAL();
+    if (s_task_init_done_count < TASK_INIT_DONE_TARGET_COUNT)
+    {
+        s_task_init_done_count++;
+    }
+    taskEXIT_CRITICAL();
+}
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -271,6 +283,7 @@ void StartUSBTask(void* argument)
         .role  = TUSB_ROLE_DEVICE,
         .speed = TUSB_SPEED_HIGH};
     tusb_init(BOARD_TUD_RHPORT, &dev_init);
+    mark_task_init_done();
 
     uint32_t usb_loop_count      = 0;
     uint32_t usb_ready_count     = 0;
@@ -334,6 +347,7 @@ void StartAudioTask(void* argument)
 {
     /* USER CODE BEGIN StartAudioTask */
     (void) argument;
+    audio_control_register_task();
 
     HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, 0);
     HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, 0);
@@ -362,12 +376,13 @@ void StartAudioTask(void* argument)
     HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, 1);
     HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, 1);
     HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, 1);
+    mark_task_init_done();
 
     /* Infinite loop */
     for (;;)
     {
+        (void) ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1));
         audio_task();
-        osDelay(1);
     }
     /* USER CODE END StartAudioTask */
 }
@@ -386,6 +401,7 @@ void StartLEDTask(void* argument)
 
     set_led_color(0, 0, 0, 0);
     renew();
+    mark_task_init_done();
 
     /* Infinite loop */
     for (;;)
@@ -412,6 +428,7 @@ void StartADCTask(void* argument)
 
     start_adc();
     osDelay(100);
+    mark_task_init_done();
 
     /* Infinite loop */
     for (;;)
@@ -433,6 +450,17 @@ void StartOLEDTask(void* argument)
 {
     /* USER CODE BEGIN StartOLEDTask */
     (void) argument;
+
+    OLED_Init();
+    OLED_ShowInitStatus("Waiting tasks...");
+
+    while (s_task_init_done_count < TASK_INIT_DONE_TARGET_COUNT)
+    {
+        osDelay(20);
+    }
+
+    OLED_ShowInitStatus("Init complete");
+    osDelay(200);
 
     OLED_Init();
 

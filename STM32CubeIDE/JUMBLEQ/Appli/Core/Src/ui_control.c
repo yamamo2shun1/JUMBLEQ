@@ -26,22 +26,26 @@ enum
     INPUT_SRC_CH1_PN,
     INPUT_SRC_CH2_LN,
     INPUT_SRC_CH2_PN,
-    INPUT_SRC_USB,
+    INPUT_SRC_USB12,
+    INPUT_SRC_USB34,
+    INPUT_SRC_NONE,
 };
 
 __attribute__((section("noncacheable_buffer"), aligned(32))) uint32_t adc_val[ADC_NUM] = {0};
 
 typedef struct
 {
-    uint8_t  current_ch1_input_type;
-    uint8_t  current_ch2_input_type;
-    uint8_t  current_xfA_assign;
-    uint8_t  current_xfB_assign;
-    uint8_t  current_xfpost_assign;
-    uint8_t  current_xfA_position;
-    uint8_t  current_xfB_position;
-    uint8_t  pot_ch;
-    uint8_t  pot_ch_counter;
+    uint8_t current_ch1_input_type;
+    uint8_t current_ch2_input_type;
+    uint8_t current_xfA_assign;
+    uint8_t current_xfB_assign;
+    uint8_t current_xfpost_assign;
+    uint8_t current_ch1_dvs_enable;
+    uint8_t current_ch2_dvs_enable;
+    uint8_t current_xfA_position;
+    uint8_t current_xfB_position;
+    uint8_t pot_ch;
+    uint8_t pot_ch_counter;
     uint16_t pot_ma_index[POT_NUM];
     uint32_t pot_val_ma[POT_NUM][POT_MA_SIZE];
     uint16_t pot_val[POT_NUM];
@@ -50,11 +54,11 @@ typedef struct
     uint16_t mag_val[MAG_SW_NUM];
     uint32_t mag_offset_sum[MAG_SW_NUM];
     uint16_t mag_offset[MAG_SW_NUM];
-    float    xfade[MAG_SW_NUM];
-    float    xfade_prev[MAG_SW_NUM];
-    float    xfade_min[MAG_SW_NUM];
-    float    xfade_max[MAG_SW_NUM];
-    bool     is_start_audio_control;
+    float xfade[MAG_SW_NUM];
+    float xfade_prev[MAG_SW_NUM];
+    float xfade_min[MAG_SW_NUM];
+    float xfade_max[MAG_SW_NUM];
+    bool is_start_audio_control;
 } ui_control_state_t;
 
 static ui_control_state_t s_ui = {
@@ -62,7 +66,9 @@ static ui_control_state_t s_ui = {
     .current_ch2_input_type = INPUT_TYPE_LINE,
     .current_xfA_assign     = INPUT_SRC_CH2_LN,
     .current_xfB_assign     = INPUT_SRC_CH1_LN,
-    .current_xfpost_assign  = INPUT_SRC_USB,
+    .current_xfpost_assign  = INPUT_SRC_USB12,
+    .current_ch1_dvs_enable = 0U,
+    .current_ch2_dvs_enable = 0U,
     .current_xfA_position   = 127,
     .current_xfB_position   = 127,
     .xfade                  = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},
@@ -129,6 +135,10 @@ char* get_current_input_typeA_str(void)
     case INPUT_SRC_CH1_PN:
     case INPUT_SRC_CH2_PN:
         return "[phono]";
+    case INPUT_SRC_USB12:
+        return "[1/2]";
+    case INPUT_SRC_USB34:
+        return "[3/4]";
     default:
         return "[]";
     }
@@ -144,6 +154,10 @@ char* get_current_input_typeB_str(void)
     case INPUT_SRC_CH1_PN:
     case INPUT_SRC_CH2_PN:
         return "[phono]";
+    case INPUT_SRC_USB12:
+        return "  [1/2]";
+    case INPUT_SRC_USB34:
+        return "  [3/4]";
     default:
         return "     []";
     }
@@ -159,7 +173,8 @@ char* get_current_input_srcA_str(void)
     case INPUT_SRC_CH2_LN:
     case INPUT_SRC_CH2_PN:
         return "A:Ch2";
-    case INPUT_SRC_USB:
+    case INPUT_SRC_USB12:
+    case INPUT_SRC_USB34:
         return "A:USB";
     default:
         return "A:";
@@ -176,7 +191,8 @@ char* get_current_input_srcB_str(void)
     case INPUT_SRC_CH2_LN:
     case INPUT_SRC_CH2_PN:
         return "B:Ch2";
-    case INPUT_SRC_USB:
+    case INPUT_SRC_USB12:
+    case INPUT_SRC_USB34:
         return "B:USB";
     default:
         return "B:";
@@ -195,8 +211,10 @@ char* get_current_input_srcP_str(void)
         return "THRU:Ch2[line]";
     case INPUT_SRC_CH2_PN:
         return "THRU:Ch2[phono]";
-    case INPUT_SRC_USB:
-        return "THRU:USB";
+    case INPUT_SRC_USB12:
+        return "THRU:USB[1/2]";
+    case INPUT_SRC_USB34:
+        return "THRU:USB[3/4]";
     default:
         return "THRU:";
     }
@@ -259,9 +277,12 @@ static uint8_t input_src_from_channel_type(uint8_t input_ch, uint8_t input_type)
         return (input_type == INPUT_TYPE_PHONO) ? INPUT_SRC_CH1_PN : INPUT_SRC_CH1_LN;
     case INPUT_CH2:
         return (input_type == INPUT_TYPE_PHONO) ? INPUT_SRC_CH2_PN : INPUT_SRC_CH2_LN;
-    case INPUT_USB:
+    case INPUT_USB12:
+        return INPUT_SRC_USB12;
+    case INPUT_USB34:
+        return INPUT_SRC_USB34;
     default:
-        return INPUT_SRC_USB;
+        return INPUT_SRC_NONE;
     }
 }
 
@@ -273,9 +294,12 @@ static uint8_t current_input_src_from_channel(uint8_t input_ch)
         return input_src_from_channel_type(INPUT_CH1, s_ui.current_ch1_input_type);
     case INPUT_CH2:
         return input_src_from_channel_type(INPUT_CH2, s_ui.current_ch2_input_type);
-    case INPUT_USB:
+    case INPUT_USB12:
+    	return INPUT_SRC_USB12;
+    case INPUT_USB34:
+    	return INPUT_SRC_USB34;
     default:
-        return INPUT_SRC_USB;
+        return INPUT_SRC_NONE;
     }
 }
 
@@ -327,7 +351,20 @@ static void apply_xf_assign_post(uint8_t input_ch)
     s_ui.current_xfpost_assign = current_input_src_from_channel(input_ch);
 }
 
-static bool ui_control_assign_to_input_ch(uint8_t assign, uint8_t *input_ch)
+static void apply_dvs_state(uint8_t input_ch, bool enable)
+{
+    enable_dvs(input_ch, enable);
+    if (input_ch == INPUT_CH1)
+    {
+        s_ui.current_ch1_dvs_enable = enable ? 1U : 0U;
+    }
+    else if (input_ch == INPUT_CH2)
+    {
+        s_ui.current_ch2_dvs_enable = enable ? 1U : 0U;
+    }
+}
+
+static bool ui_control_assign_to_input_ch(uint8_t assign, uint8_t* input_ch)
 {
     if (input_ch == NULL)
     {
@@ -344,8 +381,11 @@ static bool ui_control_assign_to_input_ch(uint8_t assign, uint8_t *input_ch)
     case INPUT_SRC_CH2_PN:
         *input_ch = INPUT_CH2;
         return true;
-    case INPUT_SRC_USB:
-        *input_ch = INPUT_USB;
+    case INPUT_SRC_USB12:
+        *input_ch = INPUT_USB12;
+        return true;
+    case INPUT_SRC_USB34:
+        *input_ch = INPUT_USB34;
         return true;
     default:
         return false;
@@ -355,8 +395,14 @@ static bool ui_control_assign_to_input_ch(uint8_t assign, uint8_t *input_ch)
 static void set_pot_mux_channel(uint8_t channel)
 {
     static const uint8_t mux_bits[POT_NUM][3] = {
-        {0, 0, 0}, {0, 1, 0}, {0, 0, 1}, {0, 1, 1},
-        {1, 0, 0}, {1, 1, 0}, {1, 0, 1}, {1, 1, 1},
+        {0, 0, 0},
+        {0, 1, 0},
+        {0, 0, 1},
+        {0, 1, 1},
+        {1, 0, 0},
+        {1, 1, 0},
+        {1, 0, 1},
+        {1, 1, 1},
     };
 
     if (channel >= POT_NUM)
@@ -426,7 +472,7 @@ static void ui_control_process_pot(void)
     else if (s_ui.pot_ch_counter >= POT_CH_SEL_WAIT)
     {
         s_ui.pot_val_ma[s_ui.pot_ch][s_ui.pot_ma_index[s_ui.pot_ch]] = read_pot_sample_from_adc(s_ui.pot_ch, adc_val[6]);
-        s_ui.pot_ma_index[s_ui.pot_ch] = (s_ui.pot_ma_index[s_ui.pot_ch] + 1) % POT_MA_SIZE;
+        s_ui.pot_ma_index[s_ui.pot_ch]                               = (s_ui.pot_ma_index[s_ui.pot_ch] + 1) % POT_MA_SIZE;
 
         float pot_sum = 0.0f;
         for (int j = 0; j < POT_MA_SIZE; j++)
@@ -606,9 +652,9 @@ typedef void (*midi_program_handler_t)(uint8_t arg);
 
 typedef struct
 {
-    uint8_t                command;
+    uint8_t command;
     midi_program_handler_t handler;
-    uint8_t                arg;
+    uint8_t arg;
 } midi_program_cmd_t;
 
 static void midi_program_set_input_type(uint8_t arg)
@@ -633,6 +679,13 @@ static void midi_program_apply_xf_post(uint8_t input_ch)
     apply_xf_assign_post(input_ch);
 }
 
+static void midi_program_enable_dvs(uint8_t arg)
+{
+    uint8_t input_ch = (arg >> 4) & 0x0F;
+    bool enable      = ((arg & 0x01U) != 0U);
+    apply_dvs_state(input_ch, enable);
+}
+
 static bool ui_control_dispatch_midi_program_change(uint8_t program)
 {
     if (program == 127U)
@@ -643,13 +696,7 @@ static bool ui_control_dispatch_midi_program_change(uint8_t program)
         if (EEPROM_SaveConfig(&hi2c2, &cfg) == HAL_OK)
         {
             led_notify_save_success();
-            SEGGER_RTT_printf(0,
-                              "EEPROM config saved by MIDI PC127: CH1=%u CH2=%u XFA=%u XFB=%u XFP=%u\r\n",
-                              (unsigned)cfg.current_ch1_input_type,
-                              (unsigned)cfg.current_ch2_input_type,
-                              (unsigned)cfg.current_xfA_assign,
-                              (unsigned)cfg.current_xfB_assign,
-                              (unsigned)cfg.current_xfpost_assign);
+            SEGGER_RTT_printf(0, "EEPROM config saved by MIDI PC127: CH1=%u CH2=%u XFA=%u XFB=%u XFP=%u\r\n", (unsigned) cfg.current_ch1_input_type, (unsigned) cfg.current_ch2_input_type, (unsigned) cfg.current_xfA_assign, (unsigned) cfg.current_xfB_assign, (unsigned) cfg.current_xfpost_assign);
         }
         else
         {
@@ -659,19 +706,26 @@ static bool ui_control_dispatch_midi_program_change(uint8_t program)
     }
 
     static const midi_program_cmd_t commands[] = {
-        {CH1_LINE, midi_program_set_input_type, (uint8_t) ((INPUT_CH1 << 4) | INPUT_TYPE_LINE)},
-        {CH1_PHONO, midi_program_set_input_type, (uint8_t) ((INPUT_CH1 << 4) | INPUT_TYPE_PHONO)},
-        {CH2_LINE, midi_program_set_input_type, (uint8_t) ((INPUT_CH2 << 4) | INPUT_TYPE_LINE)},
-        {CH2_PHONO, midi_program_set_input_type, (uint8_t) ((INPUT_CH2 << 4) | INPUT_TYPE_PHONO)},
-        {XF_ASSIGN_A_CH1, midi_program_apply_xf_a, INPUT_CH1},
-        {XF_ASSIGN_A_CH2, midi_program_apply_xf_a, INPUT_CH2},
-        {XF_ASSIGN_A_USB, midi_program_apply_xf_a, INPUT_USB},
-        {XF_ASSIGN_B_CH1, midi_program_apply_xf_b, INPUT_CH1},
-        {XF_ASSIGN_B_CH2, midi_program_apply_xf_b, INPUT_CH2},
-        {XF_ASSIGN_B_USB, midi_program_apply_xf_b, INPUT_USB},
-        {XF_ASSIGN_POST_CH1, midi_program_apply_xf_post, INPUT_CH1},
-        {XF_ASSIGN_POST_CH2, midi_program_apply_xf_post, INPUT_CH2},
-        {XF_ASSIGN_POST_USB, midi_program_apply_xf_post, INPUT_USB},
+        {CH1_LINE,             midi_program_set_input_type, (uint8_t) ((INPUT_CH1 << 4) | INPUT_TYPE_LINE) },
+        {CH1_PHONO,            midi_program_set_input_type, (uint8_t) ((INPUT_CH1 << 4) | INPUT_TYPE_PHONO)},
+        {CH2_LINE,             midi_program_set_input_type, (uint8_t) ((INPUT_CH2 << 4) | INPUT_TYPE_LINE) },
+        {CH2_PHONO,            midi_program_set_input_type, (uint8_t) ((INPUT_CH2 << 4) | INPUT_TYPE_PHONO)},
+        {XF_ASSIGN_A_CH1,      midi_program_apply_xf_a,     INPUT_CH1                                      },
+        {XF_ASSIGN_A_CH2,      midi_program_apply_xf_a,     INPUT_CH2                                      },
+        {XF_ASSIGN_A_USB12,    midi_program_apply_xf_a,     INPUT_USB12                                    },
+        {XF_ASSIGN_A_USB34,    midi_program_apply_xf_a,     INPUT_USB34                                    },
+        {XF_ASSIGN_B_CH1,      midi_program_apply_xf_b,     INPUT_CH1                                      },
+        {XF_ASSIGN_B_CH2,      midi_program_apply_xf_b,     INPUT_CH2                                      },
+        {XF_ASSIGN_B_USB12,    midi_program_apply_xf_b,     INPUT_USB12                                    },
+        {XF_ASSIGN_B_USB34,    midi_program_apply_xf_b,     INPUT_USB34                                    },
+        {XF_ASSIGN_POST_CH1,   midi_program_apply_xf_post,  INPUT_CH1                                      },
+        {XF_ASSIGN_POST_CH2,   midi_program_apply_xf_post,  INPUT_CH2                                      },
+        {XF_ASSIGN_POST_USB12, midi_program_apply_xf_post,  INPUT_USB12                                    },
+        {XF_ASSIGN_POST_USB34, midi_program_apply_xf_post,  INPUT_USB34                                    },
+        {CH1_DVS_DISABLE,      midi_program_enable_dvs,     (uint8_t) ((INPUT_CH1 << 4) | 0U)              },
+        {CH1_DVS_ENABLE,       midi_program_enable_dvs,     (uint8_t) ((INPUT_CH1 << 4) | 1U)              },
+        {CH2_DVS_DISABLE,      midi_program_enable_dvs,     (uint8_t) ((INPUT_CH2 << 4) | 0U)              },
+        {CH2_DVS_ENABLE,       midi_program_enable_dvs,     (uint8_t) ((INPUT_CH2 << 4) | 1U)              },
     };
 
     for (uint32_t i = 0; i < TU_ARRAY_SIZE(commands); i++)
@@ -729,7 +783,7 @@ bool is_started_audio_control(void)
     return s_ui.is_start_audio_control;
 }
 
-void ui_control_get_persist_state(UI_ControlPersistState_t *state)
+void ui_control_get_persist_state(UI_ControlPersistState_t* state)
 {
     if (state == NULL)
     {
@@ -741,9 +795,11 @@ void ui_control_get_persist_state(UI_ControlPersistState_t *state)
     state->current_xfA_assign     = s_ui.current_xfA_assign;
     state->current_xfB_assign     = s_ui.current_xfB_assign;
     state->current_xfpost_assign  = s_ui.current_xfpost_assign;
+    state->current_ch1_dvs_enable = s_ui.current_ch1_dvs_enable;
+    state->current_ch2_dvs_enable = s_ui.current_ch2_dvs_enable;
 }
 
-bool ui_control_apply_persist_state(const UI_ControlPersistState_t *state)
+bool ui_control_apply_persist_state(const UI_ControlPersistState_t* state)
 {
     uint8_t input_ch_a;
     uint8_t input_ch_b;
@@ -755,7 +811,9 @@ bool ui_control_apply_persist_state(const UI_ControlPersistState_t *state)
     }
 
     if ((state->current_ch1_input_type > INPUT_TYPE_PHONO) ||
-        (state->current_ch2_input_type > INPUT_TYPE_PHONO))
+        (state->current_ch2_input_type > INPUT_TYPE_PHONO) ||
+        (state->current_ch1_dvs_enable > 1U) ||
+        (state->current_ch2_dvs_enable > 1U))
     {
         return false;
     }
@@ -772,6 +830,8 @@ bool ui_control_apply_persist_state(const UI_ControlPersistState_t *state)
     apply_xf_assign_a(input_ch_a);
     apply_xf_assign_b(input_ch_b);
     apply_xf_assign_post(input_ch_post);
+    apply_dvs_state(INPUT_CH1, state->current_ch1_dvs_enable != 0U);
+    apply_dvs_state(INPUT_CH2, state->current_ch2_dvs_enable != 0U);
 
     return true;
 }
@@ -807,7 +867,9 @@ void ui_control_reset_state(void)
     s_ui.current_ch2_input_type = INPUT_TYPE_LINE;
     s_ui.current_xfA_assign     = INPUT_SRC_CH2_LN;
     s_ui.current_xfB_assign     = INPUT_SRC_CH1_LN;
-    s_ui.current_xfpost_assign  = INPUT_SRC_USB;
+    s_ui.current_xfpost_assign  = INPUT_SRC_USB12;
+    s_ui.current_ch1_dvs_enable = 0U;
+    s_ui.current_ch2_dvs_enable = 0U;
     s_ui.current_xfA_position   = 127;
     s_ui.current_xfB_position   = 127;
 

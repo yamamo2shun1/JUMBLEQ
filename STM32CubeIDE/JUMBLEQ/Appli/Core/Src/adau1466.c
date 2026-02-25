@@ -342,6 +342,68 @@ void select_input_type(uint8_t ch, uint8_t type)
     }
 }
 
+void disable_ch1_dvs()
+{
+    ADI_REG_TYPE Mode0_0[4] = {0x01, 0x00, 0x00, 0x00};
+    ADI_REG_TYPE Mode0_1[4] = {0x00, 0x00, 0x00, 0x00};
+
+    SIGMA_WRITE_REGISTER_BLOCK_IT(DEVICE_ADDR_ADAU146XSCHEMATIC_1, MOD_DVS_SW_1_INDEX_CHANNEL0_ADDR, 4, Mode0_0);
+    SIGMA_WRITE_REGISTER_BLOCK_IT(DEVICE_ADDR_ADAU146XSCHEMATIC_1, MOD_DVS_SW_1_INDEX_CHANNEL1_ADDR, 4, Mode0_1);
+}
+
+void enable_ch1_dvs()
+{
+    ADI_REG_TYPE Mode0_0[4] = {0x00, 0x00, 0x00, 0x00};
+    ADI_REG_TYPE Mode0_1[4] = {0x01, 0x00, 0x00, 0x00};
+
+    SIGMA_WRITE_REGISTER_BLOCK_IT(DEVICE_ADDR_ADAU146XSCHEMATIC_1, MOD_DVS_SW_1_INDEX_CHANNEL0_ADDR, 4, Mode0_0);
+    SIGMA_WRITE_REGISTER_BLOCK_IT(DEVICE_ADDR_ADAU146XSCHEMATIC_1, MOD_DVS_SW_1_INDEX_CHANNEL1_ADDR, 4, Mode0_1);
+}
+
+void disable_ch2_dvs()
+{
+    ADI_REG_TYPE Mode0_0[4] = {0x01, 0x00, 0x00, 0x00};
+    ADI_REG_TYPE Mode0_1[4] = {0x00, 0x00, 0x00, 0x00};
+
+    SIGMA_WRITE_REGISTER_BLOCK_IT(DEVICE_ADDR_ADAU146XSCHEMATIC_1, MOD_DVS_SW_2_INDEX_CHANNEL0_ADDR, 4, Mode0_0);
+    SIGMA_WRITE_REGISTER_BLOCK_IT(DEVICE_ADDR_ADAU146XSCHEMATIC_1, MOD_DVS_SW_2_INDEX_CHANNEL1_ADDR, 4, Mode0_1);
+}
+
+void enable_ch2_dvs()
+{
+    ADI_REG_TYPE Mode0_0[4] = {0x00, 0x00, 0x00, 0x00};
+    ADI_REG_TYPE Mode0_1[4] = {0x01, 0x00, 0x00, 0x00};
+
+    SIGMA_WRITE_REGISTER_BLOCK_IT(DEVICE_ADDR_ADAU146XSCHEMATIC_1, MOD_DVS_SW_2_INDEX_CHANNEL0_ADDR, 4, Mode0_0);
+    SIGMA_WRITE_REGISTER_BLOCK_IT(DEVICE_ADDR_ADAU146XSCHEMATIC_1, MOD_DVS_SW_2_INDEX_CHANNEL1_ADDR, 4, Mode0_1);
+}
+
+void enable_dvs(uint8_t ch, bool enable)
+{
+    if (ch == INPUT_CH1)
+    {
+        if (enable)
+        {
+            enable_ch1_dvs();
+        }
+        else
+        {
+            disable_ch1_dvs();
+        }
+    }
+    else if (ch == INPUT_CH2)
+    {
+        if (enable)
+        {
+            enable_ch2_dvs();
+        }
+        else
+        {
+            disable_ch2_dvs();
+        }
+    }
+}
+
 void select_xf_assignA_source(uint8_t ch)
 {
     ADI_REG_TYPE Mode0[4] = {0x00, 0x00, 0x00, 0x00};
@@ -354,8 +416,11 @@ void select_xf_assignA_source(uint8_t ch)
     case INPUT_CH2:
         Mode0[3] = 0x01;
         break;
-    case INPUT_USB:
+    case INPUT_USB12:
         Mode0[3] = 0x02;
+        break;
+    case INPUT_USB34:
+        Mode0[3] = 0x03;
         break;
     }
 
@@ -374,8 +439,11 @@ void select_xf_assignB_source(uint8_t ch)
     case INPUT_CH2:
         Mode0[3] = 0x01;
         break;
-    case INPUT_USB:
+    case INPUT_USB12:
         Mode0[3] = 0x02;
+        break;
+    case INPUT_USB34:
+        Mode0[3] = 0x03;
         break;
     }
 
@@ -394,8 +462,11 @@ void select_xf_assignPost_source(uint8_t ch)
     case INPUT_CH2:
         Mode0[3] = 0x01;
         break;
-    case INPUT_USB:
+    case INPUT_USB12:
         Mode0[3] = 0x02;
+        break;
+    case INPUT_USB34:
+        Mode0[3] = 0x03;
         break;
     }
 

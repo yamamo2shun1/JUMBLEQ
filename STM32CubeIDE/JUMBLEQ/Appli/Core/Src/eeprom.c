@@ -56,10 +56,10 @@ void EEPROM_ConfigSetDefaults(EEPROM_DeviceConfig_t *cfg)
     cfg->current_ch2_input_type = 0U; /* INPUT_TYPE_LINE */
     cfg->current_xfA_assign     = 2U; /* INPUT_SRC_CH2_LN */
     cfg->current_xfB_assign     = 0U; /* INPUT_SRC_CH1_LN */
-    cfg->current_xfpost_assign  = 4U; /* INPUT_SRC_USB */
-    cfg->reserved[0]    = 0U;
-    cfg->reserved[1]    = 0U;
-    cfg->reserved[2]    = 0U;
+    cfg->current_xfpost_assign  = 4U; /* INPUT_SRC_USB12 */
+    cfg->current_ch1_dvs_enable = 0U; /* disabled */
+    cfg->current_ch2_dvs_enable = 0U; /* disabled */
+    cfg->reserved[0]            = 0U;
 }
 
 void EEPROM_ConfigCaptureCurrent(EEPROM_DeviceConfig_t *cfg)
@@ -77,9 +77,9 @@ void EEPROM_ConfigCaptureCurrent(EEPROM_DeviceConfig_t *cfg)
     cfg->current_xfA_assign     = state.current_xfA_assign;
     cfg->current_xfB_assign     = state.current_xfB_assign;
     cfg->current_xfpost_assign  = state.current_xfpost_assign;
+    cfg->current_ch1_dvs_enable = state.current_ch1_dvs_enable;
+    cfg->current_ch2_dvs_enable = state.current_ch2_dvs_enable;
     cfg->reserved[0]            = 0U;
-    cfg->reserved[1]            = 0U;
-    cfg->reserved[2]            = 0U;
 }
 
 HAL_StatusTypeDef EEPROM_CheckConnection(I2C_HandleTypeDef *hi2c)

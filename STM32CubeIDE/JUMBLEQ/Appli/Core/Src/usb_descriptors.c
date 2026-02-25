@@ -63,7 +63,7 @@ static tusb_desc_device_t const desc_device =
 
         .idVendor  = 0x31BF,
         .idProduct = USB_PID,
-        .bcdDevice = 0x0100,
+        .bcdDevice = 0x0103,
 
         .iManufacturer = 0x01,
         .iProduct      = 0x02,
@@ -81,53 +81,58 @@ uint8_t const* tud_descriptor_device_cb(void)
 //--------------------------------------------------------------------+
 // Configuration Descriptor
 //--------------------------------------------------------------------+
-#define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + CFG_TUD_AUDIO * TUD_AUDIO_AUDIOIF_STEREO_DESC_LEN)
-
 #if CFG_TUSB_MCU == OPT_MCU_LPC175X_6X || CFG_TUSB_MCU == OPT_MCU_LPC177X_8X || CFG_TUSB_MCU == OPT_MCU_LPC40XX
     // LPC 17xx and 40xx endpoint type (bulk/interrupt/iso) are fixed by its number
     // 0 control, 1 In, 2 Bulk, 3 Iso, 4 In etc ...
-    #define EPNUM_AUDIO_IN  0x03
-    #define EPNUM_AUDIO_OUT 0x03
-    #define EPNUM_AUDIO_FB  0x04
-    #define EPNUM_AUDIO_INT 0x01
+    #define EPNUM_AUDIO_OUT_F1 0x03
+    #define EPNUM_AUDIO_FB_F1  0x04
+    #define EPNUM_AUDIO_INT_F1 0x01
+    #define EPNUM_AUDIO_IN_F2  0x05
+    #define EPNUM_AUDIO_INT_F2 0x06
 
 #elif CFG_TUSB_MCU == OPT_MCU_CXD56
     // CXD56 USB driver has fixed endpoint type (bulk/interrupt/iso) and direction (IN/OUT) by its number
     // 0 control (IN/OUT), 1 Bulk (IN), 2 Bulk (OUT), 3 In (IN), 4 Bulk (IN), 5 Bulk (OUT), 6 In (IN)
-    #define EPNUM_AUDIO_IN  0x01
-    #define EPNUM_AUDIO_OUT 0x02
-    #define EPNUM_AUDIO_INT 0x03
+    #define EPNUM_AUDIO_OUT_F1 0x02
+    #define EPNUM_AUDIO_FB_F1  0x03
+    #define EPNUM_AUDIO_INT_F1 0x03
+    #define EPNUM_AUDIO_IN_F2  0x01
+    #define EPNUM_AUDIO_INT_F2 0x06
 
 #elif CFG_TUSB_MCU == OPT_MCU_NRF5X
     // ISO endpoints for NRF5x are fixed to 0x08 (0x88)
-    #define EPNUM_AUDIO_IN  0x08
-    #define EPNUM_AUDIO_OUT 0x08
-    #define EPNUM_AUDIO_INT 0x01
+    #define EPNUM_AUDIO_OUT_F1 0x08
+    #define EPNUM_AUDIO_FB_F1  0x01
+    #define EPNUM_AUDIO_INT_F1 0x02
+    #define EPNUM_AUDIO_IN_F2  0x08
+    #define EPNUM_AUDIO_INT_F2 0x03
 
 #elif defined(TUD_ENDPOINT_ONE_DIRECTION_ONLY)
     // MCUs that don't support a same endpoint number with different direction IN and OUT defined in tusb_mcu.h
     //    e.g EP1 OUT & EP1 IN cannot exist together
-    #define EPNUM_AUDIO_IN  0x01
-    #define EPNUM_AUDIO_OUT 0x02
-    #define EPNUM_AUDIO_FB  0x06
-    #define EPNUM_AUDIO_INT 0x03
+    #define EPNUM_AUDIO_OUT_F1 0x02
+    #define EPNUM_AUDIO_FB_F1  0x06
+    #define EPNUM_AUDIO_INT_F1 0x03
+    #define EPNUM_AUDIO_IN_F2  0x01
+    #define EPNUM_AUDIO_INT_F2 0x05
 
 #else
-    #define EPNUM_AUDIO_IN  0x01
-    #define EPNUM_AUDIO_OUT 0x01
-    #define EPNUM_AUDIO_FB  0x03
-    #define EPNUM_AUDIO_INT 0x02
+    #define EPNUM_AUDIO_OUT_F1 0x01
+    #define EPNUM_AUDIO_FB_F1  0x03
+    #define EPNUM_AUDIO_INT_F1 0x02
+    #define EPNUM_AUDIO_IN_F2  0x04
+    #define EPNUM_AUDIO_INT_F2 0x05
 #endif
 
 #if CFG_TUD_MIDI
     // MIDI uses Bulk endpoints. Pick endpoint numbers that don't overlap with audio.
     // Note: some MCUs cannot use same endpoint number for IN and OUT (TUD_ENDPOINT_ONE_DIRECTION_ONLY).
     #if defined(TUD_ENDPOINT_ONE_DIRECTION_ONLY)
-        #define EPNUM_MIDI_OUT 0x04
-        #define EPNUM_MIDI_IN  0x05
+        #define EPNUM_MIDI_OUT 0x07
+        #define EPNUM_MIDI_IN  0x08
     #else
-        #define EPNUM_MIDI_OUT 0x04
-        #define EPNUM_MIDI_IN  0x04
+        #define EPNUM_MIDI_OUT 0x06
+        #define EPNUM_MIDI_IN  0x06
     #endif
 
     // MIDI Bulk max packet size depends on speed: FS=64, HS=512.
@@ -135,15 +140,18 @@ uint8_t const* tud_descriptor_device_cb(void)
     #define MIDI_EP_SIZE_HS 512
 #endif
 
-#define CONFIG_UAC2_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_AUDIO20_AUDIOIF_STEREO_DESC_LEN + (CFG_TUD_MIDI ? TUD_MIDI_DESC_LEN : 0))
+#define CONFIG_UAC2_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_AUDIO20_SPK_OUT_DESC_LEN + TUD_AUDIO20_MIC_IN_DESC_LEN + (CFG_TUD_MIDI ? TUD_MIDI_DESC_LEN : 0))
 
 uint8_t const desc_uac2_configuration[] =
     {
         // Config number, interface count, string index, total length, attribute, power in mA
         TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_UAC2_TOTAL_LEN, 0x00, 500),
 
-        // String index OUT, String index IN, EP Out & EP In address, EP Interrupt address
-        TUD_AUDIO20_AUDIOIF_STEREO_DESCRIPTOR(STRID_AUDIO_OUT, STRID_AUDIO_IN, EPNUM_AUDIO_OUT, EPNUM_AUDIO_IN | 0x80, EPNUM_AUDIO_FB | 0x80, EPNUM_AUDIO_INT | 0x80),
+        // Function 1: Speaker OUT
+        TUD_AUDIO20_SPK_OUT_DESCRIPTOR(ITF_NUM_AUDIO_CONTROL_OUT, ITF_NUM_AUDIO_STREAMING_STEREO_OUT, STRID_AUDIO_OUT, EPNUM_AUDIO_OUT_F1, EPNUM_AUDIO_FB_F1 | 0x80, EPNUM_AUDIO_INT_F1 | 0x80),
+
+        // Function 2: Mic IN
+        TUD_AUDIO20_MIC_IN_DESCRIPTOR(ITF_NUM_AUDIO_CONTROL_IN, ITF_NUM_AUDIO_STREAMING_STEREO_IN, STRID_AUDIO_IN, EPNUM_AUDIO_IN_F2 | 0x80, EPNUM_AUDIO_INT_F2 | 0x80),
 
     #if CFG_TUD_MIDI
 
@@ -213,8 +221,8 @@ static char const* string_desc_arr[] =
         "Yamamoto Works Ltd.", // 1: Manufacturer
         "JUMBLEQ", // 2: Product
         NULL, // 3: Serials will use unique ID if possible
-        "JUMBLEQ Stereo OUT", // 4: Function
-        "JUMBLEQ Stereo IN", // 5: Function
+        "JUMBLEQ Audio OUT", // 4: Function
+        "JUMBLEQ Audio IN", // 5: Function
 #if CFG_TUD_MIDI
         "JUMBLEQ MIDI", // 6: Function
 #endif
