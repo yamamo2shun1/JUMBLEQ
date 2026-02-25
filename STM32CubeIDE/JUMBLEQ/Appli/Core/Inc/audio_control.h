@@ -15,10 +15,10 @@
 // 96kHz再生の安定性を優先し、TX/RING は余裕を持たせる。
 // 48kHz時のレイテンシー目安: SAI_RNG_BUF_SIZE / sample_rate * 1000 [ms]
 #define SAI_RNG_BUF_SIZE 8192  // リングバッファ（2のべき乗必須）
-#define SAI_TX_BUF_SIZE  1024  // 4ch DMAバッファ (USB->SAI)
-#define SAI_RX_BUF_SIZE  1024  // 4ch DMAバッファ (SAI->USB)
-// TXリングの目標水位（word単位）。小さくするほど低レイテンシーだが耐ジッタ性は下がる。
-#define SAI_TX_TARGET_LEVEL_WORDS SAI_TX_BUF_SIZE
+#define SAI_TX_BUF_SIZE  512  // 4ch DMAバッファ (USB->SAI)
+#define SAI_RX_BUF_SIZE  512  // 4ch DMAバッファ (SAI->USB)
+// TXリングの目標水位（word単位）。まずは低リスクに half-buffer へ下げて遅延を短縮。
+#define SAI_TX_TARGET_LEVEL_WORDS (SAI_TX_BUF_SIZE / 2)
 
 #define POT_CH_SEL_WAIT           1
 #define ADC_NUM                   8
@@ -45,6 +45,7 @@ void AUDIO_Init_ADAU1466(uint32_t hz);
 void start_sai(void);
 
 void AUDIO_SAI_Reset_ForNewRate(void);
+void audio_control_register_task(void);
 void audio_task(void);
 
 #endif /* INC_AUDIO_CONTROL_H_ */

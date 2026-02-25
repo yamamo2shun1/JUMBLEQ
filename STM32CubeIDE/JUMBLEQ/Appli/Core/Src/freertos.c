@@ -347,6 +347,7 @@ void StartAudioTask(void* argument)
 {
     /* USER CODE BEGIN StartAudioTask */
     (void) argument;
+    audio_control_register_task();
 
     HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, 0);
     HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, 0);
@@ -380,8 +381,8 @@ void StartAudioTask(void* argument)
     /* Infinite loop */
     for (;;)
     {
+        (void) ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1));
         audio_task();
-        osDelay(1);
     }
     /* USER CODE END StartAudioTask */
 }
