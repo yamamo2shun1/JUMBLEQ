@@ -1,0 +1,19 @@
+# Persistent overrides for auto-generated Debug/Release makefiles.
+# This file is included by <config>/makefile as "../makefile.defs".
+
+# Release makefile in this project sometimes misses these includes.
+# If HAL/ExtMem objects are already present (Debug), do nothing.
+ifneq ($(filter ./Drivers/STM32H7RSxx_HAL_Driver/stm32h7rsxx_hal.o,$(OBJS)),)
+  # Already included by generated makefile.
+else
+  -include Drivers/STM32H7RSxx_HAL_Driver/subdir.mk
+  -include Middlewares/ST/STM32_ExtMem_Manager/subdir.mk
+endif
+
+# Regenerate objects.list from current OBJS every build.
+# Link step in generated makefile uses @"objects.list".
+objects.list: FORCE $(OBJS)
+	@powershell -NoProfile -ExecutionPolicy Bypass -File ../tools/update_objects_list.ps1 -ObjectsList "$@"
+
+.PHONY: FORCE
+FORCE:
