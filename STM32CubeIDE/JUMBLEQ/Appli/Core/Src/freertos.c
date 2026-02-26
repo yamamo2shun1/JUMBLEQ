@@ -462,8 +462,6 @@ void StartOLEDTask(void* argument)
     OLED_ShowInitStatus("Init complete");
     osDelay(200);
 
-    OLED_Init();
-
     /* Infinite loop */
     for (;;)
     {
