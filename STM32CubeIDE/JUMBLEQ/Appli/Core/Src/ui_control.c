@@ -220,6 +220,50 @@ char* get_current_input_srcP_str(void)
     }
 }
 
+uint8_t get_current_input_srcA_channel(void)
+{
+    switch (s_ui.current_xfA_assign)
+    {
+    case INPUT_SRC_CH1_LN:
+    case INPUT_SRC_CH1_PN:
+    case INPUT_SRC_USB12:
+        return 1U;
+    case INPUT_SRC_CH2_LN:
+    case INPUT_SRC_CH2_PN:
+    case INPUT_SRC_USB34:
+        return 2U;
+    default:
+        return 0U;
+    }
+}
+
+uint8_t get_current_input_srcB_channel(void)
+{
+    switch (s_ui.current_xfB_assign)
+    {
+    case INPUT_SRC_CH1_LN:
+    case INPUT_SRC_CH1_PN:
+    case INPUT_SRC_USB12:
+        return 1U;
+    case INPUT_SRC_CH2_LN:
+    case INPUT_SRC_CH2_PN:
+    case INPUT_SRC_USB34:
+        return 2U;
+    default:
+        return 0U;
+    }
+}
+
+bool get_current_ch1_dvs_enabled(void)
+{
+    return (s_ui.current_ch1_dvs_enable != 0U);
+}
+
+bool get_current_ch2_dvs_enabled(void)
+{
+    return (s_ui.current_ch2_dvs_enable != 0U);
+}
+
 void ui_control_dma_adc_cplt(DMA_HandleTypeDef* hdma)
 {
     (void) hdma;
