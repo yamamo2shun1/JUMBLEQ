@@ -26,6 +26,9 @@
 #include "stm32h7rsxx_hal.h"
 #include "tusb.h"
 #include "usb_descriptors.h"
+#include "app_version.h"
+
+#include <stdio.h>
 
 #define USB_PID 0x0011
 
@@ -63,7 +66,7 @@ static tusb_desc_device_t const desc_device =
 
         .idVendor  = 0x31BF,
         .idProduct = USB_PID,
-        .bcdDevice = 0x0103,
+        .bcdDevice = APP_VERSION_USB_BCD,
 
         .iManufacturer = 0x01,
         .iProduct      = 0x02,
@@ -153,12 +156,12 @@ uint8_t const desc_uac2_configuration[] =
         // Function 2: Mic IN
         TUD_AUDIO20_MIC_IN_DESCRIPTOR(ITF_NUM_AUDIO_CONTROL_IN, ITF_NUM_AUDIO_STREAMING_STEREO_IN, STRID_AUDIO_IN, EPNUM_AUDIO_IN_F2 | 0x80, EPNUM_AUDIO_INT_F2 | 0x80),
 
-    #if CFG_TUD_MIDI
+#if CFG_TUD_MIDI
 
         // MIDI (Audio Class 1.0, MIDIStreaming)
         TUD_MIDI_DESCRIPTOR(ITF_NUM_MIDI, STRID_MIDI, EPNUM_MIDI_OUT, (uint8_t) (EPNUM_MIDI_IN | 0x80), MIDI_EP_SIZE_HS),
 
-    #endif
+#endif
 };
 
 TU_VERIFY_STATIC(sizeof(desc_uac2_configuration) == CONFIG_UAC2_TOTAL_LEN, "Incorrect size");

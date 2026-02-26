@@ -8,6 +8,7 @@
 #include "main_oled.h"
 #include "sub_oled.h"
 #include "oled_control.h"
+#include "app_version.h"
 
 #include "audio_control.h"
 #include "ssd1306_fonts.h"
@@ -92,6 +93,30 @@ static const char* nonnull_str(const char* text)
     return (text == NULL) ? "" : text;
 }
 
+static uint16_t oled_text_width_px(SSD1306_Font_t const* font, const char* text)
+{
+    if ((font == NULL) || (text == NULL))
+    {
+        return 0U;
+    }
+
+    uint16_t width = 0U;
+    for (size_t i = 0; text[i] != '\0'; i++)
+    {
+        char c = text[i];
+        if ((font->char_width != NULL) && (c >= 32) && (c <= 126))
+        {
+            width = (uint16_t) (width + font->char_width[(uint8_t) c - 32U]);
+        }
+        else
+        {
+            width = (uint16_t) (width + font->width);
+        }
+    }
+
+    return width;
+}
+
 static bool wait_main_oled_ready(uint32_t timeout_ms)
 {
     uint32_t start = HAL_GetTick();
@@ -119,8 +144,10 @@ void OLED_Init(void)
     sub_oled_Init();
     sub_oled_SetCursor(5, 16);
     sub_oled_WriteString("JUMBLEQ", Font_16x24, White);
-    sub_oled_SetCursor(48, 40);
-    sub_oled_WriteString("ver0.9", Font_11x18, White);
+    const uint16_t ver_width = oled_text_width_px(&Font_11x18, APP_VERSION_OLED_STR);
+    const uint8_t ver_x      = (ver_width < SUB_OLED_WIDTH) ? (uint8_t) (SUB_OLED_WIDTH - ver_width) : 0U;
+    sub_oled_SetCursor(ver_x, 40);
+    sub_oled_WriteString(APP_VERSION_OLED_STR, Font_11x18, White);
     sub_oled_UpdateScreen();
 }
 
