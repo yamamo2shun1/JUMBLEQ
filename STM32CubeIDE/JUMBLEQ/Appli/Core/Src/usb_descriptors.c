@@ -27,6 +27,8 @@
 #include "tusb.h"
 #include "usb_descriptors.h"
 
+#include <stdio.h>
+
 #define USB_PID 0x0011
 
 // String Descriptor Index
@@ -153,12 +155,12 @@ uint8_t const desc_uac2_configuration[] =
         // Function 2: Mic IN
         TUD_AUDIO20_MIC_IN_DESCRIPTOR(ITF_NUM_AUDIO_CONTROL_IN, ITF_NUM_AUDIO_STREAMING_STEREO_IN, STRID_AUDIO_IN, EPNUM_AUDIO_IN_F2 | 0x80, EPNUM_AUDIO_INT_F2 | 0x80),
 
-    #if CFG_TUD_MIDI
+#if CFG_TUD_MIDI
 
         // MIDI (Audio Class 1.0, MIDIStreaming)
         TUD_MIDI_DESCRIPTOR(ITF_NUM_MIDI, STRID_MIDI, EPNUM_MIDI_OUT, (uint8_t) (EPNUM_MIDI_IN | 0x80), MIDI_EP_SIZE_HS),
 
-    #endif
+#endif
 };
 
 TU_VERIFY_STATIC(sizeof(desc_uac2_configuration) == CONFIG_UAC2_TOTAL_LEN, "Incorrect size");
