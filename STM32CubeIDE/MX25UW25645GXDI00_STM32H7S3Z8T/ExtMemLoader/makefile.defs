@@ -1,0 +1,11 @@
+# Keep the auto-generated makefile untouched and inject missing object groups here.
+# CubeIDE currently regenerates sources.mk/objects.list with Core/Src only, so we
+# include generated subdir.mk files and pass only non-core objects via USER_OBJS.
+
+CORE_OBJS := $(OBJS)
+
+-include Drivers/STM32H7RSxx_HAL_Driver/subdir.mk
+-include Middlewares/ST/STM32_ExtMem_Loader/subdir.mk
+-include Middlewares/ST/STM32_ExtMem_Manager/subdir.mk
+
+USER_OBJS += $(filter-out $(CORE_OBJS),$(OBJS))
