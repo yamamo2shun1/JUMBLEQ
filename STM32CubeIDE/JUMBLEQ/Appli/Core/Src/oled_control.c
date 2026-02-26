@@ -66,6 +66,27 @@ static void update_sub_text_block(char* prev, size_t prev_size, const char* text
     merge_dirty_pages(dirty, dirty_start_page, dirty_end_page, page_start, page_end);
 }
 
+static void update_sub_dvs_badge(bool show, bool enabled, uint8_t x, uint8_t y, bool* prev_show, bool* prev_enabled, bool* dirty, uint8_t* dirty_start_page, uint8_t* dirty_end_page)
+{
+    if ((*prev_show == show) && (!show || (*prev_enabled == enabled)))
+    {
+        return;
+    }
+
+    // "[D]" / "[ ]" in Font_7x10 requires ~3 chars width.
+    sub_oled_FillRectangle(x, y, (uint8_t) (x + 20U), (uint8_t) (y + 9U), Black);
+
+    if (show)
+    {
+        sub_oled_SetCursor(x, y);
+        sub_oled_WriteString(enabled ? "[D]" : "[ ]", Font_7x10, White);
+    }
+
+    *prev_show    = show;
+    *prev_enabled = enabled;
+    merge_dirty_pages(dirty, dirty_start_page, dirty_end_page, 0, 1);
+}
+
 static const char* nonnull_str(const char* text)
 {
     return (text == NULL) ? "" : text;
@@ -130,6 +151,10 @@ void OLED_UpdateTask(void)
     static char prev_typeA[32]     = {0};
     static char prev_typeB[32]     = {0};
     static char prev_srcP[32]      = {0};
+    static bool prev_dvsA_show     = false;
+    static bool prev_dvsA_enabled  = false;
+    static bool prev_dvsB_show     = false;
+    static bool prev_dvsB_enabled  = false;
     static bool sub_initialized    = false;
     bool dirty                     = false;
     uint8_t dirty_start_page       = 0xFF;
@@ -185,11 +210,23 @@ void OLED_UpdateTask(void)
         sub_initialized      = true;
     }
 
-    update_sub_text_block(prev_srcA, sizeof(prev_srcA), srcA, 0, 5, 55, 14, 1, 5, 0, 1, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
-    update_sub_text_block(prev_srcB, sizeof(prev_srcB), srcB, 73, 5, 127, 14, 90, 5, 0, 1, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
+    update_sub_text_block(prev_srcA, sizeof(prev_srcA), srcA, 0, 5, 34, 14, 1, 5, 0, 1, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
+    update_sub_text_block(prev_srcB, sizeof(prev_srcB), srcB, 93, 5, 127, 14, 93, 5, 0, 1, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
     update_sub_text_block(prev_typeA, sizeof(prev_typeA), typeA, 0, 30, 55, 39, 1, 30, 3, 4, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
     update_sub_text_block(prev_typeB, sizeof(prev_typeB), typeB, 73, 30, 127, 39, 77, 30, 3, 4, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
     update_sub_text_block(prev_srcP, sizeof(prev_srcP), srcP, 0, 50, 127, 59, 1, 50, 6, 7, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
+
+    uint8_t srcA_channel = get_current_input_srcA_channel();
+    bool srcA_show_dvs   = (srcA_channel != 0U);
+    bool srcA_dvs_enable = (srcA_channel == 1U) ? get_current_ch1_dvs_enabled()
+                                                : ((srcA_channel == 2U) ? get_current_ch2_dvs_enabled() : false);
+    update_sub_dvs_badge(srcA_show_dvs, srcA_dvs_enable, 35, 5, &prev_dvsA_show, &prev_dvsA_enabled, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
+
+    uint8_t srcB_channel = get_current_input_srcB_channel();
+    bool srcB_show_dvs   = (srcB_channel != 0U);
+    bool srcB_dvs_enable = (srcB_channel == 1U) ? get_current_ch1_dvs_enabled()
+                                                : ((srcB_channel == 2U) ? get_current_ch2_dvs_enabled() : false);
+    update_sub_dvs_badge(srcB_show_dvs, srcB_dvs_enable, 72, 5, &prev_dvsB_show, &prev_dvsB_enabled, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
 
     if (sub_dirty)
     {
