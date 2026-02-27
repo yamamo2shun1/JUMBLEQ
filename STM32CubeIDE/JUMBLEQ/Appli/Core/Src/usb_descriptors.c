@@ -26,6 +26,7 @@
 #include "stm32h7rsxx_hal.h"
 #include "tusb.h"
 #include "usb_descriptors.h"
+#include "app_version.h"
 
 #include <stdio.h>
 
@@ -65,7 +66,7 @@ static tusb_desc_device_t const desc_device =
 
         .idVendor  = 0x31BF,
         .idProduct = USB_PID,
-        .bcdDevice = 0x0103,
+        .bcdDevice = APP_VERSION_USB_BCD,
 
         .iManufacturer = 0x01,
         .iProduct      = 0x02,
