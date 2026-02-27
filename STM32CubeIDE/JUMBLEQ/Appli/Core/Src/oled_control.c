@@ -169,10 +169,14 @@ void OLED_UpdateTask(void)
     char line1_mst[16];
     char line2_c1[16];
     char line2_dw[16];
+    char line3_x3[16];
+    char line3_x2[16];
     static char prev_line1_ch2[16] = {0};
     static char prev_line1_mst[16] = {0};
     static char prev_line2_c1[16]  = {0};
     static char prev_line2_dw[16]  = {0};
+    static char prev_line3_x3[16]  = {0};
+    static char prev_line3_x2[16]  = {0};
     static char prev_srcA[32]      = {0};
     static char prev_srcB[32]      = {0};
     static char prev_typeA[32]     = {0};
@@ -189,21 +193,27 @@ void OLED_UpdateTask(void)
 
     const uint8_t line1_ch2_x = 0;
     const uint8_t line1_mst_x = 64;
-    const uint8_t line1_y     = 4;
+    const uint8_t line1_y     = 0;
 
     snprintf(line1_ch2, sizeof(line1_ch2), "C2:%3ddB", get_current_ch2_db());
     snprintf(line1_mst, sizeof(line1_mst), "Mst:%3ddB", get_current_master_db());
     const uint8_t line2_c1_x = 0;
     const uint8_t line2_dw_x = 64;
-    const uint8_t line2_y    = 18;
+    const uint8_t line2_y    = 11;
 
     snprintf(line2_c1, sizeof(line2_c1), "C1:%3ddB", get_current_ch1_db());
     snprintf(line2_dw, sizeof(line2_dw), "D/W:%3d%%", get_current_dry_wet());
+    uint8_t x2 = get_current_xfade2_cc_value();
+    uint8_t x3 = get_current_xfade3_cc_value();
+    snprintf(line3_x3, sizeof(line3_x3), "X3:%3u", x3);
+    snprintf(line3_x2, sizeof(line3_x2), "X2:%3u", x2);
 
-    update_main_text_block(prev_line1_ch2, sizeof(prev_line1_ch2), line1_ch2, 0, line1_y, 63, line1_y + 10, line1_ch2_x, line1_y, 0, 1, &dirty, &dirty_start_page, &dirty_end_page);
-    update_main_text_block(prev_line1_mst, sizeof(prev_line1_mst), line1_mst, 64, line1_y, 127, line1_y + 10, line1_mst_x, line1_y, 0, 1, &dirty, &dirty_start_page, &dirty_end_page);
-    update_main_text_block(prev_line2_c1, sizeof(prev_line2_c1), line2_c1, 0, line2_y, 63, line2_y + 10, line2_c1_x, line2_y, 2, 3, &dirty, &dirty_start_page, &dirty_end_page);
-    update_main_text_block(prev_line2_dw, sizeof(prev_line2_dw), line2_dw, 64, line2_y, 127, line2_y + 10, line2_dw_x, line2_y, 2, 3, &dirty, &dirty_start_page, &dirty_end_page);
+    update_main_text_block(prev_line1_ch2, sizeof(prev_line1_ch2), line1_ch2, 0, 0, 63, 10, line1_ch2_x, line1_y, 0, 1, &dirty, &dirty_start_page, &dirty_end_page);
+    update_main_text_block(prev_line1_mst, sizeof(prev_line1_mst), line1_mst, 64, 0, 127, 10, line1_mst_x, line1_y, 0, 1, &dirty, &dirty_start_page, &dirty_end_page);
+    update_main_text_block(prev_line2_c1, sizeof(prev_line2_c1), line2_c1, 0, 11, 63, 21, line2_c1_x, line2_y, 1, 2, &dirty, &dirty_start_page, &dirty_end_page);
+    update_main_text_block(prev_line2_dw, sizeof(prev_line2_dw), line2_dw, 64, 11, 127, 21, line2_dw_x, line2_y, 1, 2, &dirty, &dirty_start_page, &dirty_end_page);
+    update_main_text_block(prev_line3_x3, sizeof(prev_line3_x3), line3_x3, 0, 22, 63, 31, 0, 22, 2, 3, &dirty, &dirty_start_page, &dirty_end_page);
+    update_main_text_block(prev_line3_x2, sizeof(prev_line3_x2), line3_x2, 64, 22, 127, 31, 71, 22, 2, 3, &dirty, &dirty_start_page, &dirty_end_page);
 
     if (dirty)
     {

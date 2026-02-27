@@ -86,6 +86,20 @@ static void send_control_change(uint8_t number, uint8_t value, uint8_t channel)
     tud_midi_stream_write(0, control_change, 3);
 }
 
+static uint8_t xfade_to_cc(float xfade)
+{
+    if (xfade < 0.0f)
+    {
+        xfade = 0.0f;
+    }
+    else if (xfade > 1.0f)
+    {
+        xfade = 1.0f;
+    }
+
+    return (uint8_t) (127.0f - xfade * 127.0f);
+}
+
 uint8_t get_current_xfA_position(void)
 {
     return s_ui.current_xfA_position;
@@ -123,6 +137,16 @@ int16_t get_current_dry_wet(void)
         pct = 100;
     }
     return pct;
+}
+
+uint8_t get_current_xfade2_cc_value(void)
+{
+    return xfade_to_cc(s_ui.xfade[2]);
+}
+
+uint8_t get_current_xfade3_cc_value(void)
+{
+    return xfade_to_cc(s_ui.xfade[3]);
 }
 
 char* get_current_input_typeA_str(void)
@@ -651,7 +675,7 @@ static void ui_control_apply_xfade_updates(void)
     {
         if (fabs(s_ui.xfade[i] - s_ui.xfade_prev[i]) > 0.01f)
         {
-            send_control_change(10 + (5 - i), (uint8_t) (127.0f - s_ui.xfade[i] * 127.0f), 0);
+            send_control_change(10 + (5 - i), xfade_to_cc(s_ui.xfade[i]), 0);
 
             if (i == 0 || i == 1)
             {
