@@ -13,6 +13,8 @@
 #define ADC_NUM 8
 #define UI_CH_FADER_AUX_ASSIGN_A 0U
 #define UI_CH_FADER_AUX_ASSIGN_B 1U
+#define UI_CH_FADER_DVS_DELAY_DEFAULT_MS 50U
+#define UI_CH_FADER_DVS_DELAY_MAX_MS     120U
 
 typedef struct
 {
@@ -25,6 +27,7 @@ typedef struct
     uint8_t current_hp_out_source;
     uint8_t current_ch1_dvs_enable;
     uint8_t current_ch2_dvs_enable;
+    uint8_t ch_fader_dvs_delay_ms;
     uint8_t sensor2_aux_fade_down_assign;
     uint8_t sensor3_aux_fade_down_assign;
     bool ch_fader_reverse_a;
@@ -61,6 +64,7 @@ uint8_t get_current_input_srcA_channel(void);  // 0:none, 1:CH1, 2:CH2
 uint8_t get_current_input_srcB_channel(void);  // 0:none, 1:CH1, 2:CH2
 bool get_current_ch1_dvs_enabled(void);
 bool get_current_ch2_dvs_enabled(void);
+uint8_t ui_control_get_ch_fader_dvs_delay_ms(void);
 bool ui_control_is_ch_fader_reverse_a_enabled(void);
 bool ui_control_is_ch_fader_reverse_b_enabled(void);
 bool ui_control_is_curve_edit_mode_enabled(void);

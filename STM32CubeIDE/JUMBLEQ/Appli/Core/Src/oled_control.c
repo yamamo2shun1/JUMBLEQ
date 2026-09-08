@@ -392,7 +392,18 @@ void OLED_UpdateTask(void)
         bool main_redraw = dirty;
         const uint8_t curve_a_cc = ui_control_get_ch_fader_curve_a_cc();
         const uint8_t curve_b_cc = ui_control_get_ch_fader_curve_b_cc();
-        snprintf(line_edit_mode, sizeof(line_edit_mode), "CURVE EDIT [ON]");
+        const bool dvs_enabled = get_current_ch1_dvs_enabled() || get_current_ch2_dvs_enabled();
+        if (dvs_enabled)
+        {
+            snprintf(line_edit_mode,
+                     sizeof(line_edit_mode),
+                     "FADER DLY: %ums",
+                     (unsigned) ui_control_get_ch_fader_dvs_delay_ms());
+        }
+        else
+        {
+            snprintf(line_edit_mode, sizeof(line_edit_mode), "FADER DLY: ---");
+        }
         snprintf(line_edit_a, sizeof(line_edit_a), "A:%3u", (unsigned) curve_a_cc);
         snprintf(line_edit_b, sizeof(line_edit_b), "B:%3u", (unsigned) curve_b_cc);
 

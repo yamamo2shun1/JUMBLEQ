@@ -27,6 +27,7 @@ typedef struct
     uint8_t current_hp_out_source;
     uint8_t current_ch1_dvs_enable;
     uint8_t current_ch2_dvs_enable;
+    uint8_t ch_fader_dvs_delay_ms;
     uint8_t mag_output_mode_flags;
     float current_ch_fader_curve_width_a;
     float current_ch_fader_curve_width_b;
@@ -37,7 +38,8 @@ typedef struct
 
 #define EEPROM_CONFIG_ADDR               (0x0000U)
 #define EEPROM_CONFIG_MAGIC              (0x51424D4AU) /* "JMBQ" */
-#define EEPROM_CONFIG_VERSION            (0x0007U)
+#define EEPROM_CONFIG_VERSION            (0x0008U)
+#define EEPROM_CONFIG_VERSION_V7         (0x0007U)
 
 #define EEPROM_CFG_FLAG_MAG_OUT_AS_NOTE   (0x01U)
 #define EEPROM_CFG_FLAG_CH_FADER_REVERSE_A (0x01U)
