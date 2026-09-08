@@ -5,6 +5,7 @@
  */
 
 #include "ui_control.h"
+#include "ui_control_internal.h"
 
 #include "audio_control.h"
 
@@ -33,8 +34,6 @@
 #define MAG_CH_FADER_CUTOFF          16
 #define MAG_CH_FADER_RANGE           1400
 #define CH_FADER_FADE_DOWN_SOURCE_COUNT 3U
-// Delay only DSP fader control for DVS inputs; MIDI remains live.
-#define CH_FADER_DVS_DELAY_MS        50U
 // At most one update per pair per ADC task iteration (2 ms minimum).
 #define CH_FADER_DSP_QUEUE_CAPACITY  512U
 
@@ -126,6 +125,7 @@ typedef struct
     uint8_t current_hp_out_source;
     uint8_t current_ch1_dvs_enable;
     uint8_t current_ch2_dvs_enable;
+    uint8_t ch_fader_dvs_delay_ms;
     uint8_t sensor2_aux_fade_down_assign;
     uint8_t sensor3_aux_fade_down_assign;
     uint8_t pot_ch;
@@ -168,6 +168,7 @@ static ui_control_state_t s_ui = {
     .current_hp_out_source  = CUE_SEL_MST,
     .current_ch1_dvs_enable = 0U,
     .current_ch2_dvs_enable = 0U,
+    .ch_fader_dvs_delay_ms  = UI_CH_FADER_DVS_DELAY_DEFAULT_MS,
     .sensor2_aux_fade_down_assign = UI_CH_FADER_AUX_ASSIGN_A,
     .sensor3_aux_fade_down_assign = UI_CH_FADER_AUX_ASSIGN_B,
     .ch_fader_curve_width_a    = UI_CH_FADER_CURVE_WIDTH_A_DEFAULT,
@@ -227,6 +228,7 @@ static const float CH_FADER_PAIR_BOTTOM_REHOLD_THRESHOLD       = 0.0008f;
 static const uint8_t MIDI_CH_15                  = 14U;  // zero-based MIDI channel index.
 static const uint8_t MIDI_CC_CH_FADER_CURVE_A        = 20U;
 static const uint8_t MIDI_CC_CH_FADER_CURVE_B        = 21U;
+static const uint8_t MIDI_CC_CH_FADER_DVS_DELAY      = 22U;
 static const uint8_t MIDI_PC_CURVE_EDIT_MODE_OFF = 120U;
 static const uint8_t MIDI_PC_CURVE_EDIT_MODE_ON  = 121U;
 static const uint8_t MIDI_PC_MUX_OUTPUT_CC       = 122U;
@@ -391,7 +393,7 @@ static void submit_ch_fader_dsp_output(const ch_fader_pair_runtime_t* pair, floa
     state->target_position = position;
     state->target_valid = true;
 
-    if (!state->delay_enabled || (CH_FADER_DVS_DELAY_MS == 0U) ||
+    if (!state->delay_enabled || (s_ui.ch_fader_dvs_delay_ms == 0U) ||
         (state->count == CH_FADER_DSP_QUEUE_CAPACITY))
     {
         // Capacity exceeds the configured delay history. If overloaded, recover to
@@ -419,7 +421,7 @@ static void service_ch_fader_dsp_outputs(void)
         {
             const ch_fader_dsp_update_t* update = &state->queue[state->head];
             // Unsigned elapsed time also handles HAL tick wraparound.
-            if ((uint32_t) (now - update->captured_ms) < CH_FADER_DVS_DELAY_MS)
+            if ((uint32_t) (now - update->captured_ms) < s_ui.ch_fader_dvs_delay_ms)
             {
                 break;
             }
@@ -982,6 +984,11 @@ bool get_current_ch2_dvs_enabled(void)
     return (s_ui.current_ch2_dvs_enable != 0U);
 }
 
+uint8_t ui_control_get_ch_fader_dvs_delay_ms(void)
+{
+    return s_ui.ch_fader_dvs_delay_ms;
+}
+
 bool ui_control_is_ch_fader_reverse_a_enabled(void)
 {
     return s_ui.ch_fader_reverse_a;
@@ -1257,6 +1264,22 @@ static void apply_dvs_state(uint8_t input_ch, bool enable)
     apply_send_source_selection(input_ch);
 }
 
+static void apply_ch_fader_dvs_delay(uint8_t delay_ms)
+{
+    const uint8_t clamped_delay_ms = (delay_ms > UI_CH_FADER_DVS_DELAY_MAX_MS)
+                                         ? UI_CH_FADER_DVS_DELAY_MAX_MS
+                                         : delay_ms;
+
+    if (s_ui.ch_fader_dvs_delay_ms == clamped_delay_ms)
+    {
+        return;
+    }
+
+    s_ui.ch_fader_dvs_delay_ms = clamped_delay_ms;
+    // A new delay must not reinterpret updates captured with the old setting.
+    ui_control_reapply_ch_fader_outputs();
+}
+
 static bool assign_to_input_ch(uint8_t assign, uint8_t* input_ch)
 {
     if (input_ch == NULL)
@@ -1459,6 +1482,7 @@ static void send_midi_config_dump(const EEPROM_DeviceConfig_t* cfg)
     send_program_change((cfg->ch_fader_reverse_flags & EEPROM_CFG_FLAG_CH_FADER_REVERSE_B) != 0U ? CH_FADER_REVERSE_B_ON : CH_FADER_REVERSE_B_OFF, MIDI_CH_15);
     send_control_change(MIDI_CC_CH_FADER_CURVE_A, ch_fader_curve_width_to_midi_cc(cfg->current_ch_fader_curve_width_a), MIDI_CH_15);
     send_control_change(MIDI_CC_CH_FADER_CURVE_B, ch_fader_curve_width_to_midi_cc(cfg->current_ch_fader_curve_width_b), MIDI_CH_15);
+    send_control_change(MIDI_CC_CH_FADER_DVS_DELAY, cfg->ch_fader_dvs_delay_ms, MIDI_CH_15);
     if ((cfg->mag_output_mode_flags & EEPROM_CFG_FLAG_MAG_OUT_AS_NOTE) != 0U)
     {
         send_program_change(MIDI_PC_MUX_OUTPUT_NOTE, MIDI_CH_15);
@@ -2905,6 +2929,16 @@ static bool dispatch_midi_control_change(uint8_t channel, uint8_t number, uint8_
         return true;
     }
 
+    if (number == MIDI_CC_CH_FADER_DVS_DELAY)
+    {
+        apply_ch_fader_dvs_delay(value);
+        SEGGER_RTT_printf(0,
+                          "DVS fader delay updated by CC%u Ch15 -> %u ms\r\n",
+                          (unsigned) number,
+                          (unsigned) s_ui.ch_fader_dvs_delay_ms);
+        return true;
+    }
+
     return false;
 }
 
@@ -2982,6 +3016,7 @@ void ui_control_get_persist_state(UI_ControlPersistState_t* state)
     state->current_hp_out_source  = s_ui.current_hp_out_source;
     state->current_ch1_dvs_enable    = s_ui.current_ch1_dvs_enable;
     state->current_ch2_dvs_enable    = s_ui.current_ch2_dvs_enable;
+    state->ch_fader_dvs_delay_ms     = s_ui.ch_fader_dvs_delay_ms;
     state->sensor2_aux_fade_down_assign = s_ui.sensor2_aux_fade_down_assign;
     state->sensor3_aux_fade_down_assign = s_ui.sensor3_aux_fade_down_assign;
     state->current_ch_fader_curve_width_a = s_ui.ch_fader_curve_width_a;
@@ -3031,6 +3066,7 @@ bool ui_control_apply_persist_state(const UI_ControlPersistState_t* state)
     apply_hp_out_source(state->current_hp_out_source);
     apply_dvs_state(INPUT_CH1, state->current_ch1_dvs_enable != 0U);
     apply_dvs_state(INPUT_CH2, state->current_ch2_dvs_enable != 0U);
+    apply_ch_fader_dvs_delay(state->ch_fader_dvs_delay_ms);
     (void) apply_ch_fader_aux_assignments(state->sensor2_aux_fade_down_assign,
                                        state->sensor3_aux_fade_down_assign);
     s_ui.ch_fader_curve_width_a = clamp_ch_fader_curve_width(state->current_ch_fader_curve_width_a);
@@ -3100,6 +3136,7 @@ void ui_control_reset_state(void)
     s_ui.current_hp_out_source  = CUE_SEL_MST;
     s_ui.current_ch1_dvs_enable = 0U;
     s_ui.current_ch2_dvs_enable = 0U;
+    s_ui.ch_fader_dvs_delay_ms  = UI_CH_FADER_DVS_DELAY_DEFAULT_MS;
     s_ui.sensor2_aux_fade_down_assign = UI_CH_FADER_AUX_ASSIGN_A;
     s_ui.sensor3_aux_fade_down_assign = UI_CH_FADER_AUX_ASSIGN_B;
     s_ui.ch_fader_curve_width_a    = UI_CH_FADER_CURVE_WIDTH_A_DEFAULT;

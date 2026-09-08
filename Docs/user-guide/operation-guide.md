@@ -39,9 +39,9 @@ The USB pair corresponding to the enabled DVS channel is used for the DVS send a
 
 The Dry/Wet and Return knobs do not control the DVS path. If the other USB pair is not reserved by DVS and is selected as the Return source, both knobs continue to control that Return path normally.
 
-Magnetic-switch changes to a channel fader reach the DSP with a fixed 50 ms control delay when the corresponding input's DVS setting is enabled. Input Ch. 1 and USB 1/2 assignments follow Ch. 1 DVS; Input Ch. 2 and USB 3/4 assignments follow Ch. 2 DVS. This includes PC-return audio assigned directly from USB. The delay follows the input assignment of each fader, including when A and B are swapped. When the corresponding DVS setting is disabled, the fader responds without this additional delay. Magnetic-switch MIDI output retains its existing timing.
+Magnetic-switch changes to a channel fader reach the DSP with a configurable control delay when the corresponding input's DVS setting is enabled. The delay is shared by both input channels, can be set from 0 to 120 ms, and defaults to 50 ms. Input Ch. 1 and USB 1/2 assignments follow Ch. 1 DVS; Input Ch. 2 and USB 3/4 assignments follow Ch. 2 DVS. This includes PC-return audio assigned directly from USB. The delay follows the input assignment of each fader, including when A and B are swapped. When the corresponding DVS setting is disabled, the fader responds without this additional delay. Magnetic-switch MIDI output retains its existing timing.
 
-Successive fader changes are queued in order, so a brief cut is delayed together with its release. Actual timing also includes the UI task and DSP-write scheduling. Changing the assigned input or its DVS state, or explicitly reapplying fader outputs, cancels pending changes and synchronizes the DSP to the current fader target. The delay is fixed in firmware and is not a Configurator setting.
+Successive fader changes are queued in order, so a brief cut is delayed together with its release. Actual timing also includes the UI task and DSP-write scheduling. Changing the assigned input, its DVS state, or the configured delay cancels pending changes and synchronizes the DSP to the current fader target. While curve edit mode is active, the main OLED shows `FADER DLY: nms` when either DVS channel is enabled and `FADER DLY: ---` when both are disabled.
 
 ## Knob Assignments
 

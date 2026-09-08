@@ -11,9 +11,48 @@ typedef struct
     uint32_t magic;
     uint16_t version;
     uint16_t payload_size;
+} EEPROM_ConfigHeader_t;
+
+typedef struct
+{
+    uint8_t current_ch1_input_type;
+    uint8_t current_ch2_input_type;
+    uint8_t current_ch_fader_a_assign;
+    uint8_t current_ch_fader_b_assign;
+    uint8_t current_ch_fader_post_assign;
+    uint8_t current_return_assign;
+    uint8_t current_hp_out_source;
+    uint8_t current_ch1_dvs_enable;
+    uint8_t current_ch2_dvs_enable;
+    uint8_t mag_output_mode_flags;
+    float current_ch_fader_curve_width_a;
+    float current_ch_fader_curve_width_b;
+    uint8_t sensor2_aux_fade_down_assign;
+    uint8_t sensor3_aux_fade_down_assign;
+    uint8_t ch_fader_reverse_flags;
+} EEPROM_DeviceConfigV7_t;
+
+typedef struct
+{
+    uint32_t magic;
+    uint16_t version;
+    uint16_t payload_size;
+    EEPROM_DeviceConfigV7_t payload;
+    uint32_t crc32;
+} EEPROM_ConfigRecordV7_t;
+
+_Static_assert(sizeof(EEPROM_DeviceConfigV7_t) == 24U, "Unexpected EEPROM v7 payload layout");
+
+typedef struct
+{
+    uint32_t magic;
+    uint16_t version;
+    uint16_t payload_size;
     EEPROM_DeviceConfig_t payload;
     uint32_t crc32;
 } EEPROM_ConfigRecord_t;
+
+_Static_assert(sizeof(EEPROM_DeviceConfig_t) == 24U, "Unexpected EEPROM v8 payload layout");
 
 static uint32_t EEPROM_CRC32(const uint8_t* data, uint32_t len)
 {
@@ -53,6 +92,7 @@ void EEPROM_ConfigSetDefaults(EEPROM_DeviceConfig_t* cfg)
         return;
     }
 
+    memset(cfg, 0, sizeof(*cfg));
     cfg->current_ch1_input_type = 0U; /* INPUT_TYPE_LINE */
     cfg->current_ch2_input_type = 0U; /* INPUT_TYPE_LINE */
     cfg->current_ch_fader_a_assign     = 0U; /* INPUT_SRC_CH1_LN */
@@ -62,6 +102,7 @@ void EEPROM_ConfigSetDefaults(EEPROM_DeviceConfig_t* cfg)
     cfg->current_hp_out_source  = CUE_SEL_MST;
     cfg->current_ch1_dvs_enable = 0U; /* disabled */
     cfg->current_ch2_dvs_enable = 0U; /* disabled */
+    cfg->ch_fader_dvs_delay_ms  = UI_CH_FADER_DVS_DELAY_DEFAULT_MS;
     cfg->mag_output_mode_flags  = 0U;
     cfg->current_ch_fader_curve_width_a = UI_CH_FADER_CURVE_WIDTH_A_DEFAULT;
     cfg->current_ch_fader_curve_width_b = UI_CH_FADER_CURVE_WIDTH_B_DEFAULT;
@@ -79,6 +120,7 @@ void EEPROM_ConfigCaptureCurrent(EEPROM_DeviceConfig_t* cfg)
         return;
     }
 
+    memset(cfg, 0, sizeof(*cfg));
     ui_control_get_persist_state(&state);
     cfg->current_ch1_input_type = state.current_ch1_input_type;
     cfg->current_ch2_input_type = state.current_ch2_input_type;
@@ -89,6 +131,7 @@ void EEPROM_ConfigCaptureCurrent(EEPROM_DeviceConfig_t* cfg)
     cfg->current_hp_out_source  = state.current_hp_out_source;
     cfg->current_ch1_dvs_enable = state.current_ch1_dvs_enable;
     cfg->current_ch2_dvs_enable = state.current_ch2_dvs_enable;
+    cfg->ch_fader_dvs_delay_ms  = state.ch_fader_dvs_delay_ms;
     cfg->mag_output_mode_flags  = state.mag_out_as_note ? EEPROM_CFG_FLAG_MAG_OUT_AS_NOTE : 0U;
     cfg->current_ch_fader_curve_width_a = state.current_ch_fader_curve_width_a;
     cfg->current_ch_fader_curve_width_b = state.current_ch_fader_curve_width_b;
@@ -216,6 +259,7 @@ HAL_StatusTypeDef EEPROM_SaveConfig(I2C_HandleTypeDef* hi2c, const EEPROM_Device
         return HAL_ERROR;
     }
 
+    memset(&rec, 0, sizeof(rec));
     rec.magic        = EEPROM_CONFIG_MAGIC;
     rec.version      = EEPROM_CONFIG_VERSION;
     rec.payload_size = (uint16_t) sizeof(EEPROM_DeviceConfig_t);
@@ -229,7 +273,9 @@ HAL_StatusTypeDef EEPROM_SaveConfig(I2C_HandleTypeDef* hi2c, const EEPROM_Device
 
 HAL_StatusTypeDef EEPROM_LoadConfig(I2C_HandleTypeDef* hi2c, EEPROM_DeviceConfig_t* cfg)
 {
+    EEPROM_ConfigHeader_t header;
     EEPROM_ConfigRecord_t rec;
+    EEPROM_ConfigRecordV7_t rec_v7;
     uint32_t expected_crc;
     HAL_StatusTypeDef status;
 
@@ -238,25 +284,69 @@ HAL_StatusTypeDef EEPROM_LoadConfig(I2C_HandleTypeDef* hi2c, EEPROM_DeviceConfig
         return HAL_ERROR;
     }
 
-    status = EEPROM_Read(hi2c, EEPROM_CONFIG_ADDR, (uint8_t*) &rec, (uint16_t) sizeof(rec));
+    status = EEPROM_Read(hi2c, EEPROM_CONFIG_ADDR, (uint8_t*) &header, (uint16_t) sizeof(header));
     if (status != HAL_OK)
     {
         return status;
     }
 
-    if ((rec.magic != EEPROM_CONFIG_MAGIC) ||
-        (rec.version != EEPROM_CONFIG_VERSION) ||
-        (rec.payload_size != (uint16_t) sizeof(EEPROM_DeviceConfig_t)))
+    if (header.magic != EEPROM_CONFIG_MAGIC)
     {
         return HAL_ERROR;
     }
 
-    expected_crc = EEPROM_CRC32((const uint8_t*) &rec, (uint32_t) offsetof(EEPROM_ConfigRecord_t, crc32));
-    if (expected_crc != rec.crc32)
+    if ((header.version == EEPROM_CONFIG_VERSION) &&
+        (header.payload_size == (uint16_t) sizeof(EEPROM_DeviceConfig_t)))
     {
-        return HAL_ERROR;
+        status = EEPROM_Read(hi2c, EEPROM_CONFIG_ADDR, (uint8_t*) &rec, (uint16_t) sizeof(rec));
+        if (status != HAL_OK)
+        {
+            return status;
+        }
+
+        expected_crc = EEPROM_CRC32((const uint8_t*) &rec, (uint32_t) offsetof(EEPROM_ConfigRecord_t, crc32));
+        if (expected_crc != rec.crc32)
+        {
+            return HAL_ERROR;
+        }
+
+        memcpy(cfg, &rec.payload, sizeof(*cfg));
+        return HAL_OK;
     }
 
-    memcpy(cfg, &rec.payload, sizeof(*cfg));
-    return HAL_OK;
+    if ((header.version == EEPROM_CONFIG_VERSION_V7) &&
+        (header.payload_size == (uint16_t) sizeof(EEPROM_DeviceConfigV7_t)))
+    {
+        status = EEPROM_Read(hi2c, EEPROM_CONFIG_ADDR, (uint8_t*) &rec_v7, (uint16_t) sizeof(rec_v7));
+        if (status != HAL_OK)
+        {
+            return status;
+        }
+
+        expected_crc = EEPROM_CRC32((const uint8_t*) &rec_v7, (uint32_t) offsetof(EEPROM_ConfigRecordV7_t, crc32));
+        if (expected_crc != rec_v7.crc32)
+        {
+            return HAL_ERROR;
+        }
+
+        EEPROM_ConfigSetDefaults(cfg);
+        cfg->current_ch1_input_type = rec_v7.payload.current_ch1_input_type;
+        cfg->current_ch2_input_type = rec_v7.payload.current_ch2_input_type;
+        cfg->current_ch_fader_a_assign = rec_v7.payload.current_ch_fader_a_assign;
+        cfg->current_ch_fader_b_assign = rec_v7.payload.current_ch_fader_b_assign;
+        cfg->current_ch_fader_post_assign = rec_v7.payload.current_ch_fader_post_assign;
+        cfg->current_return_assign = rec_v7.payload.current_return_assign;
+        cfg->current_hp_out_source = rec_v7.payload.current_hp_out_source;
+        cfg->current_ch1_dvs_enable = rec_v7.payload.current_ch1_dvs_enable;
+        cfg->current_ch2_dvs_enable = rec_v7.payload.current_ch2_dvs_enable;
+        cfg->mag_output_mode_flags = rec_v7.payload.mag_output_mode_flags;
+        cfg->current_ch_fader_curve_width_a = rec_v7.payload.current_ch_fader_curve_width_a;
+        cfg->current_ch_fader_curve_width_b = rec_v7.payload.current_ch_fader_curve_width_b;
+        cfg->sensor2_aux_fade_down_assign = rec_v7.payload.sensor2_aux_fade_down_assign;
+        cfg->sensor3_aux_fade_down_assign = rec_v7.payload.sensor3_aux_fade_down_assign;
+        cfg->ch_fader_reverse_flags = rec_v7.payload.ch_fader_reverse_flags;
+        return HAL_OK;
+    }
+
+    return HAL_ERROR;
 }

@@ -22,7 +22,7 @@ In CC mode, magnetic channel fader updates are sent only when the normalized raw
 
 In Note mode, magnetic controls and channel fader sensors send Note On/Off messages. The peak sensor value measured during the initial 12 ms window is converted to Note On velocity.
 
-CC20 and CC21 have different roles depending on the MIDI channel: on Ch. 1 they carry live values from magnetic channel fader sensors 0 and 1, while on Ch. 15 they carry curve settings for Channel Faders A and B in a configuration dump.
+CC20 through CC22 have different roles depending on the MIDI channel: on Ch. 1 they carry live values from magnetic channel fader sensors 0 through 2. In a Ch. 15 configuration dump, CC20 and CC21 carry curve settings for Channel Faders A and B, while CC22 carries the DVS fader delay.
 
 ## 3. Implementation Notes
 
@@ -64,5 +64,6 @@ The dump contains exactly one value from each Direction pair: `PC31` (Normal) or
 |---:|---|
 | 20 | `XFADE_CURVE_A` (`0` = strongest late rise, `64` = linear, `127` = strongest early rise) |
 | 21 | `XFADE_CURVE_B` (`0` = strongest late rise, `64` = linear, `127` = strongest early rise) |
+| 22 | `DVS_FADER_DELAY_MS` (`0..120` ms) |
 
-These values use the same scale as incoming curve-edit Control Change messages, allowing the host to restore the current settings directly.
+The curve values use the same scale as incoming curve-edit Control Change messages. The DVS fader delay value is transmitted directly in milliseconds. This allows the host to restore the current settings without conversion.
