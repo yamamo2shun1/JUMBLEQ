@@ -54,7 +54,7 @@ Control Change messages are accepted only when all of the following conditions a
 
 - Channel Fader curve edit mode is enabled.
 - The MIDI channel is Ch. 15.
-- The CC number is supported (`20` or `21`).
+- The CC number is supported (`20`, `21`, or `22`).
 
 ### 3.2 Control Change Map
 
@@ -62,6 +62,7 @@ Control Change messages are accepted only when all of the following conditions a
 |---:|---|---|
 | 20 | `XFADE_CURVE_A` | 0 to 127 |
 | 21 | `XFADE_CURVE_B` | 0 to 127 |
+| 22 | `DVS_FADER_DELAY_MS` | 0 to 120 ms; values 121 to 127 are clamped to 120 ms |
 
 Curve response:
 
@@ -70,11 +71,12 @@ Curve response:
 - `127` selects the strongest early-rise curve; the level changes sharply near the start of the key travel.
 - The late- and early-rise families use point-reflected exponential curves.
 - The default value is `64` for both Channel Faders A and B.
+- The DVS fader delay defaults to 50 ms and is shared by both input channels.
 
 ## 4. `curve_edit_mode` (Channel Fader Curve Edit Mode) Behavior
 
 - Use Program Change messages to enable or disable the mode (`PC121` ON / `PC120` OFF).
-- While enabled, the main OLED shows the current curve CC values for Channel Faders A and B together with a graphical preview of each curve.
+- While enabled, the main OLED shows the current curve CC values for Channel Faders A and B together with a graphical preview of each curve. The first line shows `FADER DLY: nms` when either DVS channel is enabled and `FADER DLY: ---` when both are disabled.
 - While disabled, the main OLED uses its normal display and shows the gain values for each input and output channel.
 - There is no automatic timeout.
 
@@ -85,13 +87,14 @@ Curve response:
   - CH1/CH2 input types
   - Channel Fader A/B and Post Fader assignments
   - CH1/CH2 DVS enable states
+  - DVS magnetic-switch fader delay
   - Return source assignment
   - Headphone output source
   - Magnetic output mode (CC / Note)
   - Auxiliary fade-down assignments for magnetic switches 2 and 3
   - Direction settings (Normal / Reverse) for Channel Faders A/B
   - Curve settings for Channel Faders A/B
-- EEPROM record version: `0x0007`
+- EEPROM record version: `0x0008` (`0x0007` records are loaded with a 50 ms DVS fader delay)
 
 ## 6. Implementation Notes
 
