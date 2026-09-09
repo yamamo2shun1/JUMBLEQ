@@ -33,6 +33,8 @@ This document describes the MIDI receive specification based on the `JUMBLEQ/App
 | 33/34 | Set the Channel Fader B direction (Normal / Reverse). |
 | 120/121 | Disable or enable Channel Fader curve edit mode. |
 | 122/123 | Select the output mode (CC / Note) for magnetic controls and channel fader sensors. |
+| 124 | Arm the 10-second physical confirmation window for UF2 bootloader mode. |
+| 125 | Cancel the UF2 bootloader confirmation window. |
 | 126 | Transmit a dump of the parameters currently configured on the device. |
 | 127 | Save the current settings to EEPROM. |
 
@@ -43,12 +45,28 @@ Notes:
 - The default assignments are Channel Fader A for magnetic switch 2 and Channel Fader B for magnetic switch 3.
 - Direction can be configured independently for Channel Faders A and B and takes effect immediately. The default is Normal for both faders.
 - Reverse inverts the final fader response for Fade Up and all Fade Down controls assigned to that fader, including auxiliary Fade Down controls. It does not change the live MIDI values transmitted by the individual magnetic sensors.
-- `PC127` saves the complete device configuration listed in Section 5 to EEPROM, including the DVS enable states, Return and headphone source assignments, magnetic output mode, auxiliary fade-down assignments, Direction settings, and curves for Channel Faders A and B.
+- `PC127` saves the complete device configuration listed in Section 6 to EEPROM, including the DVS enable states, Return and headphone source assignments, magnetic output mode, auxiliary fade-down assignments, Direction settings, and curves for Channel Faders A and B.
 - `PC126` transmits the **current operating state (parameters eligible for saving)** rather than reading and transmitting the EEPROM contents.
+- `PC124` never resets the device by itself. After it is received, SW3 must be observed released and then held continuously for 2 seconds before the device resets into UF2 mode.
+- The PC124 confirmation window is cancelled by `PC125`, a 10-second timeout, or USB disconnection. Repeated PC124 messages do not extend an active window.
+- PC124 and PC125 are transient commands and are not included in configuration dumps or EEPROM storage.
 
-## 3. Control Change (Host -> Device)
+## 3. Safe UF2 Bootloader Transition
 
-### 3.1 Acceptance Conditions
+The Configurator can request a safe transition to the UF2 bootloader as follows:
+
+1. Send PC124 on Ch. 15.
+2. Wait for the main OLED to request physical confirmation.
+3. Release SW3, then hold it continuously for 2 seconds.
+4. Keep SW3 held while the device resets and the UF2 mass-storage volume appears.
+
+The main OLED shows the remaining time, the required switch action, and cancellation or timeout status. PC124 received while a confirmation window is already active is ignored and does not restart or extend the timer.
+
+After the 2-second hold is accepted, the firmware clears both OLED displays and then resets while SW3 remains pressed. The existing bootloader selects UF2 mode using its normal startup switch check; no persistent boot request is stored.
+
+## 4. Control Change (Host -> Device)
+
+### 4.1 Acceptance Conditions
 
 Control Change messages are accepted only when all of the following conditions are met:
 
@@ -56,7 +74,7 @@ Control Change messages are accepted only when all of the following conditions a
 - The MIDI channel is Ch. 15.
 - The CC number is supported (`20`, `21`, or `22`).
 
-### 3.2 Control Change Map
+### 4.2 Control Change Map
 
 | CC Number | Parameter | CC Value |
 |---:|---|---|
@@ -73,14 +91,14 @@ Curve response:
 - The default value is `64` for both Channel Faders A and B.
 - The DVS fader delay defaults to 50 ms and is shared by both input channels.
 
-## 4. `curve_edit_mode` (Channel Fader Curve Edit Mode) Behavior
+## 5. `curve_edit_mode` (Channel Fader Curve Edit Mode) Behavior
 
 - Use Program Change messages to enable or disable the mode (`PC121` ON / `PC120` OFF).
 - While enabled, the main OLED shows the current curve CC values for Channel Faders A and B together with a graphical preview of each curve. The first line shows `FADER DLY: nms` when either DVS channel is enabled and `FADER DLY: ---` when both are disabled.
 - While disabled, the main OLED uses its normal display and shows the gain values for each input and output channel.
 - There is no automatic timeout.
 
-## 5. EEPROM Storage and Startup Restore
+## 6. EEPROM Storage and Startup Restore
 
 - Save trigger: `PC127` on Ch. 15
 - Saved parameters:
@@ -96,7 +114,7 @@ Curve response:
   - Curve settings for Channel Faders A/B
 - EEPROM record version: `0x0008` (`0x0007` records are loaded with a 50 ms DVS fader delay)
 
-## 6. Implementation Notes
+## 7. Implementation Notes
 
 - Channel values in the implementation are zero-based (for example, `14` = MIDI Ch. 15).
 - The Ch. 15 restrictions for incoming Program Change and Control Change messages are checked in their respective dispatch functions.

@@ -158,6 +158,19 @@ typedef struct
     bool is_start_audio_control;
 } ui_control_state_t;
 
+typedef struct
+{
+    volatile UI_Uf2TransitionState_t state;
+    volatile uint32_t arm_started_ms;
+    volatile bool displays_cleared;
+    uint32_t raw_changed_ms;
+    uint32_t hold_started_ms;
+    uint32_t notice_started_ms;
+    bool last_raw_pressed;
+    bool stable_pressed;
+    bool release_observed;
+} uf2_bootloader_control_t;
+
 static ui_control_state_t s_ui = {
     .current_ch1_input_type = INPUT_TYPE_LINE,
     .current_ch2_input_type = INPUT_TYPE_LINE,
@@ -205,6 +218,10 @@ static ui_control_state_t s_ui = {
     .is_start_audio_control = false,
 };
 
+static uf2_bootloader_control_t s_uf2 = {
+    .state = UI_UF2_TRANSITION_IDLE,
+};
+
 static volatile bool is_adc_complete  = false;
 static const uint8_t POT_MAG_CH_FIRST = POT_CH_MAG0;
 static const uint8_t POT_MAG_CH_LAST  = POT_CH_MAG3;
@@ -233,8 +250,14 @@ static const uint8_t MIDI_PC_CURVE_EDIT_MODE_OFF = 120U;
 static const uint8_t MIDI_PC_CURVE_EDIT_MODE_ON  = 121U;
 static const uint8_t MIDI_PC_MUX_OUTPUT_CC       = 122U;
 static const uint8_t MIDI_PC_MUX_OUTPUT_NOTE     = 123U;
+static const uint8_t MIDI_PC_ARM_UF2_BOOTLOADER  = 124U;
+static const uint8_t MIDI_PC_CANCEL_UF2_BOOTLOADER = 125U;
 static const uint8_t MIDI_PC_REQUEST_EEPROM_DUMP = 126U;
 static const uint8_t MIDI_PC_SAVE_EEPROM         = 127U;
+static const uint32_t UF2_ARM_WINDOW_MS          = 10000U;
+static const uint32_t UF2_SWITCH_DEBOUNCE_MS     = 30U;
+static const uint32_t UF2_SWITCH_HOLD_MS         = 2000U;
+static const uint32_t UF2_NOTICE_MS              = 2000U;
 static const uint8_t MIDI_NOTE_ON_THRESHOLD      = 4U;
 static const uint8_t MIDI_NOTE_OFF_THRESHOLD     = 2U;
 static const uint32_t MIDI_NOTE_VEL_WINDOW_MS    = 12U;
@@ -1002,6 +1025,45 @@ bool ui_control_is_ch_fader_reverse_b_enabled(void)
 bool ui_control_is_curve_edit_mode_enabled(void)
 {
     return s_ui.curve_edit_mode;
+}
+
+UI_Uf2TransitionState_t ui_control_get_uf2_transition_state(void)
+{
+    const UI_Uf2TransitionState_t state = s_uf2.state;
+    __DMB();
+    return state;
+}
+
+uint8_t ui_control_get_uf2_seconds_remaining(void)
+{
+    const UI_Uf2TransitionState_t state = s_uf2.state;
+    __DMB();
+    if ((state != UI_UF2_TRANSITION_WAIT_RELEASE) &&
+        (state != UI_UF2_TRANSITION_WAIT_HOLD) &&
+        (state != UI_UF2_TRANSITION_HOLDING))
+    {
+        return 0U;
+    }
+
+    const uint32_t elapsed_ms = HAL_GetTick() - s_uf2.arm_started_ms;
+    if (elapsed_ms >= UF2_ARM_WINDOW_MS)
+    {
+        return 0U;
+    }
+
+    const uint32_t remaining_ms = UF2_ARM_WINDOW_MS - elapsed_ms;
+    return (uint8_t) ((remaining_ms + 999U) / 1000U);
+}
+
+void ui_control_notify_uf2_displays_cleared(void)
+{
+    if (s_uf2.state != UI_UF2_TRANSITION_CLEARING_DISPLAYS)
+    {
+        return;
+    }
+
+    __DMB();
+    s_uf2.displays_cleared = true;
 }
 
 uint8_t ui_control_get_ch_fader_curve_a_cc(void)
@@ -2699,6 +2761,167 @@ static void process_mag(void)
     }
 }
 
+static bool uf2_transition_is_armed(UI_Uf2TransitionState_t state)
+{
+    return (state == UI_UF2_TRANSITION_WAIT_RELEASE) ||
+           (state == UI_UF2_TRANSITION_WAIT_HOLD) ||
+           (state == UI_UF2_TRANSITION_HOLDING) ||
+           (state == UI_UF2_TRANSITION_CLEARING_DISPLAYS);
+}
+
+static bool uf2_confirmation_switch_pressed(void)
+{
+    // The front-panel control documented as SW3 is named SW2 in the MCU GPIO symbols.
+    return (HAL_GPIO_ReadPin(SW2_GPIO_Port, SW2_Pin) == GPIO_PIN_RESET);
+}
+
+static void start_uf2_bootloader_request(void)
+{
+    if (uf2_transition_is_armed(s_uf2.state))
+    {
+        SEGGER_RTT_printf(0, "UF2 bootloader request already armed\r\n");
+        return;
+    }
+
+    const uint32_t now = HAL_GetTick();
+    const bool pressed = uf2_confirmation_switch_pressed();
+
+    s_uf2.arm_started_ms  = now;
+    s_uf2.displays_cleared = false;
+    s_uf2.raw_changed_ms  = now;
+    s_uf2.hold_started_ms = 0U;
+    s_uf2.notice_started_ms = 0U;
+    s_uf2.last_raw_pressed = pressed;
+    s_uf2.stable_pressed   = pressed;
+    s_uf2.release_observed = false;
+    __DMB();
+    s_uf2.state            = UI_UF2_TRANSITION_WAIT_RELEASE;
+
+    SEGGER_RTT_printf(0, "UF2 bootloader request armed for %lu ms (PC%u Ch15)\r\n",
+                      (unsigned long) UF2_ARM_WINDOW_MS,
+                      (unsigned) MIDI_PC_ARM_UF2_BOOTLOADER);
+}
+
+static void set_uf2_transition_notice(UI_Uf2TransitionState_t state, const char* reason)
+{
+    s_uf2.hold_started_ms  = 0U;
+    s_uf2.displays_cleared = false;
+    s_uf2.notice_started_ms = HAL_GetTick();
+    __DMB();
+    s_uf2.state            = state;
+
+    SEGGER_RTT_printf(0, "UF2 bootloader request %s\r\n", reason);
+}
+
+static void cancel_uf2_bootloader_request(const char* reason)
+{
+    if (!uf2_transition_is_armed(s_uf2.state))
+    {
+        return;
+    }
+
+    set_uf2_transition_notice(UI_UF2_TRANSITION_CANCELLED, reason);
+}
+
+static void service_uf2_bootloader_request(void)
+{
+    const uint32_t now = HAL_GetTick();
+    UI_Uf2TransitionState_t state = s_uf2.state;
+
+    if ((state == UI_UF2_TRANSITION_CANCELLED) || (state == UI_UF2_TRANSITION_TIMED_OUT))
+    {
+        if ((now - s_uf2.notice_started_ms) >= UF2_NOTICE_MS)
+        {
+            s_uf2.state = UI_UF2_TRANSITION_IDLE;
+            __DMB();
+        }
+        return;
+    }
+
+    if (!uf2_transition_is_armed(state))
+    {
+        return;
+    }
+
+    if (!tud_mounted())
+    {
+        cancel_uf2_bootloader_request("cancelled because USB was disconnected");
+        return;
+    }
+
+    if ((now - s_uf2.arm_started_ms) >= UF2_ARM_WINDOW_MS)
+    {
+        set_uf2_transition_notice(UI_UF2_TRANSITION_TIMED_OUT, "timed out");
+        return;
+    }
+
+    const bool raw_pressed = uf2_confirmation_switch_pressed();
+    if (raw_pressed != s_uf2.last_raw_pressed)
+    {
+        s_uf2.last_raw_pressed = raw_pressed;
+        s_uf2.raw_changed_ms   = now;
+    }
+
+    if ((raw_pressed != s_uf2.stable_pressed) &&
+        ((now - s_uf2.raw_changed_ms) >= UF2_SWITCH_DEBOUNCE_MS))
+    {
+        s_uf2.stable_pressed = raw_pressed;
+
+        if (!raw_pressed)
+        {
+            s_uf2.release_observed = true;
+            s_uf2.hold_started_ms  = 0U;
+            s_uf2.displays_cleared = false;
+            __DMB();
+            s_uf2.state            = UI_UF2_TRANSITION_WAIT_HOLD;
+            SEGGER_RTT_printf(0, "UF2 confirmation switch released; waiting for hold\r\n");
+        }
+        else if (s_uf2.release_observed)
+        {
+            s_uf2.hold_started_ms = now;
+            __DMB();
+            s_uf2.state           = UI_UF2_TRANSITION_HOLDING;
+            SEGGER_RTT_printf(0, "UF2 confirmation switch hold started\r\n");
+        }
+    }
+
+    state = s_uf2.state;
+    if ((state == UI_UF2_TRANSITION_WAIT_RELEASE) &&
+        !s_uf2.stable_pressed &&
+        ((now - s_uf2.raw_changed_ms) >= UF2_SWITCH_DEBOUNCE_MS))
+    {
+        s_uf2.release_observed = true;
+        __DMB();
+        s_uf2.state            = UI_UF2_TRANSITION_WAIT_HOLD;
+        SEGGER_RTT_printf(0, "UF2 confirmation switch release observed\r\n");
+        return;
+    }
+
+    if ((state == UI_UF2_TRANSITION_HOLDING) &&
+        s_uf2.stable_pressed &&
+        ((now - s_uf2.hold_started_ms) >= UF2_SWITCH_HOLD_MS))
+    {
+        s_uf2.displays_cleared = false;
+        __DMB();
+        s_uf2.state = UI_UF2_TRANSITION_CLEARING_DISPLAYS;
+        SEGGER_RTT_printf(0, "UF2 confirmation accepted; clearing displays before reset\r\n");
+        return;
+    }
+
+    if ((state == UI_UF2_TRANSITION_CLEARING_DISPLAYS) &&
+        s_uf2.displays_cleared &&
+        raw_pressed &&
+        s_uf2.stable_pressed)
+    {
+        __DMB();
+        __DSB();
+        NVIC_SystemReset();
+        while (1)
+        {
+        }
+    }
+}
+
 typedef void (*midi_program_handler_t)(uint8_t arg);
 
 typedef struct
@@ -2799,6 +3022,18 @@ static bool dispatch_midi_program_change(uint8_t channel, uint8_t program)
     {
         s_ui.mag_out_as_note = true;
         SEGGER_RTT_printf(0, "Mag/pot_mag output mode: Note (PC%u)\r\n", (unsigned) program);
+        return true;
+    }
+
+    if (program == MIDI_PC_ARM_UF2_BOOTLOADER)
+    {
+        start_uf2_bootloader_request();
+        return true;
+    }
+
+    if (program == MIDI_PC_CANCEL_UF2_BOOTLOADER)
+    {
+        cancel_uf2_bootloader_request("cancelled by PC125 Ch15");
         return true;
     }
 
@@ -2984,6 +3219,8 @@ void ui_control_task(void)
         is_adc_complete = false;
     }
 
+    service_uf2_bootloader_request();
+
     // Keep due writes running even when no new ADC sample has arrived. Handle
     // MIDI routing changes first so queued values cannot replay on a new input.
     service_ch_fader_dsp_outputs();
@@ -3082,6 +3319,8 @@ bool ui_control_apply_persist_state(const UI_ControlPersistState_t* state)
 void ui_control_reset_state(void)
 {
     memset(s_ch_fader_dsp, 0, sizeof(s_ch_fader_dsp));
+    memset(&s_uf2, 0, sizeof(s_uf2));
+    s_uf2.state = UI_UF2_TRANSITION_IDLE;
 
     for (uint16_t i = 0; i < ADC_NUM; i++)
     {
