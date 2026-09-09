@@ -20,6 +20,59 @@
 static void draw_sub_headphones_icon(uint8_t x, uint8_t y);
 static void draw_main_headphones_icon(uint8_t x, uint8_t y);
 static void draw_main_ch_fader_curve_preview(uint8_t x, uint8_t y, uint8_t width, uint8_t height, uint8_t cc_value);
+static void draw_main_uf2_transition(UI_Uf2TransitionState_t state, uint8_t seconds_remaining);
+
+static void draw_main_uf2_transition(UI_Uf2TransitionState_t state, uint8_t seconds_remaining)
+{
+    char timeout_line[20];
+    const char* instruction = "";
+
+    main_oled_Fill(Black);
+
+    if (state == UI_UF2_TRANSITION_CANCELLED)
+    {
+        main_oled_SetCursor(0, 0);
+        main_oled_WriteString("UF2 CANCELLED", Font_7x10, White);
+        main_oled_SetCursor(0, 12);
+        main_oled_WriteString("NO RESTART", Font_7x10, White);
+        main_oled_UpdateScreen();
+        return;
+    }
+
+    if (state == UI_UF2_TRANSITION_TIMED_OUT)
+    {
+        main_oled_SetCursor(0, 0);
+        main_oled_WriteString("UF2 TIMEOUT", Font_7x10, White);
+        main_oled_SetCursor(0, 11);
+        main_oled_WriteString("TRY AGAIN", Font_7x10, White);
+        main_oled_SetCursor(0, 22);
+        main_oled_WriteString("OR SW3 + RESET", Font_7x10, White);
+        main_oled_UpdateScreen();
+        return;
+    }
+
+    if (state == UI_UF2_TRANSITION_WAIT_RELEASE)
+    {
+        instruction = "RELEASE SW3";
+    }
+    else if (state == UI_UF2_TRANSITION_WAIT_HOLD)
+    {
+        instruction = "HOLD SW3 2 SEC";
+    }
+    else
+    {
+        instruction = "KEEP HOLDING SW3";
+    }
+
+    snprintf(timeout_line, sizeof(timeout_line), "TIMEOUT: %us", (unsigned) seconds_remaining);
+    main_oled_SetCursor(0, 0);
+    main_oled_WriteString("UF2 MODE REQUEST", Font_7x10, White);
+    main_oled_SetCursor(0, 11);
+    main_oled_WriteString((char*) instruction, Font_7x10, White);
+    main_oled_SetCursor(0, 22);
+    main_oled_WriteString(timeout_line, Font_7x10, White);
+    main_oled_UpdateScreen();
+}
 
 static void draw_main_ch_fader_curve_preview(uint8_t x, uint8_t y, uint8_t width, uint8_t height, uint8_t cc_value)
 {
@@ -266,7 +319,11 @@ void OLED_ShowInitStatus(const char* text)
 void OLED_UpdateTask(void)
 {
     const bool curve_edit_mode       = ui_control_is_curve_edit_mode_enabled();
+    const UI_Uf2TransitionState_t uf2_transition_state = ui_control_get_uf2_transition_state();
+    const uint8_t uf2_seconds_remaining = ui_control_get_uf2_seconds_remaining();
     static bool prev_curve_edit_mode = false;
+    static UI_Uf2TransitionState_t prev_uf2_transition_state = UI_UF2_TRANSITION_IDLE;
+    static uint8_t prev_uf2_seconds_remaining = 0xFFU;
 
     char line1_sr[8];
     char line1_ch2[32];
@@ -300,6 +357,65 @@ void OLED_UpdateTask(void)
     bool dirty                          = false;
     uint8_t dirty_start_page            = 0xFF;
     uint8_t dirty_end_page              = 0;
+
+    if (uf2_transition_state == UI_UF2_TRANSITION_CLEARING_DISPLAYS)
+    {
+        if (prev_uf2_transition_state != UI_UF2_TRANSITION_CLEARING_DISPLAYS)
+        {
+            main_oled_Fill(Black);
+            main_oled_UpdateScreen();
+            sub_oled_Fill(Black);
+            sub_oled_UpdateScreen();
+            prev_uf2_transition_state = UI_UF2_TRANSITION_CLEARING_DISPLAYS;
+            prev_uf2_seconds_remaining = 0U;
+            ui_control_notify_uf2_displays_cleared();
+        }
+        return;
+    }
+
+    if (uf2_transition_state != UI_UF2_TRANSITION_IDLE)
+    {
+        if ((uf2_transition_state != prev_uf2_transition_state) ||
+            (uf2_seconds_remaining != prev_uf2_seconds_remaining))
+        {
+            draw_main_uf2_transition(uf2_transition_state, uf2_seconds_remaining);
+            prev_uf2_transition_state = uf2_transition_state;
+            prev_uf2_seconds_remaining = uf2_seconds_remaining;
+        }
+        return;
+    }
+
+    if (prev_uf2_transition_state != UI_UF2_TRANSITION_IDLE)
+    {
+        main_oled_Fill(Black);
+        memset(prev_line1_sr, 0, sizeof(prev_line1_sr));
+        memset(prev_line1_ch2, 0, sizeof(prev_line1_ch2));
+        memset(prev_line2_ch1, 0, sizeof(prev_line2_ch1));
+        memset(prev_line3_sr, 0, sizeof(prev_line3_sr));
+        memset(prev_line3_hp, 0, sizeof(prev_line3_hp));
+        memset(prev_line_edit_mode, 0, sizeof(prev_line_edit_mode));
+        memset(prev_line_edit_a, 0, sizeof(prev_line_edit_a));
+        memset(prev_line_edit_b, 0, sizeof(prev_line_edit_b));
+        memset(prev_srcA, 0, sizeof(prev_srcA));
+        memset(prev_srcB, 0, sizeof(prev_srcB));
+        memset(prev_typeA, 0, sizeof(prev_typeA));
+        memset(prev_typeB, 0, sizeof(prev_typeB));
+        memset(prev_srcP, 0, sizeof(prev_srcP));
+        memset(prev_hp_src, 0, sizeof(prev_hp_src));
+        prev_dvsA_show                = false;
+        prev_dvsA_enabled             = false;
+        prev_dvsB_show                = false;
+        prev_dvsB_enabled             = false;
+        prev_reverse_a                = false;
+        prev_reverse_b                = false;
+        sub_initialized               = false;
+        dirty                        = true;
+        dirty_start_page             = 0U;
+        dirty_end_page               = (uint8_t) ((MAIN_OLED_HEIGHT / 8U) - 1U);
+        prev_curve_edit_mode         = curve_edit_mode;
+        prev_uf2_transition_state    = UI_UF2_TRANSITION_IDLE;
+        prev_uf2_seconds_remaining   = 0xFFU;
+    }
 
     if (curve_edit_mode != prev_curve_edit_mode)
     {

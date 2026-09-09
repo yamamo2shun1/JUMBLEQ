@@ -16,6 +16,17 @@
 #define UI_CH_FADER_DVS_DELAY_DEFAULT_MS 50U
 #define UI_CH_FADER_DVS_DELAY_MAX_MS     120U
 
+typedef enum
+{
+    UI_UF2_TRANSITION_IDLE = 0,
+    UI_UF2_TRANSITION_WAIT_RELEASE,
+    UI_UF2_TRANSITION_WAIT_HOLD,
+    UI_UF2_TRANSITION_HOLDING,
+    UI_UF2_TRANSITION_CLEARING_DISPLAYS,
+    UI_UF2_TRANSITION_CANCELLED,
+    UI_UF2_TRANSITION_TIMED_OUT,
+} UI_Uf2TransitionState_t;
+
 typedef struct
 {
     uint8_t current_ch1_input_type;
@@ -68,6 +79,9 @@ uint8_t ui_control_get_ch_fader_dvs_delay_ms(void);
 bool ui_control_is_ch_fader_reverse_a_enabled(void);
 bool ui_control_is_ch_fader_reverse_b_enabled(void);
 bool ui_control_is_curve_edit_mode_enabled(void);
+UI_Uf2TransitionState_t ui_control_get_uf2_transition_state(void);
+uint8_t ui_control_get_uf2_seconds_remaining(void);
+void ui_control_notify_uf2_displays_cleared(void);
 uint8_t ui_control_get_ch_fader_curve_a_cc(void);
 uint8_t ui_control_get_ch_fader_curve_b_cc(void);
 float ui_control_evaluate_ch_fader_curve_preview(uint8_t cc_value, float normalized_preview_position);
