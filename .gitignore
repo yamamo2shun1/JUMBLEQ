@@ -1,5 +1,6 @@
 ### Documents
 Datasheets/
+Docs/development/
 
 FlexASIO.toml
 
@@ -22,6 +23,8 @@ KiCad/GLPMJ_One_Plate/
 .settings
 Debug
 *.elf
+*.uf2
+*.bin
 *.swp
 *.launch
 !STM32CubeIDE/LED_BLINK_APP/Appli/LED_BLINK_APP_Appli Debug.launch
