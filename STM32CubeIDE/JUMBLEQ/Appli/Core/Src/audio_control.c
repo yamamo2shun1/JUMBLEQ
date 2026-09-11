@@ -949,10 +949,11 @@ static inline void fill_tx_half(uint32_t index0)
 {
     const uint32_t n           = (SAI_TX_BUF_SIZE / 2);
     const uint32_t frame_words = 4;  // 4ch x 32bit = 1 frame
-    uint32_t pull_words        = n;
+    uint32_t consume_words     = n;
+    uint32_t source_skip_words = 0;
 
     // index0の範囲チェック
-    if (index0 >= SAI_TX_BUF_SIZE)
+    if (index0 > (SAI_TX_BUF_SIZE - n))
     {
         // 不正な値は無音で埋める
         return;
@@ -988,8 +989,8 @@ static inline void fill_tx_half(uint32_t index0)
             memset(stereo_out_buf + index0, 0, n * sizeof(int32_t));
             return;
         }
-        pull_words = ((uint32_t) used / frame_words) * frame_words;
-        if (pull_words == 0)
+        consume_words = ((uint32_t) used / frame_words) * frame_words;
+        if (consume_words == 0)
         {
             memset(stereo_out_buf + index0, 0, n * sizeof(int32_t));
             return;
@@ -1013,8 +1014,9 @@ static inline void fill_tx_half(uint32_t index0)
 
     if (used >= (int32_t) n && used > high_thr && used >= (int32_t) (n + frame_words))
     {
-        // バッファ過多: 1 frame 余分に消費して追従
-        pull_words = n + frame_words;
+        // バッファ過多: 最古の1 frameを捨て、DMA halfには通常量だけ書き込む
+        consume_words     = n + frame_words;
+        source_skip_words = frame_words;
 #if AUDIO_DIAG_LOG
         dbg_tx_drift_up_events++;
 #endif
@@ -1022,43 +1024,53 @@ static inline void fill_tx_half(uint32_t index0)
     else if (used >= (int32_t) n && used < low_thr && n > frame_words)
     {
         // バッファ不足傾向: 1 frame 少なく消費して追従
-        pull_words = n - frame_words;
+        consume_words = n - frame_words;
 #if AUDIO_DIAG_LOG
         dbg_tx_drift_dn_events++;
 #endif
     }
 
     // 安全ガード
-    if ((int32_t) pull_words > used)
+    if ((int32_t) consume_words > used)
     {
-        pull_words = (uint32_t) used;
+        consume_words = (uint32_t) used;
     }
-    pull_words = (pull_words / frame_words) * frame_words;
+    consume_words = (consume_words / frame_words) * frame_words;
 
-    if (pull_words == 0)
+    if (consume_words == 0)
     {
         memset(stereo_out_buf + index0, 0, n * sizeof(int32_t));
         return;
     }
 
-    const uint32_t index1 = sai_transmit_index & (SAI_RNG_BUF_SIZE - 1);
+    if (source_skip_words > consume_words)
+    {
+        source_skip_words = 0;
+    }
+    uint32_t copy_words = consume_words - source_skip_words;
+    if (copy_words > n)
+    {
+        copy_words = n;
+    }
+
+    const uint32_t index1 = (sai_transmit_index + source_skip_words) & (SAI_RNG_BUF_SIZE - 1);
     uint32_t first        = SAI_RNG_BUF_SIZE - index1;
-    if (first > pull_words)
-        first = pull_words;
+    if (first > copy_words)
+        first = copy_words;
 
     memcpy(stereo_out_buf + index0, sai_tx_rng_buf + index1, first * sizeof(int32_t));
-    if (first < pull_words)
-        memcpy(stereo_out_buf + index0 + first, sai_tx_rng_buf, (pull_words - first) * sizeof(int32_t));
+    if (first < copy_words)
+        memcpy(stereo_out_buf + index0 + first, sai_tx_rng_buf, (copy_words - first) * sizeof(int32_t));
 
-    if (pull_words < n)
+    if (copy_words < n)
     {
 #if AUDIO_DIAG_LOG
         dbg_tx_partial_fill_events++;
 #endif
         // 不足分は最後の1frameを繰り返し、クリックノイズを抑える
-        uint32_t* dst = (uint32_t*) (stereo_out_buf + index0 + pull_words);
-        uint32_t* src = (uint32_t*) (stereo_out_buf + index0 + pull_words - frame_words);
-        for (uint32_t i = pull_words; i < n; i += frame_words)
+        uint32_t* dst = (uint32_t*) (stereo_out_buf + index0 + copy_words);
+        uint32_t* src = (uint32_t*) (stereo_out_buf + index0 + copy_words - frame_words);
+        for (uint32_t i = copy_words; i < n; i += frame_words)
         {
             dst[0] = src[0];
             dst[1] = src[1];
@@ -1068,7 +1080,7 @@ static inline void fill_tx_half(uint32_t index0)
         }
     }
 
-    sai_transmit_index += pull_words;
+    sai_transmit_index += consume_words;
 }
 
 void copybuf_ring2sai(void)
