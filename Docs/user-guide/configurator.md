@@ -32,7 +32,7 @@ Connection and MIDI communication have been verified with MIDIWeb Browser on iPa
 
 ## Alternative Max Versions
 
-The Max Standalone and Max for Live versions remain in the repository for existing workflows, but they have a lower maintenance priority than the Web app. Their source files and packaged versions are available in the [`Max` directory](../../Max/).
+The Max Standalone and Max for Live versions remain in the repository for existing workflows, but they have a lower maintenance priority than the Web app. Their source files and packaged versions are available in the [`Max` directory](../../Max/). The source patches expose Off, DVS, and SYNTH input-mode choices for both input channels.
 
 ### Max Standalone
 

@@ -1,6 +1,6 @@
 # Operation Guide
 
-This guide explains JUMBLEQ's physical controls, audio routing, USB signal routing, DVS operation, and OLED indications.
+This guide explains JUMBLEQ's physical controls, audio routing, USB signal routing, input operating modes, and OLED indications.
 
 ## Signal Routing Overview
 
@@ -8,7 +8,9 @@ Audio sources are assigned to Channel Faders A and B using [JUMBLEQ Configurator
 
 See the [Signal Flow reference](../reference/signal-flow.md) for the detailed audio-routing diagram.
 
-## USB Signal Routing
+## Input Operating Modes and USB Signal Routing
+
+Input Ch. 1 and Input Ch. 2 can each be set independently to Off, DVS, or SYNTH using a compatible configurator. Off selects standard mixer routing, while DVS selects the existing USB DVS send/return path. SYNTH reserves the input for internal oscillator processing; the selector, saved state, and OLED indication are provided before the oscillator audio engine itself is added.
 
 DVS can be enabled independently for Input Ch. 1 and Input Ch. 2 using [JUMBLEQ Configurator](./configurator.md). The DVS state changes the USB Send source as follows:
 
@@ -132,4 +134,4 @@ The main OLED shows the current sample rate, input and output gains, Return stat
 
 When USB 1/2 or USB 3/4 is selected, the Return gain is shown after the source indication. When Return is set to None, the gain field shows `---`.
 
-The sub OLED shows the sources assigned to Channel Faders A and B, their input types and DVS states, the post-fader source, and the selected headphone-monitor source. `[D]` indicates that DVS is enabled for the assigned input channel.
+The sub OLED shows the sources assigned to Channel Faders A and B, their input types and operating modes, the post-fader source, and the selected headphone-monitor source. `[D]` indicates DVS, `[S]` indicates SYNTH, and `[ ]` indicates Off for the assigned input channel.

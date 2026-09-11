@@ -136,24 +136,37 @@ static void update_sub_text_block(char* prev, size_t prev_size, const char* text
     merge_dirty_pages(dirty, dirty_start_page, dirty_end_page, page_start, page_end);
 }
 
-static void update_sub_dvs_badge(bool show, bool enabled, uint8_t x, uint8_t y, bool* prev_show, bool* prev_enabled, bool* dirty, uint8_t* dirty_start_page, uint8_t* dirty_end_page)
+static const char* input_mode_badge(UI_InputMode_t mode)
 {
-    if ((*prev_show == show) && (!show || (*prev_enabled == enabled)))
+    if (mode == UI_INPUT_MODE_DVS)
+    {
+        return "[D]";
+    }
+    if (mode == UI_INPUT_MODE_SYNTH)
+    {
+        return "[S]";
+    }
+    return "[ ]";
+}
+
+static void update_sub_input_mode_badge(bool show, UI_InputMode_t mode, uint8_t x, uint8_t y, bool* prev_show, UI_InputMode_t* prev_mode, bool* dirty, uint8_t* dirty_start_page, uint8_t* dirty_end_page)
+{
+    if ((*prev_show == show) && (!show || (*prev_mode == mode)))
     {
         return;
     }
 
-    // "[D]" / "[ ]" in Font_7x10 requires ~3 chars width.
+    // "[D]" / "[S]" / "[ ]" in Font_7x10 requires ~3 chars width.
     sub_oled_FillRectangle(x, y, (uint8_t) (x + 20U), (uint8_t) (y + 9U), Black);
 
     if (show)
     {
         sub_oled_SetCursor(x, y);
-        sub_oled_WriteString(enabled ? "[D]" : "[ ]", Font_7x10, White);
+        sub_oled_WriteString((char*) input_mode_badge(mode), Font_7x10, White);
     }
 
-    *prev_show    = show;
-    *prev_enabled = enabled;
+    *prev_show = show;
+    *prev_mode = mode;
     merge_dirty_pages(dirty, dirty_start_page, dirty_end_page, 0, 1);
 }
 
@@ -347,10 +360,10 @@ void OLED_UpdateTask(void)
     static char prev_typeB[32]          = {0};
     static char prev_srcP[32]           = {0};
     static char prev_hp_src[8]          = {0};
-    static bool prev_dvsA_show          = false;
-    static bool prev_dvsA_enabled       = false;
-    static bool prev_dvsB_show          = false;
-    static bool prev_dvsB_enabled       = false;
+    static bool prev_modeA_show         = false;
+    static UI_InputMode_t prev_modeA    = UI_INPUT_MODE_DISABLED;
+    static bool prev_modeB_show         = false;
+    static UI_InputMode_t prev_modeB    = UI_INPUT_MODE_DISABLED;
     static bool prev_reverse_a          = false;
     static bool prev_reverse_b          = false;
     static bool sub_initialized         = false;
@@ -402,10 +415,10 @@ void OLED_UpdateTask(void)
         memset(prev_typeB, 0, sizeof(prev_typeB));
         memset(prev_srcP, 0, sizeof(prev_srcP));
         memset(prev_hp_src, 0, sizeof(prev_hp_src));
-        prev_dvsA_show                = false;
-        prev_dvsA_enabled             = false;
-        prev_dvsB_show                = false;
-        prev_dvsB_enabled             = false;
+        prev_modeA_show               = false;
+        prev_modeA                    = UI_INPUT_MODE_DISABLED;
+        prev_modeB_show               = false;
+        prev_modeB                    = UI_INPUT_MODE_DISABLED;
         prev_reverse_a                = false;
         prev_reverse_b                = false;
         sub_initialized               = false;
@@ -598,16 +611,16 @@ void OLED_UpdateTask(void)
                                   &sub_dirty_end_page);
 
     uint8_t srcA_channel = get_current_input_srcA_channel();
-    bool srcA_show_dvs   = (srcA_channel != 0U);
-    bool srcA_dvs_enable = (srcA_channel == 1U) ? get_current_ch1_dvs_enabled()
-                                                : ((srcA_channel == 2U) ? get_current_ch2_dvs_enabled() : false);
-    update_sub_dvs_badge(srcA_show_dvs, srcA_dvs_enable, 35, 5, &prev_dvsA_show, &prev_dvsA_enabled, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
+    bool srcA_show_mode = (srcA_channel != 0U);
+    UI_InputMode_t srcA_mode = (srcA_channel == 1U) ? get_current_ch1_input_mode()
+                                                    : ((srcA_channel == 2U) ? get_current_ch2_input_mode() : UI_INPUT_MODE_DISABLED);
+    update_sub_input_mode_badge(srcA_show_mode, srcA_mode, 35, 5, &prev_modeA_show, &prev_modeA, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
 
     uint8_t srcB_channel = get_current_input_srcB_channel();
-    bool srcB_show_dvs   = (srcB_channel != 0U);
-    bool srcB_dvs_enable = (srcB_channel == 1U) ? get_current_ch1_dvs_enabled()
-                                                : ((srcB_channel == 2U) ? get_current_ch2_dvs_enabled() : false);
-    update_sub_dvs_badge(srcB_show_dvs, srcB_dvs_enable, 72, 5, &prev_dvsB_show, &prev_dvsB_enabled, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
+    bool srcB_show_mode = (srcB_channel != 0U);
+    UI_InputMode_t srcB_mode = (srcB_channel == 1U) ? get_current_ch1_input_mode()
+                                                    : ((srcB_channel == 2U) ? get_current_ch2_input_mode() : UI_INPUT_MODE_DISABLED);
+    update_sub_input_mode_badge(srcB_show_mode, srcB_mode, 72, 5, &prev_modeB_show, &prev_modeB, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
 
     if (sub_dirty)
     {

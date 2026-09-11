@@ -25,8 +25,8 @@ typedef struct
     uint8_t current_ch_fader_post_assign;
     uint8_t current_return_assign;
     uint8_t current_hp_out_source;
-    uint8_t current_ch1_dvs_enable;
-    uint8_t current_ch2_dvs_enable;
+    uint8_t current_ch1_input_mode;
+    uint8_t current_ch2_input_mode;
     uint8_t ch_fader_dvs_delay_ms;
     uint8_t mag_output_mode_flags;
     float current_ch_fader_curve_width_a;

@@ -100,8 +100,8 @@ void EEPROM_ConfigSetDefaults(EEPROM_DeviceConfig_t* cfg)
     cfg->current_ch_fader_post_assign  = 4U; /* INPUT_SRC_USB12 */
     cfg->current_return_assign  = 5U; /* INPUT_SRC_USB34 */
     cfg->current_hp_out_source  = CUE_SEL_MST;
-    cfg->current_ch1_dvs_enable = 0U; /* disabled */
-    cfg->current_ch2_dvs_enable = 0U; /* disabled */
+    cfg->current_ch1_input_mode = UI_INPUT_MODE_DISABLED;
+    cfg->current_ch2_input_mode = UI_INPUT_MODE_DISABLED;
     cfg->ch_fader_dvs_delay_ms  = UI_CH_FADER_DVS_DELAY_DEFAULT_MS;
     cfg->mag_output_mode_flags  = 0U;
     cfg->current_ch_fader_curve_width_a = UI_CH_FADER_CURVE_WIDTH_A_DEFAULT;
@@ -129,8 +129,8 @@ void EEPROM_ConfigCaptureCurrent(EEPROM_DeviceConfig_t* cfg)
     cfg->current_ch_fader_post_assign  = state.current_ch_fader_post_assign;
     cfg->current_return_assign  = state.current_return_assign;
     cfg->current_hp_out_source  = state.current_hp_out_source;
-    cfg->current_ch1_dvs_enable = state.current_ch1_dvs_enable;
-    cfg->current_ch2_dvs_enable = state.current_ch2_dvs_enable;
+    cfg->current_ch1_input_mode = state.current_ch1_input_mode;
+    cfg->current_ch2_input_mode = state.current_ch2_input_mode;
     cfg->ch_fader_dvs_delay_ms  = state.ch_fader_dvs_delay_ms;
     cfg->mag_output_mode_flags  = state.mag_out_as_note ? EEPROM_CFG_FLAG_MAG_OUT_AS_NOTE : 0U;
     cfg->current_ch_fader_curve_width_a = state.current_ch_fader_curve_width_a;
@@ -337,8 +337,8 @@ HAL_StatusTypeDef EEPROM_LoadConfig(I2C_HandleTypeDef* hi2c, EEPROM_DeviceConfig
         cfg->current_ch_fader_post_assign = rec_v7.payload.current_ch_fader_post_assign;
         cfg->current_return_assign = rec_v7.payload.current_return_assign;
         cfg->current_hp_out_source = rec_v7.payload.current_hp_out_source;
-        cfg->current_ch1_dvs_enable = rec_v7.payload.current_ch1_dvs_enable;
-        cfg->current_ch2_dvs_enable = rec_v7.payload.current_ch2_dvs_enable;
+        cfg->current_ch1_input_mode = (rec_v7.payload.current_ch1_dvs_enable != 0U) ? UI_INPUT_MODE_DVS : UI_INPUT_MODE_DISABLED;
+        cfg->current_ch2_input_mode = (rec_v7.payload.current_ch2_dvs_enable != 0U) ? UI_INPUT_MODE_DVS : UI_INPUT_MODE_DISABLED;
         cfg->mag_output_mode_flags = rec_v7.payload.mag_output_mode_flags;
         cfg->current_ch_fader_curve_width_a = rec_v7.payload.current_ch_fader_curve_width_a;
         cfg->current_ch_fader_curve_width_b = rec_v7.payload.current_ch_fader_curve_width_b;

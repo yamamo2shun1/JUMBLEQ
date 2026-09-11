@@ -44,25 +44,27 @@ enum
     CH_FADER_ASSIGN_POST_CH2   = 13,
     CH_FADER_ASSIGN_POST_USB12 = 14,
     CH_FADER_ASSIGN_POST_USB34 = 15,
-    CH1_DVS_DISABLE      = 16,
-    CH1_DVS_ENABLE       = 17,
-    CH2_DVS_DISABLE      = 18,
-    CH2_DVS_ENABLE       = 19,
-    RETURN_CH_USB12      = 20,
-    RETURN_CH_USB34      = 21,
-    RETURN_CH_NONE             = 22,
-    HP_OUT_CH_FADER_A          = 23,
-    HP_OUT_CH_FADER_B          = 24,
-    HP_OUT_THRU                = 25,
-    HP_OUT_MASTER              = 26,
-    CH_FADER_AUX_SENSOR2_TO_A  = 27,
-    CH_FADER_AUX_SENSOR2_TO_B  = 28,
-    CH_FADER_AUX_SENSOR3_TO_A  = 29,
-    CH_FADER_AUX_SENSOR3_TO_B  = 30,
-    CH_FADER_REVERSE_A_OFF     = 31,
-    CH_FADER_REVERSE_A_ON      = 32,
-    CH_FADER_REVERSE_B_OFF     = 33,
-    CH_FADER_REVERSE_B_ON      = 34,
+    CH1_MODE_DISABLE           = 16,
+    CH1_MODE_DVS               = 17,
+    CH1_MODE_SYNTH             = 18,
+    CH2_MODE_DISABLE           = 19,
+    CH2_MODE_DVS               = 20,
+    CH2_MODE_SYNTH             = 21,
+    RETURN_CH_USB12            = 22,
+    RETURN_CH_USB34            = 23,
+    RETURN_CH_NONE             = 24,
+    HP_OUT_CH_FADER_A          = 25,
+    HP_OUT_CH_FADER_B          = 26,
+    HP_OUT_THRU                = 27,
+    HP_OUT_MASTER              = 28,
+    CH_FADER_AUX_SENSOR2_TO_A  = 29,
+    CH_FADER_AUX_SENSOR2_TO_B  = 30,
+    CH_FADER_AUX_SENSOR3_TO_A  = 31,
+    CH_FADER_AUX_SENSOR3_TO_B  = 32,
+    CH_FADER_REVERSE_A_OFF     = 33,
+    CH_FADER_REVERSE_A_ON      = 34,
+    CH_FADER_REVERSE_B_OFF     = 35,
+    CH_FADER_REVERSE_B_ON      = 36,
 };
 
 enum
@@ -107,8 +109,8 @@ void control_ch2_out_gain(const uint16_t adc_val);
 void control_hp_out_gain(const uint16_t adc_val);
 
 void select_input_type(uint8_t ch, uint8_t type);
-void enable_dvs(uint8_t ch, bool enable);
-void select_send_source(uint8_t ch, bool select_dvs);
+void set_input_insert_enabled(uint8_t ch, bool enabled);
+void select_send_source(uint8_t ch, bool select_insert);
 
 void select_ch_fader_assign_a_source(uint8_t ch);
 void select_ch_fader_assign_b_source(uint8_t ch);

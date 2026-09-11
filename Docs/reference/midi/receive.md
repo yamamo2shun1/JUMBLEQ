@@ -23,14 +23,14 @@ This document describes the MIDI receive specification based on the `JUMBLEQ/App
 | 4/5/6/7 | Assign an input source (Ch. 1 / Ch. 2 / USB[1/2] / USB[3/4]) to Channel Fader A. |
 | 8/9/10/11 | Assign an input source (Ch. 1 / Ch. 2 / USB[1/2] / USB[3/4]) to Channel Fader B. |
 | 12/13/14/15 | Assign an input source (Ch. 1 / Ch. 2 / USB[1/2] / USB[3/4]) to Post Fader. |
-| 16/17 | Disable or enable DVS mode for Ch. 1. |
-| 18/19 | Disable or enable DVS mode for Ch. 2. |
-| 20/21/22 | Select the Return source (USB[1/2] / USB[3/4] / None). |
-| 23/24/25/26 | Select the headphone output source (FADER_A / FADER_B / THRU / MASTER). |
-| 27/28 | Assign magnetic switch 2 to the auxiliary fade-down function for Channel Fader A or B. |
-| 29/30 | Assign magnetic switch 3 to the auxiliary fade-down function for Channel Fader A or B. |
-| 31/32 | Set the Channel Fader A direction (Normal / Reverse). |
-| 33/34 | Set the Channel Fader B direction (Normal / Reverse). |
+| 16/17/18 | Set the Ch. 1 input mode (Off / DVS / SYNTH). |
+| 19/20/21 | Set the Ch. 2 input mode (Off / DVS / SYNTH). |
+| 22/23/24 | Select the Return source (USB[1/2] / USB[3/4] / None). |
+| 25/26/27/28 | Select the headphone output source (FADER_A / FADER_B / THRU / MASTER). |
+| 29/30 | Assign magnetic switch 2 to the auxiliary fade-down function for Channel Fader A or B. |
+| 31/32 | Assign magnetic switch 3 to the auxiliary fade-down function for Channel Fader A or B. |
+| 33/34 | Set the Channel Fader A direction (Normal / Reverse). |
+| 35/36 | Set the Channel Fader B direction (Normal / Reverse). |
 | 120/121 | Disable or enable Channel Fader curve edit mode. |
 | 122/123 | Select the output mode (CC / Note) for magnetic controls and channel fader sensors. |
 | 124 | Arm the 10-second physical confirmation window for UF2 bootloader mode. |
@@ -40,12 +40,12 @@ This document describes the MIDI receive specification based on the `JUMBLEQ/App
 
 Notes:
 
-- `PC22` selects `None`, which disables the Return signal path.
+- `PC24` selects `None`, which disables the Return signal path.
 - Auxiliary fade-down assignments for magnetic switches 2 and 3 take effect immediately when the Program Change message is received.
 - The default assignments are Channel Fader A for magnetic switch 2 and Channel Fader B for magnetic switch 3.
 - Direction can be configured independently for Channel Faders A and B and takes effect immediately. The default is Normal for both faders.
 - Reverse inverts the final fader response for Fade Up and all Fade Down controls assigned to that fader, including auxiliary Fade Down controls. It does not change the live MIDI values transmitted by the individual magnetic sensors.
-- `PC127` saves the complete device configuration listed in Section 6 to EEPROM, including the DVS enable states, Return and headphone source assignments, magnetic output mode, auxiliary fade-down assignments, Direction settings, and curves for Channel Faders A and B.
+- `PC127` saves the complete device configuration listed in Section 6 to EEPROM, including the Ch. 1 and Ch. 2 input modes, Return and headphone source assignments, magnetic output mode, auxiliary fade-down assignments, Direction settings, and curves for Channel Faders A and B.
 - `PC126` transmits the **current operating state (parameters eligible for saving)** rather than reading and transmitting the EEPROM contents.
 - `PC124` never resets the device by itself. After it is received, SW3 must be observed released and then held continuously for 2 seconds before the device resets into UF2 mode.
 - The PC124 confirmation window is cancelled by `PC125`, a 10-second timeout, or USB disconnection. Repeated PC124 messages do not extend an active window.
@@ -104,7 +104,7 @@ Curve response:
 - Saved parameters:
   - CH1/CH2 input types
   - Channel Fader A/B and Post Fader assignments
-  - CH1/CH2 DVS enable states
+  - CH1/CH2 input modes (Off / DVS / SYNTH)
   - DVS magnetic-switch fader delay
   - Return source assignment
   - Headphone output source
@@ -112,7 +112,7 @@ Curve response:
   - Auxiliary fade-down assignments for magnetic switches 2 and 3
   - Direction settings (Normal / Reverse) for Channel Faders A/B
   - Curve settings for Channel Faders A/B
-- EEPROM record version: `0x0008` (`0x0007` records are loaded with a 50 ms DVS fader delay)
+- EEPROM record version: `0x0008` (`0x0007` records are loaded with a 50 ms DVS fader delay and their DVS booleans are converted to Off/DVS input modes)
 
 ## 7. Implementation Notes
 

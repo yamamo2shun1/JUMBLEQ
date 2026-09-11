@@ -620,23 +620,23 @@ static void select_send_ch2_src(bool select_dvs)
     SIGMA_WRITE_REGISTER_BLOCK_IT(DEVICE_ADDR_ADAU146XSCHEMATIC_1, MOD_SEND_SW_2_INDEX_ADDR, 4, Mode0_0);
 }
 
-void select_send_source(uint8_t ch, bool select_dvs)
+void select_send_source(uint8_t ch, bool select_insert)
 {
     if (ch == INPUT_CH1)
     {
-        select_send_ch1_src(select_dvs);
+        select_send_ch1_src(select_insert);
     }
     else if (ch == INPUT_CH2)
     {
-        select_send_ch2_src(select_dvs);
+        select_send_ch2_src(select_insert);
     }
 }
 
-void enable_dvs(uint8_t ch, bool enable)
+void set_input_insert_enabled(uint8_t ch, bool enabled)
 {
     if (ch == INPUT_CH1)
     {
-        if (enable)
+        if (enabled)
         {
             enable_ch1_dvs();
         }
@@ -647,7 +647,7 @@ void enable_dvs(uint8_t ch, bool enable)
     }
     else if (ch == INPUT_CH2)
     {
-        if (enable)
+        if (enabled)
         {
             enable_ch2_dvs();
         }

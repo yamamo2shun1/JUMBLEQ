@@ -46,17 +46,17 @@ When the device receives `PC126` on Ch. 15 from the host, it sends the current v
 | 4/5/6/7 | Channel Fader A source (Ch. 1 / Ch. 2 / USB[1/2] / USB[3/4]) |
 | 8/9/10/11 | Channel Fader B source (Ch. 1 / Ch. 2 / USB[1/2] / USB[3/4]) |
 | 12/13/14/15 | Post Fader source (Ch. 1 / Ch. 2 / USB[1/2] / USB[3/4]) |
-| 16/17 | Ch. 1 DVS (Off / On) |
-| 18/19 | Ch. 2 DVS (Off / On) |
-| 20/21/22 | Return source (USB[1/2] / USB[3/4] / None) |
-| 23/24/25/26 | Headphone output source (FADER_A / FADER_B / THRU / MASTER) |
-| 27/28 | Auxiliary fade-down assignment for magnetic switch 2 (Channel Fader A/B) |
-| 29/30 | Auxiliary fade-down assignment for magnetic switch 3 (Channel Fader A/B) |
-| 31/32 | Channel Fader A direction (Normal / Reverse) |
-| 33/34 | Channel Fader B direction (Normal / Reverse) |
+| 16/17/18 | Ch. 1 input mode (Off / DVS / SYNTH) |
+| 19/20/21 | Ch. 2 input mode (Off / DVS / SYNTH) |
+| 22/23/24 | Return source (USB[1/2] / USB[3/4] / None) |
+| 25/26/27/28 | Headphone output source (FADER_A / FADER_B / THRU / MASTER) |
+| 29/30 | Auxiliary fade-down assignment for magnetic switch 2 (Channel Fader A/B) |
+| 31/32 | Auxiliary fade-down assignment for magnetic switch 3 (Channel Fader A/B) |
+| 33/34 | Channel Fader A direction (Normal / Reverse) |
+| 35/36 | Channel Fader B direction (Normal / Reverse) |
 | 122/123 | Output mode for magnetic controls and channel fader sensors (CC / Note) |
 
-The dump contains exactly one value from each Direction pair: `PC31` (Normal) or `PC32` (Reverse) for Channel Fader A, followed by `PC33` (Normal) or `PC34` (Reverse) for Channel Fader B.
+The dump contains exactly one value from each Direction pair: `PC33` (Normal) or `PC34` (Reverse) for Channel Fader A, followed by `PC35` (Normal) or `PC36` (Reverse) for Channel Fader B.
 
 ### 4.2 Control Change (Device -> Host, Ch. 15)
 
