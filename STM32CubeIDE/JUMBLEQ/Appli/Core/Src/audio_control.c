@@ -269,6 +269,91 @@ static TimecodeOscillator_t s_timecode_oscillator[TIMECODE_SYNTH_CHANNEL_COUNT];
 static TimecodeSynthFifo_t s_timecode_synth_fifo[TIMECODE_SYNTH_CHANNEL_COUNT];
 static int32_t s_timecode_synth_block[TIMECODE_SYNTH_CHANNEL_COUNT][TIMECODE_SYNTH_BLOCK_FRAMES];
 static bool s_timecode_synth_active[TIMECODE_SYNTH_CHANNEL_COUNT] = {false, false};
+static volatile uint8_t s_timecode_synth_control[TIMECODE_SYNTH_CONTROL_COUNT] = {
+    [TIMECODE_SYNTH_CONTROL_ROOT]        = 64u,
+    [TIMECODE_SYNTH_CONTROL_MORPH]       = 0u,
+    [TIMECODE_SYNTH_CONTROL_SLOPE]       = 64u,
+    [TIMECODE_SYNTH_CONTROL_SMOOTH_FOLD] = 64u,
+    [TIMECODE_SYNTH_CONTROL_WARP_AMOUNT] = 0u,
+};
+static volatile uint32_t s_timecode_synth_control_revision = 1u;
+static uint32_t s_timecode_synth_applied_revision = 0u;
+
+static float timecode_synth_normalize_control(uint8_t value)
+{
+    return (float) value * (1.0f / 127.0f);
+}
+
+static float timecode_synth_smooth_fold_from_control(uint8_t value)
+{
+    enum
+    {
+        SMOOTH_FOLD_DEAD_ZONE_LOW  = 60u,
+        SMOOTH_FOLD_DEAD_ZONE_HIGH = 67u,
+    };
+
+    if (value < SMOOTH_FOLD_DEAD_ZONE_LOW)
+    {
+        return -1.0f + ((float) value / (float) SMOOTH_FOLD_DEAD_ZONE_LOW);
+    }
+    if (value > SMOOTH_FOLD_DEAD_ZONE_HIGH)
+    {
+        return (float) (value - SMOOTH_FOLD_DEAD_ZONE_HIGH) /
+               (float) (127u - SMOOTH_FOLD_DEAD_ZONE_HIGH);
+    }
+    return 0.0f;
+}
+
+static void timecode_synth_apply_pending_controls(void)
+{
+    uint8_t controls[TIMECODE_SYNTH_CONTROL_COUNT];
+    uint32_t revision_before;
+    uint32_t revision_after;
+
+    do
+    {
+        revision_before = s_timecode_synth_control_revision;
+        __DMB();
+        for (uint32_t i = 0u; i < TIMECODE_SYNTH_CONTROL_COUNT; i++)
+        {
+            controls[i] = s_timecode_synth_control[i];
+        }
+        __DMB();
+        revision_after = s_timecode_synth_control_revision;
+    } while (revision_before != revision_after);
+
+    if (revision_after == s_timecode_synth_applied_revision)
+    {
+        return;
+    }
+
+    const float root_normalized =
+        timecode_synth_normalize_control(controls[TIMECODE_SYNTH_CONTROL_ROOT]);
+    const float root_hz = 27.5f * powf(2.0f, 4.0f * root_normalized);
+    const float morph =
+        timecode_synth_normalize_control(controls[TIMECODE_SYNTH_CONTROL_MORPH]);
+    const float slope = 0.1f + 0.8f *
+        timecode_synth_normalize_control(controls[TIMECODE_SYNTH_CONTROL_SLOPE]);
+    const float smooth_fold = timecode_synth_smooth_fold_from_control(
+        controls[TIMECODE_SYNTH_CONTROL_SMOOTH_FOLD]);
+    const float warp_amount =
+        timecode_synth_normalize_control(controls[TIMECODE_SYNTH_CONTROL_WARP_AMOUNT]);
+
+    for (uint32_t channel = 0u; channel < TIMECODE_SYNTH_CHANNEL_COUNT; channel++)
+    {
+        TimecodeOscillatorParameters_t parameters =
+            *timecode_oscillator_get_parameters(&s_timecode_oscillator[channel]);
+        parameters.root_hz        = root_hz;
+        parameters.morph          = morph;
+        parameters.slope          = slope;
+        parameters.smooth_fold    = smooth_fold;
+        parameters.warp_algorithm = TIMECODE_WARP_CROSSFOLD;
+        parameters.warp_amount    = warp_amount;
+        timecode_oscillator_set_parameters(&s_timecode_oscillator[channel], &parameters);
+    }
+
+    s_timecode_synth_applied_revision = revision_after;
+}
 
 static void timecode_synth_fifo_reset(TimecodeSynthFifo_t* fifo)
 {
@@ -336,6 +421,7 @@ static void timecode_synth_reset_for_sample_rate(uint32_t sample_rate_hz)
                                         s_timecode_synth_active[channel]);
         timecode_synth_fifo_reset(&s_timecode_synth_fifo[channel]);
     }
+    s_timecode_synth_applied_revision = 0u;
 }
 
 static void timecode_synth_initialize(uint32_t sample_rate_hz)
@@ -351,6 +437,8 @@ static void timecode_synth_initialize(uint32_t sample_rate_hz)
 
 static void timecode_synth_update_modes(void)
 {
+    timecode_synth_apply_pending_controls();
+
     const bool requested[TIMECODE_SYNTH_CHANNEL_COUNT] = {
         get_current_ch1_input_mode() == UI_INPUT_MODE_SYNTH,
         get_current_ch2_input_mode() == UI_INPUT_MODE_SYNTH,
@@ -414,6 +502,33 @@ static void timecode_synth_overlay_tx_half(uint32_t index0)
     }
 }
 #endif
+
+void audio_control_set_timecode_synth_control(TimecodeSynthControl_t control, uint8_t value)
+{
+#if ENABLE_TIMECODE_OSCILLATOR
+    if ((uint32_t) control >= TIMECODE_SYNTH_CONTROL_COUNT)
+    {
+        return;
+    }
+
+    if (value > 127u)
+    {
+        value = 127u;
+    }
+
+    if (s_timecode_synth_control[control] == value)
+    {
+        return;
+    }
+
+    s_timecode_synth_control[control] = value;
+    __DMB();
+    s_timecode_synth_control_revision++;
+#else
+    (void) control;
+    (void) value;
+#endif
+}
 
 // Speaker data size received in the last frame
 uint16_t spk_data_size;

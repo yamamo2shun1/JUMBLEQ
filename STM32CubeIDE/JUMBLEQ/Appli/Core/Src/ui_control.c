@@ -1623,25 +1623,49 @@ static void set_pot_mux_channel(uint8_t channel)
 
 static void apply_pot_value(uint8_t channel, uint16_t value)
 {
+    const bool synth_mode_active =
+        (s_ui.current_ch1_input_mode == UI_INPUT_MODE_SYNTH) ||
+        (s_ui.current_ch2_input_mode == UI_INPUT_MODE_SYNTH);
+
     switch (channel)
     {
     case POT_CH_CC0:
-        send_control_change(0, value, 0);
+        audio_control_set_timecode_synth_control(TIMECODE_SYNTH_CONTROL_ROOT, (uint8_t) value);
+        if (!synth_mode_active)
+        {
+            send_control_change(0, value, 0);
+        }
         break;
     case POT_CH_CC1:
-        send_control_change(1, value, 0);
+        audio_control_set_timecode_synth_control(TIMECODE_SYNTH_CONTROL_MORPH, (uint8_t) value);
+        if (!synth_mode_active)
+        {
+            send_control_change(1, value, 0);
+        }
         break;
     case POT_CH_CH1_IN:
         control_input_from_ch1_gain(value);
         break;
     case POT_CH_CC2:
-        send_control_change(2, value, 0);
+        audio_control_set_timecode_synth_control(TIMECODE_SYNTH_CONTROL_SLOPE, (uint8_t) value);
+        if (!synth_mode_active)
+        {
+            send_control_change(2, value, 0);
+        }
         break;
     case POT_CH_CC3:
-        send_control_change(3, value, 0);
+        audio_control_set_timecode_synth_control(TIMECODE_SYNTH_CONTROL_SMOOTH_FOLD, (uint8_t) value);
+        if (!synth_mode_active)
+        {
+            send_control_change(3, value, 0);
+        }
         break;
     case POT_CH_CC4:
-        send_control_change(4, value, 0);
+        audio_control_set_timecode_synth_control(TIMECODE_SYNTH_CONTROL_WARP_AMOUNT, (uint8_t) value);
+        if (!synth_mode_active)
+        {
+            send_control_change(4, value, 0);
+        }
         break;
     case POT_CH_CH2_IN:
         control_input_from_ch2_gain(value);

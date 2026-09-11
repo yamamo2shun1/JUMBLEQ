@@ -371,11 +371,14 @@ static void process_chunk(TimecodeOscillator_t* oscillator,
         {
             case TIMECODE_WARP_CROSSFOLD:
             {
-                const float folded = fold_bipolar(carrier_output +
-                                                  raw_modulator[frame] *
-                                                      oscillator->parameters.warp_amount * 3.0f);
-                processed = carrier_output * (1.0f - oscillator->parameters.warp_amount) +
-                            folded * oscillator->parameters.warp_amount;
+                const float amount = oscillator->parameters.warp_amount;
+                // Use the timecode waveform to modulate wavefolder drive instead
+                // of adding it to the carrier. This keeps the timecode tone from
+                // appearing by itself while retaining audio-rate cross modulation.
+                const float cross_drive =
+                    1.0f + amount * 2.0f * (raw_modulator[frame] + 1.0f);
+                const float folded = fold_bipolar(carrier_output * cross_drive);
+                processed = carrier_output + (folded - carrier_output) * amount;
                 break;
             }
             case TIMECODE_WARP_RING_MOD:

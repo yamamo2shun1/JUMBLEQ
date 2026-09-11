@@ -32,6 +32,16 @@
 #define ENABLE_TIMECODE_OSCILLATOR 1
 #endif
 
+typedef enum
+{
+    TIMECODE_SYNTH_CONTROL_ROOT = 0,
+    TIMECODE_SYNTH_CONTROL_MORPH,
+    TIMECODE_SYNTH_CONTROL_SLOPE,
+    TIMECODE_SYNTH_CONTROL_SMOOTH_FOLD,
+    TIMECODE_SYNTH_CONTROL_WARP_AMOUNT,
+    TIMECODE_SYNTH_CONTROL_COUNT,
+} TimecodeSynthControl_t;
+
 // USB OUT -> SAI TX経路の軽量診断。RTT出力は行わず、デバッガから参照する。
 enum
 {
@@ -82,6 +92,7 @@ uint32_t get_rx_blink_interval_ms(void);
 uint32_t get_current_sample_rate_hz(void);
 void reset_audio_buffer(void);
 void AUDIO_LoadAndApplyRoutingFromEEPROM(void);
+void audio_control_set_timecode_synth_control(TimecodeSynthControl_t control, uint8_t value);
 
 void AUDIO_Init_AK4619(uint32_t hz);
 void AUDIO_Init_ADAU1466(uint32_t hz);
