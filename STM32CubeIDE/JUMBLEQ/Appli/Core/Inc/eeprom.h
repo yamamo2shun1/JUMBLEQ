@@ -34,11 +34,14 @@ typedef struct
     uint8_t sensor2_aux_fade_down_assign;
     uint8_t sensor3_aux_fade_down_assign;
     uint8_t ch_fader_reverse_flags;
+    uint8_t timecode_synth_ratio_set;
+    uint8_t timecode_synth_warp_algorithm;
 } EEPROM_DeviceConfig_t;
 
 #define EEPROM_CONFIG_ADDR               (0x0000U)
 #define EEPROM_CONFIG_MAGIC              (0x51424D4AU) /* "JMBQ" */
-#define EEPROM_CONFIG_VERSION            (0x0008U)
+#define EEPROM_CONFIG_VERSION            (0x0009U)
+#define EEPROM_CONFIG_VERSION_V8         (0x0008U)
 #define EEPROM_CONFIG_VERSION_V7         (0x0007U)
 
 #define EEPROM_CFG_FLAG_MAG_OUT_AS_NOTE   (0x01U)

@@ -9,6 +9,7 @@
 #define INC_AUDIO_CONTROL_H_
 
 #include "main.h"
+#include "timecode_oscillator.h"
 #include "ui_control.h"
 
 // バッファサイズ設定 - 小さいほど低レイテンシーだがアンダーラン/オーバーランのリスク増
@@ -93,6 +94,10 @@ uint32_t get_current_sample_rate_hz(void);
 void reset_audio_buffer(void);
 void AUDIO_LoadAndApplyRoutingFromEEPROM(void);
 void audio_control_set_timecode_synth_control(TimecodeSynthControl_t control, uint8_t value);
+void audio_control_set_timecode_synth_ratio_set(TimecodeOscillatorRatioSet_t ratio_set);
+void audio_control_set_timecode_synth_warp_algorithm(TimecodeOscillatorWarpAlgorithm_t warp_algorithm);
+TimecodeOscillatorRatioSet_t audio_control_get_timecode_synth_ratio_set(void);
+TimecodeOscillatorWarpAlgorithm_t audio_control_get_timecode_synth_warp_algorithm(void);
 
 void AUDIO_Init_AK4619(uint32_t hz);
 void AUDIO_Init_ADAU1466(uint32_t hz);

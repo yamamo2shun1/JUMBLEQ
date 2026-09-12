@@ -1556,6 +1556,35 @@ static uint8_t midi_program_for_ch_fader_aux_assignment(uint8_t sensor_idx, uint
     return (assign == UI_CH_FADER_AUX_ASSIGN_A) ? CH_FADER_AUX_SENSOR3_TO_A : CH_FADER_AUX_SENSOR3_TO_B;
 }
 
+static uint8_t midi_program_for_timecode_synth_ratio_set(uint8_t ratio_set)
+{
+    if (ratio_set == TIMECODE_RATIO_HARMONIC)
+    {
+        return SYNTH_RATIO_HARMONIC;
+    }
+    if (ratio_set == TIMECODE_RATIO_CHORD)
+    {
+        return SYNTH_RATIO_CHORD;
+    }
+    return SYNTH_RATIO_OCTAVE;
+}
+
+static uint8_t midi_program_for_timecode_synth_warp_algorithm(uint8_t warp_algorithm)
+{
+    switch (warp_algorithm)
+    {
+    case TIMECODE_WARP_CLEAN:
+        return SYNTH_WARP_CLEAN;
+    case TIMECODE_WARP_RING_MOD:
+        return SYNTH_WARP_RING_MOD;
+    case TIMECODE_WARP_COMPARATOR:
+        return SYNTH_WARP_COMPARATOR;
+    case TIMECODE_WARP_CROSSFOLD:
+    default:
+        return SYNTH_WARP_CROSSFOLD;
+    }
+}
+
 static void send_midi_config_dump(const EEPROM_DeviceConfig_t* cfg)
 {
     if (cfg == NULL)
@@ -1576,6 +1605,8 @@ static void send_midi_config_dump(const EEPROM_DeviceConfig_t* cfg)
     send_program_change(midi_program_for_ch_fader_aux_assignment(3U, cfg->sensor3_aux_fade_down_assign), MIDI_CH_15);
     send_program_change((cfg->ch_fader_reverse_flags & EEPROM_CFG_FLAG_CH_FADER_REVERSE_A) != 0U ? CH_FADER_REVERSE_A_ON : CH_FADER_REVERSE_A_OFF, MIDI_CH_15);
     send_program_change((cfg->ch_fader_reverse_flags & EEPROM_CFG_FLAG_CH_FADER_REVERSE_B) != 0U ? CH_FADER_REVERSE_B_ON : CH_FADER_REVERSE_B_OFF, MIDI_CH_15);
+    send_program_change(midi_program_for_timecode_synth_ratio_set(cfg->timecode_synth_ratio_set), MIDI_CH_15);
+    send_program_change(midi_program_for_timecode_synth_warp_algorithm(cfg->timecode_synth_warp_algorithm), MIDI_CH_15);
     send_control_change(MIDI_CC_CH_FADER_CURVE_A, ch_fader_curve_width_to_midi_cc(cfg->current_ch_fader_curve_width_a), MIDI_CH_15);
     send_control_change(MIDI_CC_CH_FADER_CURVE_B, ch_fader_curve_width_to_midi_cc(cfg->current_ch_fader_curve_width_b), MIDI_CH_15);
     send_control_change(MIDI_CC_CH_FADER_DVS_DELAY, cfg->ch_fader_dvs_delay_ms, MIDI_CH_15);
@@ -3052,6 +3083,18 @@ static void midi_program_apply_ch_fader_aux_assignment(uint8_t arg)
                       (s_ui.sensor3_aux_fade_down_assign == UI_CH_FADER_AUX_ASSIGN_A) ? 'A' : 'B');
 }
 
+static void midi_program_apply_timecode_synth_ratio_set(uint8_t arg)
+{
+    audio_control_set_timecode_synth_ratio_set((TimecodeOscillatorRatioSet_t) arg);
+    SEGGER_RTT_printf(0, "SYNTH ratio set: %u\r\n", (unsigned) arg);
+}
+
+static void midi_program_apply_timecode_synth_warp_algorithm(uint8_t arg)
+{
+    audio_control_set_timecode_synth_warp_algorithm((TimecodeOscillatorWarpAlgorithm_t) arg);
+    SEGGER_RTT_printf(0, "SYNTH warp algorithm: %u\r\n", (unsigned) arg);
+}
+
 static bool dispatch_midi_program_change(uint8_t channel, uint8_t program)
 {
     if (channel != MIDI_CH_15)
@@ -3177,6 +3220,13 @@ static bool dispatch_midi_program_change(uint8_t channel, uint8_t program)
         {CH_FADER_AUX_SENSOR2_TO_B,  midi_program_apply_ch_fader_aux_assignment, (uint8_t) ((2U << 4) | UI_CH_FADER_AUX_ASSIGN_B)},
         {CH_FADER_AUX_SENSOR3_TO_A,  midi_program_apply_ch_fader_aux_assignment, (uint8_t) ((3U << 4) | UI_CH_FADER_AUX_ASSIGN_A)},
         {CH_FADER_AUX_SENSOR3_TO_B,  midi_program_apply_ch_fader_aux_assignment, (uint8_t) ((3U << 4) | UI_CH_FADER_AUX_ASSIGN_B)},
+        {SYNTH_RATIO_OCTAVE,         midi_program_apply_timecode_synth_ratio_set, TIMECODE_RATIO_OCTAVE                  },
+        {SYNTH_RATIO_HARMONIC,       midi_program_apply_timecode_synth_ratio_set, TIMECODE_RATIO_HARMONIC                },
+        {SYNTH_RATIO_CHORD,          midi_program_apply_timecode_synth_ratio_set, TIMECODE_RATIO_CHORD                   },
+        {SYNTH_WARP_CLEAN,           midi_program_apply_timecode_synth_warp_algorithm, TIMECODE_WARP_CLEAN                },
+        {SYNTH_WARP_CROSSFOLD,       midi_program_apply_timecode_synth_warp_algorithm, TIMECODE_WARP_CROSSFOLD            },
+        {SYNTH_WARP_RING_MOD,        midi_program_apply_timecode_synth_warp_algorithm, TIMECODE_WARP_RING_MOD             },
+        {SYNTH_WARP_COMPARATOR,      midi_program_apply_timecode_synth_warp_algorithm, TIMECODE_WARP_COMPARATOR           },
     };
 
     for (uint32_t i = 0; i < TU_ARRAY_SIZE(commands); i++)

@@ -54,9 +54,11 @@ When the device receives `PC126` on Ch. 15 from the host, it sends the current v
 | 31/32 | Auxiliary fade-down assignment for magnetic switch 3 (Channel Fader A/B) |
 | 33/34 | Channel Fader A direction (Normal / Reverse) |
 | 35/36 | Channel Fader B direction (Normal / Reverse) |
+| 37/38/39 | Global SYNTH Ratio Set (Octave / Harmonic / Chord) |
+| 40/41/42/43 | Global SYNTH Warp Algorithm (Clean / Crossfold / Ring Mod / Comparator) |
 | 122/123 | Output mode for magnetic controls and channel fader sensors (CC / Note) |
 
-The dump contains exactly one value from each Direction pair: `PC33` (Normal) or `PC34` (Reverse) for Channel Fader A, followed by `PC35` (Normal) or `PC36` (Reverse) for Channel Fader B.
+The dump contains exactly one value for each setting group, including one Ratio Set value and one Warp Algorithm value. Ratio Set and Warp Algorithm are global settings shared by both SYNTH channels.
 
 ### 4.2 Control Change (Device -> Host, Ch. 15)
 

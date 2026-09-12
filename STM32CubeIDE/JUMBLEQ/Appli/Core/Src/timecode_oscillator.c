@@ -18,6 +18,9 @@
 
 #define TIMECODE_PI        3.14159265358979323846f
 #define TIMECODE_TWO_PI    6.28318530717958647692f
+#define TIMECODE_MINUS_THREE_DB 0.70710678118654752440f
+#define TIMECODE_SQRT_TWO  1.41421356237309504880f
+#define TIMECODE_PLUS_NINE_DB 2.82842712474619009760f
 #define TIMECODE_INT_SCALE (1.0f / 2147483648.0f)
 
 static float clampf(float value, float minimum, float maximum)
@@ -330,6 +333,22 @@ static void process_chunk(TimecodeOscillator_t* oscillator,
     const float shape_mix = 1.0f - oscillator->shape_coefficient;
     const float base_increment =
         oscillator->parameters.root_hz * oscillator->speed_memory / oscillator->sample_rate_hz;
+    float ring_dry_gain = 1.0f;
+    float ring_wet_gain = 0.0f;
+    const float late_warp_position =
+        clampf(oscillator->parameters.warp_amount * 2.0f - 1.0f, 0.0f, 1.0f);
+    const float late_warp_mix = late_warp_position * late_warp_position *
+                                (3.0f - 2.0f * late_warp_position);
+    const float crossfold_level_gain =
+        1.0f + (TIMECODE_MINUS_THREE_DB - 1.0f) * late_warp_mix;
+    const float ring_level_gain =
+        1.0f + (TIMECODE_PLUS_NINE_DB - 1.0f) * late_warp_mix;
+    if (oscillator->parameters.warp_algorithm == TIMECODE_WARP_RING_MOD)
+    {
+        const float ring_mix_angle = oscillator->parameters.warp_amount * TIMECODE_PI * 0.5f;
+        ring_dry_gain = cosf(ring_mix_angle);
+        ring_wet_gain = sinf(ring_mix_angle) * TIMECODE_SQRT_TWO;
+    }
 
     for (uint32_t frame = 0; frame < frame_count; frame++)
     {
@@ -378,19 +397,23 @@ static void process_chunk(TimecodeOscillator_t* oscillator,
                 const float cross_drive =
                     1.0f + amount * 2.0f * (raw_modulator[frame] + 1.0f);
                 const float folded = fold_bipolar(carrier_output * cross_drive);
-                processed = carrier_output + (folded - carrier_output) * amount;
+                processed = (carrier_output + (folded - carrier_output) * amount) *
+                            crossfold_level_gain;
                 break;
             }
             case TIMECODE_WARP_RING_MOD:
             {
                 const float ringed = carrier_output * raw_modulator[frame];
-                processed = carrier_output * (1.0f - oscillator->parameters.warp_amount) +
-                            ringed * oscillator->parameters.warp_amount;
+                // A sine-like bipolar modulator has about -3 dB RMS relative to
+                // its peak. Compensate the wet path by sqrt(2), then use an
+                // equal-power crossfade to avoid a level dip around 50% mix.
+                processed = (carrier_output * ring_dry_gain + ringed * ring_wet_gain) *
+                            ring_level_gain;
                 break;
             }
             case TIMECODE_WARP_COMPARATOR:
             {
-                const float compared = (carrier_output > raw_modulator[frame]) ? 0.7f : -0.7f;
+                const float compared = (carrier_output > raw_modulator[frame]) ? 0.5f : -0.5f;
                 processed = carrier_output * (1.0f - oscillator->parameters.warp_amount) +
                             compared * oscillator->parameters.warp_amount;
                 break;

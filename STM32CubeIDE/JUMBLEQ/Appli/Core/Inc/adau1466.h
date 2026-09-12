@@ -65,6 +65,13 @@ enum
     CH_FADER_REVERSE_A_ON      = 34,
     CH_FADER_REVERSE_B_OFF     = 35,
     CH_FADER_REVERSE_B_ON      = 36,
+    SYNTH_RATIO_OCTAVE         = 37,
+    SYNTH_RATIO_HARMONIC       = 38,
+    SYNTH_RATIO_CHORD          = 39,
+    SYNTH_WARP_CLEAN           = 40,
+    SYNTH_WARP_CROSSFOLD       = 41,
+    SYNTH_WARP_RING_MOD        = 42,
+    SYNTH_WARP_COMPARATOR      = 43,
 };
 
 enum

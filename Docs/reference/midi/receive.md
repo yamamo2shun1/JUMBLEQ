@@ -31,6 +31,8 @@ This document describes the MIDI receive specification based on the `JUMBLEQ/App
 | 31/32 | Assign magnetic switch 3 to the auxiliary fade-down function for Channel Fader A or B. |
 | 33/34 | Set the Channel Fader A direction (Normal / Reverse). |
 | 35/36 | Set the Channel Fader B direction (Normal / Reverse). |
+| 37/38/39 | Select the global SYNTH Ratio Set (Octave / Harmonic / Chord). |
+| 40/41/42/43 | Select the global SYNTH Warp Algorithm (Clean / Crossfold / Ring Mod / Comparator). |
 | 120/121 | Disable or enable Channel Fader curve edit mode. |
 | 122/123 | Select the output mode (CC / Note) for magnetic controls and channel fader sensors. |
 | 124 | Arm the 10-second physical confirmation window for UF2 bootloader mode. |
@@ -45,7 +47,9 @@ Notes:
 - The default assignments are Channel Fader A for magnetic switch 2 and Channel Fader B for magnetic switch 3.
 - Direction can be configured independently for Channel Faders A and B and takes effect immediately. The default is Normal for both faders.
 - Reverse inverts the final fader response for Fade Up and all Fade Down controls assigned to that fader, including auxiliary Fade Down controls. It does not change the live MIDI values transmitted by the individual magnetic sensors.
-- `PC127` saves the complete device configuration listed in Section 6 to EEPROM, including the Ch. 1 and Ch. 2 input modes, Return and headphone source assignments, magnetic output mode, auxiliary fade-down assignments, Direction settings, and curves for Channel Faders A and B.
+- Ratio Set and Warp Algorithm are shared by Input Ch. 1 and Input Ch. 2. Changes take effect immediately for both oscillator instances.
+- Warp Amount is controlled independently by the existing CC.5 potentiometer. Selecting Clean bypasses warping, so CC.5 has no audible effect until another Warp Algorithm is selected.
+- `PC127` saves the complete device configuration listed in Section 6 to EEPROM, including the SYNTH Ratio Set and Warp Algorithm.
 - `PC126` transmits the **current operating state (parameters eligible for saving)** rather than reading and transmitting the EEPROM contents.
 - `PC124` never resets the device by itself. After it is received, SW3 must be observed released and then held continuously for 2 seconds before the device resets into UF2 mode.
 - The PC124 confirmation window is cancelled by `PC125`, a 10-second timeout, or USB disconnection. Repeated PC124 messages do not extend an active window.
@@ -112,7 +116,10 @@ Curve response:
   - Auxiliary fade-down assignments for magnetic switches 2 and 3
   - Direction settings (Normal / Reverse) for Channel Faders A/B
   - Curve settings for Channel Faders A/B
-- EEPROM record version: `0x0008` (`0x0007` records are loaded with a 50 ms DVS fader delay and their DVS booleans are converted to Off/DVS input modes)
+  - SYNTH Ratio Set and Warp Algorithm shared by both input channels
+- EEPROM record version: `0x0009`
+  - `0x0008` records are migrated with Ratio Set = Octave and Warp Algorithm = Crossfold.
+  - `0x0007` records are loaded with a 50 ms DVS fader delay, their DVS booleans are converted to Off/DVS input modes, and the same SYNTH defaults are applied.
 
 ## 7. Implementation Notes
 

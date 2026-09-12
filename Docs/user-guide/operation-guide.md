@@ -10,7 +10,9 @@ See the [Signal Flow reference](../reference/signal-flow.md) for the detailed au
 
 ## Input Operating Modes and USB Signal Routing
 
-Input Ch. 1 and Input Ch. 2 can each be set independently to Off, DVS, or SYNTH using a compatible configurator. Off selects standard mixer routing, while DVS selects the existing USB DVS send/return path. SYNTH reserves the input for internal oscillator processing; the selector, saved state, and OLED indication are provided before the oscillator audio engine itself is added.
+Input Ch. 1 and Input Ch. 2 can each be set independently to Off, DVS, or SYNTH using a compatible configurator. Off selects standard mixer routing, while DVS selects the existing USB DVS send/return path. SYNTH analyzes the connected timecode-vinyl signal in the STM32 and returns the generated oscillator audio to the pre-fader path without sending that channel through USB.
+
+The Configurator also selects a Ratio Set (Octave, Harmonic, or Chord) and Warp Algorithm (Clean, Crossfold, Ring Mod, or Comparator). These two selections are global and therefore apply to both SYNTH channels. They take effect immediately and are stored by Save to device. Clean bypasses the warp stage; in that algorithm, the CC.5 Warp Amount knob has no audible effect.
 
 DVS can be enabled independently for Input Ch. 1 and Input Ch. 2 using [JUMBLEQ Configurator](./configurator.md). The DVS state changes the USB Send source as follows:
 
@@ -55,11 +57,11 @@ The following diagram shows the current knob assignments.
 
 | Panel label | Range | Function |
 |---|---:|---|
-| CC.1 | 0–127 | Sends MIDI CC 0 on MIDI Ch. 1. |
-| CC.2 | 0–127 | Sends MIDI CC 1 on MIDI Ch. 1. |
-| CC.3 | 0–127 | Sends MIDI CC 2 on MIDI Ch. 1. |
-| CC.4 | 0–127 | Sends MIDI CC 3 on MIDI Ch. 1. |
-| CC.5 | 0–127 | Sends MIDI CC 4 on MIDI Ch. 1. |
+| CC.1 | 0–127 | Sends MIDI CC 0 on MIDI Ch. 1 and controls Root when either input is in SYNTH mode. |
+| CC.2 | 0–127 | Sends MIDI CC 1 on MIDI Ch. 1 and controls Morph when either input is in SYNTH mode. |
+| CC.3 | 0–127 | Sends MIDI CC 2 on MIDI Ch. 1 and controls Slope when either input is in SYNTH mode. |
+| CC.4 | 0–127 | Sends MIDI CC 3 on MIDI Ch. 1 and controls Smooth/Fold when either input is in SYNTH mode. |
+| CC.5 | 0–127 | Sends MIDI CC 4 on MIDI Ch. 1 and controls Warp Amount when either input is in SYNTH mode. |
 | Input Ch. 1 | −80 to +10 dB | Adjusts the level of the analog Channel 1 input before it is routed through the mixer or to the DVS send path. |
 | Input Ch. 2 | −80 to +10 dB | Adjusts the level of the analog Channel 2 input before it is routed through the mixer or to the DVS send path. |
 | Output Ch. 1 | −80 to +10 dB | Adjusts the level of the analog Channel 1 output. |

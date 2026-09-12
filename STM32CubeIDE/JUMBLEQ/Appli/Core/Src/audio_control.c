@@ -276,6 +276,8 @@ static volatile uint8_t s_timecode_synth_control[TIMECODE_SYNTH_CONTROL_COUNT] =
     [TIMECODE_SYNTH_CONTROL_SMOOTH_FOLD] = 64u,
     [TIMECODE_SYNTH_CONTROL_WARP_AMOUNT] = 0u,
 };
+static volatile uint8_t s_timecode_synth_ratio_set = TIMECODE_RATIO_OCTAVE;
+static volatile uint8_t s_timecode_synth_warp_algorithm = TIMECODE_WARP_CROSSFOLD;
 static volatile uint32_t s_timecode_synth_control_revision = 1u;
 static uint32_t s_timecode_synth_applied_revision = 0u;
 
@@ -307,6 +309,8 @@ static float timecode_synth_smooth_fold_from_control(uint8_t value)
 static void timecode_synth_apply_pending_controls(void)
 {
     uint8_t controls[TIMECODE_SYNTH_CONTROL_COUNT];
+    uint8_t ratio_set;
+    uint8_t warp_algorithm;
     uint32_t revision_before;
     uint32_t revision_after;
 
@@ -318,6 +322,8 @@ static void timecode_synth_apply_pending_controls(void)
         {
             controls[i] = s_timecode_synth_control[i];
         }
+        ratio_set = s_timecode_synth_ratio_set;
+        warp_algorithm = s_timecode_synth_warp_algorithm;
         __DMB();
         revision_after = s_timecode_synth_control_revision;
     } while (revision_before != revision_after);
@@ -347,7 +353,8 @@ static void timecode_synth_apply_pending_controls(void)
         parameters.morph          = morph;
         parameters.slope          = slope;
         parameters.smooth_fold    = smooth_fold;
-        parameters.warp_algorithm = TIMECODE_WARP_CROSSFOLD;
+        parameters.ratio_set       = (TimecodeOscillatorRatioSet_t) ratio_set;
+        parameters.warp_algorithm = (TimecodeOscillatorWarpAlgorithm_t) warp_algorithm;
         parameters.warp_amount    = warp_amount;
         timecode_oscillator_set_parameters(&s_timecode_oscillator[channel], &parameters);
     }
@@ -530,6 +537,58 @@ void audio_control_set_timecode_synth_control(TimecodeSynthControl_t control, ui
 #endif
 }
 
+void audio_control_set_timecode_synth_ratio_set(TimecodeOscillatorRatioSet_t ratio_set)
+{
+#if ENABLE_TIMECODE_OSCILLATOR
+    if ((uint32_t) ratio_set > TIMECODE_RATIO_CHORD ||
+        s_timecode_synth_ratio_set == (uint8_t) ratio_set)
+    {
+        return;
+    }
+
+    s_timecode_synth_ratio_set = (uint8_t) ratio_set;
+    __DMB();
+    s_timecode_synth_control_revision++;
+#else
+    (void) ratio_set;
+#endif
+}
+
+void audio_control_set_timecode_synth_warp_algorithm(TimecodeOscillatorWarpAlgorithm_t warp_algorithm)
+{
+#if ENABLE_TIMECODE_OSCILLATOR
+    if ((uint32_t) warp_algorithm > TIMECODE_WARP_COMPARATOR ||
+        s_timecode_synth_warp_algorithm == (uint8_t) warp_algorithm)
+    {
+        return;
+    }
+
+    s_timecode_synth_warp_algorithm = (uint8_t) warp_algorithm;
+    __DMB();
+    s_timecode_synth_control_revision++;
+#else
+    (void) warp_algorithm;
+#endif
+}
+
+TimecodeOscillatorRatioSet_t audio_control_get_timecode_synth_ratio_set(void)
+{
+#if ENABLE_TIMECODE_OSCILLATOR
+    return (TimecodeOscillatorRatioSet_t) s_timecode_synth_ratio_set;
+#else
+    return TIMECODE_RATIO_OCTAVE;
+#endif
+}
+
+TimecodeOscillatorWarpAlgorithm_t audio_control_get_timecode_synth_warp_algorithm(void)
+{
+#if ENABLE_TIMECODE_OSCILLATOR
+    return (TimecodeOscillatorWarpAlgorithm_t) s_timecode_synth_warp_algorithm;
+#else
+    return TIMECODE_WARP_CROSSFOLD;
+#endif
+}
+
 // Speaker data size received in the last frame
 uint16_t spk_data_size;
 
@@ -603,8 +662,12 @@ void AUDIO_LoadAndApplyRoutingFromEEPROM(void)
 
         if (ui_control_apply_persist_state(&ui_state))
         {
+            audio_control_set_timecode_synth_ratio_set(
+                (TimecodeOscillatorRatioSet_t) cfg.timecode_synth_ratio_set);
+            audio_control_set_timecode_synth_warp_algorithm(
+                (TimecodeOscillatorWarpAlgorithm_t) cfg.timecode_synth_warp_algorithm);
             SEGGER_RTT_printf(0,
-                              "EEPROM routing applied: CH1=%u CH2=%u CH_FADER_A=%u CH_FADER_B=%u CH_FADER_POST=%u RTN=%u HP=%u MODE1=%u MODE2=%u DVS_DELAY_MS=%u AUX2=%u AUX3=%u REVERSE_A=%u REVERSE_B=%u CURVE_WIDTH_A=%.4f CURVE_WIDTH_B=%.4f\r\n",
+                              "EEPROM routing applied: CH1=%u CH2=%u CH_FADER_A=%u CH_FADER_B=%u CH_FADER_POST=%u RTN=%u HP=%u MODE1=%u MODE2=%u DVS_DELAY_MS=%u AUX2=%u AUX3=%u REVERSE_A=%u REVERSE_B=%u CURVE_WIDTH_A=%.4f CURVE_WIDTH_B=%.4f RATIO=%u WARP=%u\r\n",
                               (unsigned)cfg.current_ch1_input_type,
                               (unsigned)cfg.current_ch2_input_type,
                               (unsigned)cfg.current_ch_fader_a_assign,
@@ -620,7 +683,9 @@ void AUDIO_LoadAndApplyRoutingFromEEPROM(void)
                               (unsigned)ui_state.ch_fader_reverse_a,
                               (unsigned)ui_state.ch_fader_reverse_b,
                               (double)cfg.current_ch_fader_curve_width_a,
-                              (double)cfg.current_ch_fader_curve_width_b);
+                              (double)cfg.current_ch_fader_curve_width_b,
+                              (unsigned)cfg.timecode_synth_ratio_set,
+                              (unsigned)cfg.timecode_synth_warp_algorithm);
         }
         else
         {
@@ -648,6 +713,10 @@ void AUDIO_LoadAndApplyRoutingFromEEPROM(void)
         ui_state.current_ch_fader_curve_width_a = cfg.current_ch_fader_curve_width_a;
         ui_state.current_ch_fader_curve_width_b = cfg.current_ch_fader_curve_width_b;
         (void)ui_control_apply_persist_state(&ui_state);
+        audio_control_set_timecode_synth_ratio_set(
+            (TimecodeOscillatorRatioSet_t) cfg.timecode_synth_ratio_set);
+        audio_control_set_timecode_synth_warp_algorithm(
+            (TimecodeOscillatorWarpAlgorithm_t) cfg.timecode_synth_warp_algorithm);
 
         if (EEPROM_SaveConfig(&hi2c2, &cfg) == HAL_OK)
         {
