@@ -39,6 +39,9 @@ enum
     DBG_MIN_U16_INIT           = 0xFFFFu,
     AUDIO_USB_HS_MICROFRAMES_PER_SECOND = 8000u,
     AUDIO_FUNC_ID              = 0u,
+    DMA_AUDIO_EVENT_NONE       = 0u,
+    DMA_AUDIO_EVENT_HALF       = 1u,
+    DMA_AUDIO_EVENT_COMPLETE   = 2u,
 };
 
 extern DMA_QListTypeDef List_GPDMA1_Channel2;
@@ -68,8 +71,6 @@ volatile uint32_t sai_rx_rng_buf_index = 0;
 volatile uint32_t sai_transmit_index   = 0;
 volatile uint32_t sai_receive_index    = 0;
 
-static volatile uint8_t tx_pending_mask = 0;      // bit0: first-half, bit1: second-half
-static volatile uint8_t rx_pending_mask = 0;      // bit0: first-half, bit1: second-half
 static volatile bool usb_tx_pending     = false;  // USB TX送信要求フラグ (ISR→Task通知用)
 static volatile bool usb_rx_pending     = false;  // USB RX受信通知フラグ (ISR→Task通知用)
 static TaskHandle_t s_audio_task_handle = NULL;
@@ -77,13 +78,86 @@ static TaskHandle_t s_audio_task_handle = NULL;
 bool s_streaming_out = false;
 bool s_streaming_in  = false;
 
+typedef struct
+{
+    // ISRはコールバックごとに増加させ、Taskは差分から滞留数を求める。
+    // uint32_tのラップ後も符号なし減算で差分を維持できる。
+    uint32_t produced_sequence;
+    uint32_t consumed_sequence;
+    // 最新コールバックが示す、現在DMAがアクセスしていないhalf。
+    uint32_t latest_event;
+    uint32_t latest_cycle;
+    uint32_t dropped_events;
+} DmaAudioEventState_t;
+
+typedef struct
+{
+    uint32_t event;
+    uint32_t cycle;
+    uint32_t dropped_events;
+} DmaAudioEventSnapshot_t;
+
+static volatile DmaAudioEventState_t s_tx_dma_event = {0};
+static volatile DmaAudioEventState_t s_rx_dma_event = {0};
+
 volatile AudioTxDiagnostics_t g_audio_tx_diagnostics = {
     .tx_used_min_words = UINT32_MAX,
 };
 
-static volatile uint32_t s_tx_half_pending_cycle = 0u;
-static volatile uint32_t s_tx_cplt_pending_cycle = 0u;
-static volatile uint8_t s_tx_last_pending_callback = 0u;
+static inline uint32_t dma_audio_event_publish_from_isr(volatile DmaAudioEventState_t* state,
+                                                        uint32_t event)
+{
+    const bool pending = state->produced_sequence != state->consumed_sequence;
+    const uint32_t overwritten_event = pending ? state->latest_event : DMA_AUDIO_EVENT_NONE;
+
+    state->latest_event = event;
+    state->latest_cycle = DWT->CYCCNT;
+    __DMB();
+    state->produced_sequence++;
+
+    return overwritten_event;
+}
+
+static bool dma_audio_event_take_latest(volatile DmaAudioEventState_t* state,
+                                        DmaAudioEventSnapshot_t* snapshot)
+{
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    const uint32_t produced_sequence = state->produced_sequence;
+    const uint32_t consumed_sequence = state->consumed_sequence;
+    const uint32_t pending_count = produced_sequence - consumed_sequence;
+    if (pending_count == 0u)
+    {
+        __set_PRIMASK(primask);
+        return false;
+    }
+
+    snapshot->event          = state->latest_event;
+    snapshot->cycle          = state->latest_cycle;
+    snapshot->dropped_events = pending_count - 1u;
+
+    state->consumed_sequence = produced_sequence;
+    state->latest_event      = DMA_AUDIO_EVENT_NONE;
+    state->latest_cycle      = 0u;
+    state->dropped_events   += snapshot->dropped_events;
+
+    __set_PRIMASK(primask);
+    return true;
+}
+
+static void dma_audio_event_reset(volatile DmaAudioEventState_t* state)
+{
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    state->consumed_sequence = state->produced_sequence;
+    state->latest_event      = DMA_AUDIO_EVENT_NONE;
+    state->latest_cycle      = 0u;
+    state->dropped_events    = 0u;
+
+    __set_PRIMASK(primask);
+}
 
 static void audio_tx_diagnostics_reset(void)
 {
@@ -94,10 +168,10 @@ static void audio_tx_diagnostics_reset(void)
     reset.reset_count          = reset_count;
     reset.tx_used_min_words    = UINT32_MAX;
     g_audio_tx_diagnostics     = reset;
-    const uint32_t now_cycles  = DWT->CYCCNT;
-    s_tx_half_pending_cycle    = ((tx_pending_mask & 0x01u) != 0u) ? now_cycles : 0u;
-    s_tx_cplt_pending_cycle    = ((tx_pending_mask & 0x02u) != 0u) ? now_cycles : 0u;
-    s_tx_last_pending_callback = 0u;
+    s_tx_dma_event.consumed_sequence = s_tx_dma_event.produced_sequence;
+    s_tx_dma_event.latest_event      = DMA_AUDIO_EVENT_NONE;
+    s_tx_dma_event.latest_cycle      = 0u;
+    s_tx_dma_event.dropped_events    = 0u;
     __set_PRIMASK(primask);
 }
 
@@ -738,7 +812,7 @@ bool tud_audio_set_itf_close_ep_cb(uint8_t rhport, tusb_control_request_t const*
         usb_rx_pending       = false;
         sai_tx_rng_buf_index = 0;
         sai_transmit_index   = 0;
-        tx_pending_mask      = 0;  // DMAフラグをクリア
+        dma_audio_event_reset(&s_tx_dma_event);
 #if AUDIO_DIAG_LOG
         dbg_usb_out_prev_cycle_valid = false;
 #endif
@@ -751,7 +825,7 @@ bool tud_audio_set_itf_close_ep_cb(uint8_t rhport, tusb_control_request_t const*
         usb_tx_pending       = false;
         sai_rx_rng_buf_index = 0;
         sai_receive_index    = 0;
-        rx_pending_mask      = 0;  // DMAフラグをクリア
+        dma_audio_event_reset(&s_rx_dma_event);
     }
 
     return true;
@@ -783,6 +857,7 @@ bool tud_audio_set_itf_cb(uint8_t rhport, tusb_control_request_t const* p_reques
 
         s_streaming_in  = true;
         usb_tx_pending  = true;
+        dma_audio_event_reset(&s_rx_dma_event);
 #if AUDIO_DIAG_LOG
         dbg_usb_in_notify_events++;
 #endif
@@ -817,80 +892,106 @@ void tud_audio_feedback_params_cb(uint8_t func_id, uint8_t alt_itf, audio_feedba
 static void dma_sai2_tx_half(DMA_HandleTypeDef* hdma)
 {
     (void) hdma;
-    s_tx_half_pending_cycle    = DWT->CYCCNT;
-    s_tx_last_pending_callback = 1u;
+    const uint32_t overwritten_event =
+        dma_audio_event_publish_from_isr(&s_tx_dma_event, DMA_AUDIO_EVENT_HALF);
     if (s_streaming_out)
     {
         g_audio_tx_diagnostics.tx_half_callbacks++;
-        if ((tx_pending_mask & 0x01U) != 0U)
+        if (overwritten_event == DMA_AUDIO_EVENT_HALF)
         {
             g_audio_tx_diagnostics.half_rewrite_events++;
             audio_tx_diagnostics_record_event(AUDIO_TX_DIAG_EVENT_HALF_REWRITE,
-                                              audio_tx_used_words());
+                                               audio_tx_used_words());
         }
-        g_audio_tx_diagnostics.last_pending_callback = 1u;
+        else if (overwritten_event == DMA_AUDIO_EVENT_COMPLETE)
+        {
+            g_audio_tx_diagnostics.cplt_rewrite_events++;
+            audio_tx_diagnostics_record_event(AUDIO_TX_DIAG_EVENT_CPLT_REWRITE,
+                                               audio_tx_used_words());
+        }
+        g_audio_tx_diagnostics.last_pending_callback = DMA_AUDIO_EVENT_HALF;
     }
 #if AUDIO_DIAG_LOG
-    if ((tx_pending_mask & 0x01U) != 0U)
+    if (overwritten_event == DMA_AUDIO_EVENT_HALF)
     {
         dbg_tx_half_rewrite_events++;
     }
+    else if (overwritten_event == DMA_AUDIO_EVENT_COMPLETE)
+    {
+        dbg_tx_cplt_rewrite_events++;
+    }
 #endif
-    tx_pending_mask |= 0x01;
-    __DMB();
     audio_task_notify_from_isr();
 }
 static void dma_sai2_tx_cplt(DMA_HandleTypeDef* hdma)
 {
     (void) hdma;
-    s_tx_cplt_pending_cycle    = DWT->CYCCNT;
-    s_tx_last_pending_callback = 2u;
+    const uint32_t overwritten_event =
+        dma_audio_event_publish_from_isr(&s_tx_dma_event, DMA_AUDIO_EVENT_COMPLETE);
     if (s_streaming_out)
     {
         g_audio_tx_diagnostics.tx_cplt_callbacks++;
-        if ((tx_pending_mask & 0x02U) != 0U)
+        if (overwritten_event == DMA_AUDIO_EVENT_HALF)
+        {
+            g_audio_tx_diagnostics.half_rewrite_events++;
+            audio_tx_diagnostics_record_event(AUDIO_TX_DIAG_EVENT_HALF_REWRITE,
+                                               audio_tx_used_words());
+        }
+        else if (overwritten_event == DMA_AUDIO_EVENT_COMPLETE)
         {
             g_audio_tx_diagnostics.cplt_rewrite_events++;
             audio_tx_diagnostics_record_event(AUDIO_TX_DIAG_EVENT_CPLT_REWRITE,
-                                              audio_tx_used_words());
+                                               audio_tx_used_words());
         }
-        g_audio_tx_diagnostics.last_pending_callback = 2u;
+        g_audio_tx_diagnostics.last_pending_callback = DMA_AUDIO_EVENT_COMPLETE;
     }
 #if AUDIO_DIAG_LOG
-    if ((tx_pending_mask & 0x02U) != 0U)
+    if (overwritten_event == DMA_AUDIO_EVENT_HALF)
+    {
+        dbg_tx_half_rewrite_events++;
+    }
+    else if (overwritten_event == DMA_AUDIO_EVENT_COMPLETE)
     {
         dbg_tx_cplt_rewrite_events++;
     }
 #endif
-    tx_pending_mask |= 0x02;
-    __DMB();
     audio_task_notify_from_isr();
 }
 
 static void dma_sai1_rx_half(DMA_HandleTypeDef* hdma)
 {
     (void) hdma;
+    const uint32_t overwritten_event =
+        dma_audio_event_publish_from_isr(&s_rx_dma_event, DMA_AUDIO_EVENT_HALF);
+    (void) overwritten_event;
 #if AUDIO_DIAG_LOG
-    if ((rx_pending_mask & 0x01U) != 0U)
+    if (overwritten_event == DMA_AUDIO_EVENT_HALF)
     {
         dbg_rx_half_rewrite_events++;
     }
+    else if (overwritten_event == DMA_AUDIO_EVENT_COMPLETE)
+    {
+        dbg_rx_cplt_rewrite_events++;
+    }
 #endif
-    rx_pending_mask |= 0x01;
-    __DMB();
     audio_task_notify_from_isr();
 }
 static void dma_sai1_rx_cplt(DMA_HandleTypeDef* hdma)
 {
     (void) hdma;
+    const uint32_t overwritten_event =
+        dma_audio_event_publish_from_isr(&s_rx_dma_event, DMA_AUDIO_EVENT_COMPLETE);
+    (void) overwritten_event;
 #if AUDIO_DIAG_LOG
-    if ((rx_pending_mask & 0x02U) != 0U)
+    if (overwritten_event == DMA_AUDIO_EVENT_HALF)
+    {
+        dbg_rx_half_rewrite_events++;
+    }
+    else if (overwritten_event == DMA_AUDIO_EVENT_COMPLETE)
     {
         dbg_rx_cplt_rewrite_events++;
     }
 #endif
-    rx_pending_mask |= 0x02;
-    __DMB();
     audio_task_notify_from_isr();
 }
 
@@ -953,8 +1054,8 @@ void start_sai(void)
     memset(sai_tx_rng_buf, 0, prefill_size * sizeof(int32_t));
     sai_tx_rng_buf_index = prefill_size;
     sai_transmit_index   = 0;
-    tx_pending_mask      = 0;
     audio_tx_diagnostics_reset();
+    dma_audio_event_reset(&s_rx_dma_event);
 
 #if AUDIO_DIAG_LOG
     dbg_tx_used_min            = 0xFFFFFFFFu;
@@ -1298,61 +1399,50 @@ static inline void fill_tx_half(uint32_t index0)
 
 void copybuf_ring2sai(void)
 {
-    // ISRからの更新要求を取り出し、該当halfを更新する
-    uint8_t mask;
-    uint8_t last_pending_callback;
-    uint32_t half_pending_cycle;
-    uint32_t cplt_pending_cycle;
-    uint32_t primask = __get_PRIMASK();
-    __disable_irq();
-    mask                       = tx_pending_mask;
-    last_pending_callback      = s_tx_last_pending_callback;
-    half_pending_cycle         = s_tx_half_pending_cycle;
-    cplt_pending_cycle         = s_tx_cplt_pending_cycle;
-    tx_pending_mask            = 0;
-    s_tx_last_pending_callback = 0u;
-    if ((mask & 0x01u) != 0u)
+    DmaAudioEventSnapshot_t event;
+    if (!dma_audio_event_take_latest(&s_tx_dma_event, &event))
     {
-        s_tx_half_pending_cycle = 0u;
+        return;
     }
-    if ((mask & 0x02u) != 0u)
-    {
-        s_tx_cplt_pending_cycle = 0u;
-    }
-    __set_PRIMASK(primask);
 
-    if (s_streaming_out && mask != 0u)
+    if (s_streaming_out)
     {
         const uint32_t now_cycles = DWT->CYCCNT;
-        if ((mask & 0x01u) != 0u)
+        const uint32_t service_cycles = now_cycles - event.cycle;
+        if (event.event == DMA_AUDIO_EVENT_HALF)
         {
-            const uint32_t service_cycles = now_cycles - half_pending_cycle;
             if (service_cycles > g_audio_tx_diagnostics.half_service_cycles_max)
             {
                 g_audio_tx_diagnostics.half_service_cycles_max = service_cycles;
             }
         }
-        if ((mask & 0x02u) != 0u)
+        else if (event.event == DMA_AUDIO_EVENT_COMPLETE)
         {
-            const uint32_t service_cycles = now_cycles - cplt_pending_cycle;
             if (service_cycles > g_audio_tx_diagnostics.cplt_service_cycles_max)
             {
                 g_audio_tx_diagnostics.cplt_service_cycles_max = service_cycles;
             }
         }
-        if ((mask & 0x03u) == 0x03u)
+
+        if (event.dropped_events != 0u)
         {
             g_audio_tx_diagnostics.both_pending_events++;
-            g_audio_tx_diagnostics.both_pending_last_callback = last_pending_callback;
+            g_audio_tx_diagnostics.dma_events_dropped += event.dropped_events;
+            g_audio_tx_diagnostics.both_pending_last_callback = event.event;
             audio_tx_diagnostics_record_event(AUDIO_TX_DIAG_EVENT_BOTH_PENDING,
-                                              audio_tx_used_words());
+                                               audio_tx_used_words());
         }
     }
 
-    if (mask & 0x01)
+    // 遅延時は古い要求を処理しない。最新コールバックが示す現在安全なhalfだけを更新する。
+    if (event.event == DMA_AUDIO_EVENT_HALF)
+    {
         fill_tx_half(0);
-    if (mask & 0x02)
+    }
+    else if (event.event == DMA_AUDIO_EVENT_COMPLETE)
+    {
         fill_tx_half(SAI_TX_BUF_SIZE / 2);
+    }
 }
 
 // ==============================
@@ -1414,18 +1504,21 @@ static inline void fill_rx_half(uint32_t index0)
 
 static void copybuf_sai2ring(void)
 {
-    uint8_t mask;
-    uint32_t primask = __get_PRIMASK();
-    __disable_irq();
-    mask            = rx_pending_mask;
-    rx_pending_mask = 0;
-    __set_PRIMASK(primask);
+    DmaAudioEventSnapshot_t event;
+    if (!dma_audio_event_take_latest(&s_rx_dma_event, &event))
+    {
+        return;
+    }
 
-    // 注意: half->cplt の順で両方の更新要求が溜まる場合がある
-    if (mask & 0x01)
+    // TXと同様に、最新コールバックが示す現在安全なhalfだけを取り込む。
+    if (event.event == DMA_AUDIO_EVENT_HALF)
+    {
         fill_rx_half(0);
-    if (mask & 0x02)
+    }
+    else if (event.event == DMA_AUDIO_EVENT_COMPLETE)
+    {
         fill_rx_half(SAI_RX_BUF_SIZE / 2);
+    }
 }
 
 // USB INエンドポイントの1転送間隔あたりのフレーム数
@@ -2034,9 +2127,8 @@ void AUDIO_SAI_Reset_ForNewRate(void)
     sai_rx_rng_buf_index = 0;
     sai_transmit_index   = 0;
     sai_receive_index    = 0;
-    tx_pending_mask      = 0;
-    rx_pending_mask      = 0;
     audio_tx_diagnostics_reset();
+    dma_audio_event_reset(&s_rx_dma_event);
 
 #if AUDIO_DIAG_LOG
     dbg_tx_used_min            = 0xFFFFFFFFu;
