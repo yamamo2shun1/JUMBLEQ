@@ -13,7 +13,6 @@
 #include "JUMBLEQ_DSP_ADAU146xSchematic_1_PARAM.h"
 
 #include "cmsis_os2.h"
-#include <string.h>
 
 _Static_assert((PROGRAM_DATA_SIZE_ADAU146XSCHEMATIC_1 % 4U) == 0U,
                "SigmaStudio program data must contain complete 32-bit words");
@@ -39,11 +38,119 @@ _Static_assert((DM1_DATA_SIZE_ADAU146XSCHEMATIC_1 % 4U) == 0U,
 
 typedef struct
 {
+    uint32_t hz;
     uint8_t clk_gen2_m;
     uint8_t sout_source0;
     uint8_t sout_source1;
     uint32_t usb_mux_index;
 } adau1466_sample_rate_cfg_t;
+
+typedef struct
+{
+    uint8_t channel;
+    uint16_t addr;
+} adau1466_channel_addr_t;
+
+typedef struct
+{
+    uint8_t channel;
+    uint16_t addr;
+    uint8_t mem_page;
+} adau1466_safeload_selector_t;
+
+// USB channels are 1-based in the UAC API.
+enum
+{
+    ADAU1466_USB_CH_COUNT = 4U,
+};
+
+static const uint16_t s_usb_gain_addr[ADAU1466_USB_CH_COUNT] = {
+    MOD_INPUT_FROM_USB1_GAIN_ADDR,
+    MOD_INPUT_FROM_USB2_GAIN_ADDR,
+    MOD_INPUT_FROM_USB3_GAIN_ADDR,
+    MOD_INPUT_FROM_USB4_GAIN_ADDR,
+};
+
+static const uint16_t s_usb_mute_addr[ADAU1466_USB_CH_COUNT] = {
+    MOD_MUTE_USB1_MUTE_ADDR,
+    MOD_MUTE_USB2_MUTE_ADDR,
+    MOD_MUTE_USB3_MUTE_ADDR,
+    MOD_MUTE_USB4_MUTE_ADDR,
+};
+
+enum
+{
+    ADAU1466_DC_INPUT_A = 0,
+    ADAU1466_DC_INPUT_B,
+    ADAU1466_DC_INPUT_COUNT,
+};
+
+static const uint16_t s_dc_input_addr[ADAU1466_DC_INPUT_COUNT] = {
+    MOD_DCINPUT_A_DCVALUE_ADDR,
+    MOD_DCINPUT_B_DCVALUE_ADDR,
+};
+
+enum
+{
+    ADAU1466_DRY_DC_A = 0,
+    ADAU1466_DRY_DC_B,
+    ADAU1466_DRY_DC_COUNT,
+};
+
+static const uint16_t s_dry_dc_addr[ADAU1466_DRY_DC_COUNT] = {
+    MOD_DCINPUT_DRYA_DCVALUE_ADDR,
+    MOD_DCINPUT_DRYB_DCVALUE_ADDR,
+};
+
+enum
+{
+    ADAU1466_CH_FADER_TARGET_A = 0,
+    ADAU1466_CH_FADER_TARGET_B,
+    ADAU1466_CH_FADER_TARGET_POST,
+    ADAU1466_CH_FADER_TARGET_COUNT,
+};
+
+static const uint16_t s_ch_fader_assign_addr[ADAU1466_CH_FADER_TARGET_COUNT] = {
+    MOD_CH_FADER_ASSIGN_SW_A_INDEX_ADDR,
+    MOD_CH_FADER_ASSIGN_SW_B_INDEX_ADDR,
+    MOD_CH_FADER_ASSIGN_SW_POST_INDEX_ADDR,
+};
+
+static const adau1466_channel_addr_t s_send_source_addr[] = {
+    {INPUT_CH1, MOD_SEND_SW_1_INDEX_ADDR},
+    {INPUT_CH2, MOD_SEND_SW_2_INDEX_ADDR},
+};
+
+static const adau1466_safeload_selector_t s_input_type_selectors[] = {
+    {INPUT_CH1, MOD_LN_PN_SW_1_INDEX_CHANNEL0_ADDR, MOD_LN_PN_SW_1_INDEX_CHANNEL0_MEM_PAGE},
+    {INPUT_CH2, MOD_LN_PN_SW_2_INDEX_CHANNEL0_ADDR, MOD_LN_PN_SW_2_INDEX_CHANNEL0_MEM_PAGE},
+};
+
+static const adau1466_safeload_selector_t s_insert_selectors[] = {
+    {INPUT_CH1, MOD_DVS_SW_1_INDEX_CHANNEL0_ADDR, MOD_DVS_SW_1_INDEX_CHANNEL0_MEM_PAGE},
+    {INPUT_CH2, MOD_DVS_SW_2_INDEX_CHANNEL0_ADDR, MOD_DVS_SW_2_INDEX_CHANNEL0_MEM_PAGE},
+};
+
+static const adau1466_sample_rate_cfg_t s_sample_rate_cfgs[] = {
+    {48000U, 0x06U, ADAU1466_SOUT0_FROM_ASRC2, ADAU1466_SOUT1_FROM_ASRC3, ADAU1466_USB_MUX_ASRC},
+    {96000U, 0x03U, ADAU1466_SOUT_FROM_DSP, ADAU1466_SOUT_FROM_DSP, ADAU1466_USB_MUX_DIRECT},
+};
+
+enum
+{
+    ADAU1466_SAMPLE_RATE_CFG_COUNT = sizeof(s_sample_rate_cfgs) / sizeof(s_sample_rate_cfgs[0]),
+    ADAU1466_SEND_SOURCE_COUNT = sizeof(s_send_source_addr) / sizeof(s_send_source_addr[0]),
+    ADAU1466_SELECTOR_COUNT = sizeof(s_input_type_selectors) / sizeof(s_input_type_selectors[0]),
+};
+
+_Static_assert((sizeof(s_usb_gain_addr) / sizeof(s_usb_gain_addr[0])) == ADAU1466_USB_CH_COUNT,
+               "USB gain table must cover all USB channels");
+_Static_assert((sizeof(s_usb_mute_addr) / sizeof(s_usb_mute_addr[0])) == ADAU1466_USB_CH_COUNT,
+               "USB mute table must cover all USB channels");
+_Static_assert((sizeof(s_input_type_selectors) / sizeof(s_input_type_selectors[0])) ==
+               (sizeof(s_insert_selectors) / sizeof(s_insert_selectors[0])),
+               "Input type and insert selector tables must cover the same channels");
+_Static_assert(ADAU1466_CH_FADER_TARGET_COUNT == 3U, "Unexpected ch_fader target table size");
 
 static float normalize_pot10_ratio(uint16_t adc_val)
 {
@@ -82,25 +189,88 @@ static bool adau1466_get_sample_rate_cfg(uint32_t hz, adau1466_sample_rate_cfg_t
         return false;
     }
 
-    if (hz == 48000U)
+    for (uint32_t i = 0U; i < ADAU1466_SAMPLE_RATE_CFG_COUNT; i++)
     {
-        cfg->clk_gen2_m   = 0x06U;
-        cfg->sout_source0 = ADAU1466_SOUT0_FROM_ASRC2;
-        cfg->sout_source1 = ADAU1466_SOUT1_FROM_ASRC3;
-        cfg->usb_mux_index = ADAU1466_USB_MUX_ASRC;
-        return true;
-    }
-
-    if (hz == 96000U)
-    {
-        cfg->clk_gen2_m   = 0x03U;
-        cfg->sout_source0 = ADAU1466_SOUT_FROM_DSP;
-        cfg->sout_source1 = ADAU1466_SOUT_FROM_DSP;
-        cfg->usb_mux_index = ADAU1466_USB_MUX_DIRECT;
-        return true;
+        if (s_sample_rate_cfgs[i].hz == hz)
+        {
+            *cfg = s_sample_rate_cfgs[i];
+            return true;
+        }
     }
 
     return false;
+}
+
+static bool adau1466_input_source_to_mux_index(uint8_t source, uint8_t* mux_index)
+{
+    if (mux_index == NULL)
+    {
+        return false;
+    }
+
+    switch (source)
+    {
+    case INPUT_CH1:
+        *mux_index = 0U;
+        return true;
+    case INPUT_CH2:
+        *mux_index = 1U;
+        return true;
+    case INPUT_USB12:
+        *mux_index = 2U;
+        return true;
+    case INPUT_USB34:
+        *mux_index = 3U;
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool adau1466_return_source_to_mux_index(uint8_t source, uint8_t* mux_index)
+{
+    if (mux_index == NULL)
+    {
+        return false;
+    }
+
+    switch (source)
+    {
+    case INPUT_USB12:
+        *mux_index = 0U;
+        return true;
+    case INPUT_USB34:
+        *mux_index = 1U;
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool adau1466_hp_source_to_mux_index(uint8_t source, uint8_t* mux_index)
+{
+    if (mux_index == NULL)
+    {
+        return false;
+    }
+
+    switch (source)
+    {
+    case CUE_SEL_CH_FADER_A:
+        *mux_index = 0U;
+        return true;
+    case CUE_SEL_CH_FADER_B:
+        *mux_index = 1U;
+        return true;
+    case CUE_SEL_THRU:
+        *mux_index = 2U;
+        return true;
+    case CUE_SEL_MST:
+        *mux_index = 3U;
+        return true;
+    default:
+        return false;
+    }
 }
 
 static void adau1466_write_reg_u16(uint16_t addr, uint8_t value)
@@ -275,6 +445,102 @@ static void write_q8_24(const uint16_t addr, const double val)
     SIGMA_WRITE_REGISTER_BLOCK_IT(DEVICE_ADDR_ADAU146XSCHEMATIC_1, addr, 4, gain_array);
 }
 
+static void adau1466_write_indexed_q8_24(const uint16_t* addr_table, uint32_t count,
+                                         uint32_t index, const double val)
+{
+    if ((addr_table == NULL) || (index >= count))
+    {
+        return;
+    }
+
+    write_q8_24(addr_table[index], val);
+}
+
+static void adau1466_write_pot_gain(uint16_t addr, uint16_t adc_val)
+{
+    const double db   = (double) convert_pot2dB_int(adc_val);
+    const double gain = convert_dB2gain(db);
+    write_q8_24(addr, gain);
+}
+
+static void adau1466_write_int_mux(uint16_t addr, uint8_t mux_index)
+{
+    uint8_t data[4] = {0x00U, 0x00U, 0x00U, mux_index};
+    SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, addr, 4, data);
+}
+
+static void adau1466_write_int_mux_it(uint16_t addr, uint8_t mux_index)
+{
+    uint8_t data[4] = {0x00U, 0x00U, 0x00U, mux_index};
+    SIGMA_WRITE_REGISTER_BLOCK_IT(DEVICE_ADDR_ADAU146XSCHEMATIC_1, addr, 4, data);
+}
+
+static bool adau1466_find_channel_addr(const adau1466_channel_addr_t* table, uint32_t count,
+                                       uint8_t channel, uint16_t* addr)
+{
+    if ((table == NULL) || (addr == NULL))
+    {
+        return false;
+    }
+
+    for (uint32_t i = 0U; i < count; i++)
+    {
+        if (table[i].channel == channel)
+        {
+            *addr = table[i].addr;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool adau1466_find_selector(const adau1466_safeload_selector_t* table, uint32_t count,
+                                   uint8_t channel, const adau1466_safeload_selector_t** selector)
+{
+    if ((table == NULL) || (selector == NULL))
+    {
+        return false;
+    }
+
+    for (uint32_t i = 0U; i < count; i++)
+    {
+        if (table[i].channel == channel)
+        {
+            *selector = &table[i];
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool adau1466_write_two_way_safeload(const adau1466_safeload_selector_t* selector,
+                                            uint8_t selected_index)
+{
+    uint8_t safeload_data[8] = {0x00};
+
+    if ((selector == NULL) || (selected_index > 1U))
+    {
+        return false;
+    }
+
+    // One-hot in Q8.24 format: 1.0 in the selected word.
+    safeload_data[(uint32_t) selected_index * 4U] = 0x01U;
+
+    return adau1466_safeload_write_words(selector->addr, selector->mem_page, safeload_data, 2U);
+}
+
+static void adau1466_select_ch_fader_source(uint16_t addr, uint8_t source)
+{
+    uint8_t mux_index = 0U;
+
+    // Existing behavior: an invalid source still writes index 0 (the previous
+    // zero-initialized payload value). Do not change it in this refactoring.
+    (void) adau1466_input_source_to_mux_index(source, &mux_index);
+    adau1466_write_int_mux(addr, mux_index);
+}
+
 void safeload_write_q8_24(uint16_t addr, uint8_t mem_page, double val)
 {
     uint8_t safeload_data[4] = {0x00};
@@ -370,84 +636,52 @@ bool AUDIO_Update_ADAU1466_SampleRate(uint32_t hz)
 
 void set_dc_inputA(float ch_fader_position)
 {
-    write_q8_24(MOD_DCINPUT_A_DCVALUE_ADDR, ch_fader_position);
+    adau1466_write_indexed_q8_24(s_dc_input_addr, ADAU1466_DC_INPUT_COUNT,
+                                 ADAU1466_DC_INPUT_A, ch_fader_position);
 }
 
 void set_dc_inputB(float ch_fader_position)
 {
-    write_q8_24(MOD_DCINPUT_B_DCVALUE_ADDR, ch_fader_position);
+    adau1466_write_indexed_q8_24(s_dc_input_addr, ADAU1466_DC_INPUT_COUNT,
+                                 ADAU1466_DC_INPUT_B, ch_fader_position);
 }
 
 void control_input_from_usb_gain(uint8_t ch, int16_t db)
 {
     SEGGER_RTT_printf(0, "USB CH%d Gain: %d dB\n", ch, db);
 
-    const double gain = convert_dB2gain(db);
-
-    switch (ch)
+    if ((ch < 1U) || ((uint16_t) ch > ADAU1466_USB_CH_COUNT))
     {
-    case 1:
-        write_q8_24(MOD_INPUT_FROM_USB1_GAIN_ADDR, gain);
-        break;
-    case 2:
-        write_q8_24(MOD_INPUT_FROM_USB2_GAIN_ADDR, gain);
-        break;
-    case 3:
-        write_q8_24(MOD_INPUT_FROM_USB3_GAIN_ADDR, gain);
-        break;
-    case 4:
-        write_q8_24(MOD_INPUT_FROM_USB4_GAIN_ADDR, gain);
-        break;
-    default:
-        break;
+        return;
     }
+
+    write_q8_24(s_usb_gain_addr[(uint32_t) ch - 1U], convert_dB2gain(db));
 }
 
 void control_input_from_usb_mute(uint8_t ch, bool muted)
 {
-    uint16_t addr;
-
-    switch (ch)
+    if ((ch < 1U) || ((uint16_t) ch > ADAU1466_USB_CH_COUNT))
     {
-    case 1:
-        addr = MOD_MUTE_USB1_MUTE_ADDR;
-        break;
-    case 2:
-        addr = MOD_MUTE_USB2_MUTE_ADDR;
-        break;
-    case 3:
-        addr = MOD_MUTE_USB3_MUTE_ADDR;
-        break;
-    case 4:
-        addr = MOD_MUTE_USB4_MUTE_ADDR;
-        break;
-    default:
         return;
     }
 
     SEGGER_RTT_printf(0, "USB CH%d Mute: %d\n", ch, muted ? 1 : 0);
-    write_q8_24(addr, muted ? 0.0 : 1.0);
+    write_q8_24(s_usb_mute_addr[(uint32_t) ch - 1U], muted ? 0.0 : 1.0);
 }
 
 void control_input_from_ch1_gain(const uint16_t adc_val)
 {
-    const double db   = (double) convert_pot2dB_int(adc_val);
-    const double gain = convert_dB2gain(db);
-    write_q8_24(MOD_INPUT_FROM_CH1_GAIN_ADDR, gain);
+    adau1466_write_pot_gain(MOD_INPUT_FROM_CH1_GAIN_ADDR, adc_val);
 }
 
 void control_input_from_ch2_gain(const uint16_t adc_val)
 {
-    const double db   = (double) convert_pot2dB_int(adc_val);
-    const double gain = convert_dB2gain(db);
-    write_q8_24(MOD_INPUT_FROM_CH2_GAIN_ADDR, gain);
+    adau1466_write_pot_gain(MOD_INPUT_FROM_CH2_GAIN_ADDR, adc_val);
 }
 
 void control_input_from_return_gain(const uint16_t adc_val)
 {
-    const double db   = (double) convert_pot2dB_int(adc_val);
-    const double gain = convert_dB2gain(db);
-    write_q8_24(MOD_INPUT_FROM_RETURN_GAIN_ADDR, gain);
+    adau1466_write_pot_gain(MOD_INPUT_FROM_RETURN_GAIN_ADDR, adc_val);
 }
 
 void mute_input_from_return(void)
@@ -457,28 +691,26 @@ void mute_input_from_return(void)
 
 void control_send1_out_gain(const uint16_t adc_val)
 {
-    const double db   = (double) convert_pot2dB_int(adc_val);
-    const double gain = convert_dB2gain(db);
-    write_q8_24(MOD_SEND1_OUTPUT_GAIN_ADDR, gain);
+    adau1466_write_pot_gain(MOD_SEND1_OUTPUT_GAIN_ADDR, adc_val);
 }
 
 void control_send2_out_gain(const uint16_t adc_val)
 {
-    const double db   = (double) convert_pot2dB_int(adc_val);
-    const double gain = convert_dB2gain(db);
-    write_q8_24(MOD_SEND2_OUTPUT_GAIN_ADDR, gain);
+    adau1466_write_pot_gain(MOD_SEND2_OUTPUT_GAIN_ADDR, adc_val);
 }
 
 void control_dryA_out_gain(const uint16_t adc_val)
 {
     const float rate = cos(pow(normalize_pot10_snap_ratio(adc_val), 2.0f) * M_PI_2);
-    write_q8_24(MOD_DCINPUT_DRYA_DCVALUE_ADDR, rate);
+    adau1466_write_indexed_q8_24(s_dry_dc_addr, ADAU1466_DRY_DC_COUNT,
+                                 ADAU1466_DRY_DC_A, rate);
 }
 
 void control_dryB_out_gain(const uint16_t adc_val)
 {
     const float rate = cos(pow(normalize_pot10_snap_ratio(adc_val), 2.0f) * M_PI_2);
-    write_q8_24(MOD_DCINPUT_DRYB_DCVALUE_ADDR, rate);
+    adau1466_write_indexed_q8_24(s_dry_dc_addr, ADAU1466_DRY_DC_COUNT,
+                                 ADAU1466_DRY_DC_B, rate);
 }
 
 void control_wet_out_gain(const uint16_t adc_val)
@@ -489,310 +721,93 @@ void control_wet_out_gain(const uint16_t adc_val)
 
 void control_ch1_out_gain(const uint16_t adc_val)
 {
-    const double db   = (double) convert_pot2dB_int(adc_val);
-    const double gain = convert_dB2gain(db);
-    write_q8_24(MOD_CH1_OUTPUT_GAIN_ADDR, gain);
+    adau1466_write_pot_gain(MOD_CH1_OUTPUT_GAIN_ADDR, adc_val);
 }
 
 void control_ch2_out_gain(const uint16_t adc_val)
 {
-    const double db   = (double) convert_pot2dB_int(adc_val);
-    const double gain = convert_dB2gain(db);
-    write_q8_24(MOD_CH2_OUTPUT_GAIN_ADDR, gain);
+    adau1466_write_pot_gain(MOD_CH2_OUTPUT_GAIN_ADDR, adc_val);
 }
 
 void control_hp_out_gain(const uint16_t adc_val)
 {
-    const double db   = (double) convert_pot2dB_int(adc_val);
-    const double gain = convert_dB2gain(db);
-    write_q8_24(MOD_HP_OUTPUT_GAIN_ADDR, gain);
-}
-
-void set_ch1_line()
-{
-    ADI_REG_TYPE Mode0_0[4]  = {0x01, 0x00, 0x00, 0x00};
-    ADI_REG_TYPE Mode0_1[4]  = {0x00, 0x00, 0x00, 0x00};
-    uint8_t safeload_data[8] = {0x00};
-
-    memcpy(&safeload_data[0], Mode0_0, sizeof(Mode0_0));
-    memcpy(&safeload_data[4], Mode0_1, sizeof(Mode0_1));
-    (void) adau1466_safeload_write_words(
-        MOD_LN_PN_SW_1_INDEX_CHANNEL0_ADDR, MOD_LN_PN_SW_1_INDEX_CHANNEL0_MEM_PAGE, safeload_data, 2U);
-}
-
-void set_ch1_phono()
-{
-    ADI_REG_TYPE Mode0_0[4]  = {0x00, 0x00, 0x00, 0x00};
-    ADI_REG_TYPE Mode0_1[4]  = {0x01, 0x00, 0x00, 0x00};
-    uint8_t safeload_data[8] = {0x00};
-
-    memcpy(&safeload_data[0], Mode0_0, sizeof(Mode0_0));
-    memcpy(&safeload_data[4], Mode0_1, sizeof(Mode0_1));
-    (void) adau1466_safeload_write_words(
-        MOD_LN_PN_SW_1_INDEX_CHANNEL0_ADDR, MOD_LN_PN_SW_1_INDEX_CHANNEL0_MEM_PAGE, safeload_data, 2U);
-}
-
-void set_ch2_line()
-{
-    ADI_REG_TYPE Mode0_0[4]  = {0x01, 0x00, 0x00, 0x00};
-    ADI_REG_TYPE Mode0_1[4]  = {0x00, 0x00, 0x00, 0x00};
-    uint8_t safeload_data[8] = {0x00};
-
-    memcpy(&safeload_data[0], Mode0_0, sizeof(Mode0_0));
-    memcpy(&safeload_data[4], Mode0_1, sizeof(Mode0_1));
-    (void) adau1466_safeload_write_words(
-        MOD_LN_PN_SW_2_INDEX_CHANNEL0_ADDR, MOD_LN_PN_SW_2_INDEX_CHANNEL0_MEM_PAGE, safeload_data, 2U);
-}
-
-void set_ch2_phono()
-{
-    ADI_REG_TYPE Mode0_0[4]  = {0x00, 0x00, 0x00, 0x00};
-    ADI_REG_TYPE Mode0_1[4]  = {0x01, 0x00, 0x00, 0x00};
-    uint8_t safeload_data[8] = {0x00};
-
-    memcpy(&safeload_data[0], Mode0_0, sizeof(Mode0_0));
-    memcpy(&safeload_data[4], Mode0_1, sizeof(Mode0_1));
-    (void) adau1466_safeload_write_words(
-        MOD_LN_PN_SW_2_INDEX_CHANNEL0_ADDR, MOD_LN_PN_SW_2_INDEX_CHANNEL0_MEM_PAGE, safeload_data, 2U);
+    adau1466_write_pot_gain(MOD_HP_OUTPUT_GAIN_ADDR, adc_val);
 }
 
 void select_input_type(uint8_t ch, uint8_t type)
 {
-    if (ch == INPUT_CH1)
+    const adau1466_safeload_selector_t* selector;
+
+    if ((type != INPUT_TYPE_LINE) && (type != INPUT_TYPE_PHONO))
     {
-        switch (type)
-        {
-        case INPUT_TYPE_LINE:
-            set_ch1_line();
-            break;
-        case INPUT_TYPE_PHONO:
-            set_ch1_phono();
-            break;
-        default:
-            break;
-        }
+        return;
     }
-    else if (ch == INPUT_CH2)
+
+    if (!adau1466_find_selector(s_input_type_selectors, ADAU1466_SELECTOR_COUNT, ch, &selector))
     {
-        switch (type)
-        {
-        case INPUT_TYPE_LINE:
-            set_ch2_line();
-            break;
-        case INPUT_TYPE_PHONO:
-            set_ch2_phono();
-            break;
-        default:
-            break;
-        }
+        return;
     }
-}
 
-void disable_ch1_dvs()
-{
-    ADI_REG_TYPE Mode0_0[4]  = {0x01, 0x00, 0x00, 0x00};
-    ADI_REG_TYPE Mode0_1[4]  = {0x00, 0x00, 0x00, 0x00};
-    uint8_t safeload_data[8] = {0x00};
-
-    memcpy(&safeload_data[0], Mode0_0, sizeof(Mode0_0));
-    memcpy(&safeload_data[4], Mode0_1, sizeof(Mode0_1));
-    (void) adau1466_safeload_write_words(MOD_DVS_SW_1_INDEX_CHANNEL0_ADDR, MOD_DVS_SW_1_INDEX_CHANNEL0_MEM_PAGE, safeload_data, 2U);
-}
-
-void enable_ch1_dvs()
-{
-    ADI_REG_TYPE Mode0_0[4]  = {0x00, 0x00, 0x00, 0x00};
-    ADI_REG_TYPE Mode0_1[4]  = {0x01, 0x00, 0x00, 0x00};
-    uint8_t safeload_data[8] = {0x00};
-
-    memcpy(&safeload_data[0], Mode0_0, sizeof(Mode0_0));
-    memcpy(&safeload_data[4], Mode0_1, sizeof(Mode0_1));
-    (void) adau1466_safeload_write_words(MOD_DVS_SW_1_INDEX_CHANNEL0_ADDR, MOD_DVS_SW_1_INDEX_CHANNEL0_MEM_PAGE, safeload_data, 2U);
-}
-
-static void select_send_ch1_src(bool select_dvs)
-{
-    ADI_REG_TYPE Mode0_0[4] = {0x00, 0x00, 0x00, select_dvs ? 0x01 : 0x00};
-
-    SIGMA_WRITE_REGISTER_BLOCK_IT(DEVICE_ADDR_ADAU146XSCHEMATIC_1, MOD_SEND_SW_1_INDEX_ADDR, 4, Mode0_0);
-}
-
-void disable_ch2_dvs()
-{
-    ADI_REG_TYPE Mode0_0[4]  = {0x01, 0x00, 0x00, 0x00};
-    ADI_REG_TYPE Mode0_1[4]  = {0x00, 0x00, 0x00, 0x00};
-    uint8_t safeload_data[8] = {0x00};
-
-    memcpy(&safeload_data[0], Mode0_0, sizeof(Mode0_0));
-    memcpy(&safeload_data[4], Mode0_1, sizeof(Mode0_1));
-    (void) adau1466_safeload_write_words(MOD_DVS_SW_2_INDEX_CHANNEL0_ADDR, MOD_DVS_SW_2_INDEX_CHANNEL0_MEM_PAGE, safeload_data, 2U);
-}
-
-void enable_ch2_dvs()
-{
-    ADI_REG_TYPE Mode0_0[4]  = {0x00, 0x00, 0x00, 0x00};
-    ADI_REG_TYPE Mode0_1[4]  = {0x01, 0x00, 0x00, 0x00};
-    uint8_t safeload_data[8] = {0x00};
-
-    memcpy(&safeload_data[0], Mode0_0, sizeof(Mode0_0));
-    memcpy(&safeload_data[4], Mode0_1, sizeof(Mode0_1));
-    (void) adau1466_safeload_write_words(MOD_DVS_SW_2_INDEX_CHANNEL0_ADDR, MOD_DVS_SW_2_INDEX_CHANNEL0_MEM_PAGE, safeload_data, 2U);
-}
-
-static void select_send_ch2_src(bool select_dvs)
-{
-    ADI_REG_TYPE Mode0_0[4] = {0x00, 0x00, 0x00, select_dvs ? 0x01 : 0x00};
-
-    SIGMA_WRITE_REGISTER_BLOCK_IT(DEVICE_ADDR_ADAU146XSCHEMATIC_1, MOD_SEND_SW_2_INDEX_ADDR, 4, Mode0_0);
-}
-
-void select_send_source(uint8_t ch, bool select_insert)
-{
-    if (ch == INPUT_CH1)
-    {
-        select_send_ch1_src(select_insert);
-    }
-    else if (ch == INPUT_CH2)
-    {
-        select_send_ch2_src(select_insert);
-    }
+    (void) adau1466_write_two_way_safeload(selector, (type == INPUT_TYPE_PHONO) ? 1U : 0U);
 }
 
 void set_input_insert_enabled(uint8_t ch, bool enabled)
 {
-    if (ch == INPUT_CH1)
+    const adau1466_safeload_selector_t* selector;
+
+    if (!adau1466_find_selector(s_insert_selectors, ADAU1466_SELECTOR_COUNT, ch, &selector))
     {
-        if (enabled)
-        {
-            enable_ch1_dvs();
-        }
-        else
-        {
-            disable_ch1_dvs();
-        }
+        return;
     }
-    else if (ch == INPUT_CH2)
+
+    (void) adau1466_write_two_way_safeload(selector, enabled ? 1U : 0U);
+}
+
+void select_send_source(uint8_t ch, bool select_insert)
+{
+    uint16_t addr;
+
+    if (!adau1466_find_channel_addr(s_send_source_addr, ADAU1466_SEND_SOURCE_COUNT, ch, &addr))
     {
-        if (enabled)
-        {
-            enable_ch2_dvs();
-        }
-        else
-        {
-            disable_ch2_dvs();
-        }
+        return;
     }
+
+    adau1466_write_int_mux_it(addr, select_insert ? 1U : 0U);
 }
 
 void select_ch_fader_assign_a_source(uint8_t ch)
 {
-    ADI_REG_TYPE Mode0[4] = {0x00, 0x00, 0x00, 0x00};
-
-    switch (ch)
-    {
-    case INPUT_CH1:
-        Mode0[3] = 0x00;
-        break;
-    case INPUT_CH2:
-        Mode0[3] = 0x01;
-        break;
-    case INPUT_USB12:
-        Mode0[3] = 0x02;
-        break;
-    case INPUT_USB34:
-        Mode0[3] = 0x03;
-        break;
-    }
-
-    SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, MOD_CH_FADER_ASSIGN_SW_A_INDEX_ADDR, 4, Mode0);
+    adau1466_select_ch_fader_source(s_ch_fader_assign_addr[ADAU1466_CH_FADER_TARGET_A], ch);
 }
 
 void select_ch_fader_assign_b_source(uint8_t ch)
 {
-    ADI_REG_TYPE Mode0[4] = {0x00, 0x00, 0x00, 0x00};
-
-    switch (ch)
-    {
-    case INPUT_CH1:
-        Mode0[3] = 0x00;
-        break;
-    case INPUT_CH2:
-        Mode0[3] = 0x01;
-        break;
-    case INPUT_USB12:
-        Mode0[3] = 0x02;
-        break;
-    case INPUT_USB34:
-        Mode0[3] = 0x03;
-        break;
-    }
-
-    SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, MOD_CH_FADER_ASSIGN_SW_B_INDEX_ADDR, 4, Mode0);
+    adau1466_select_ch_fader_source(s_ch_fader_assign_addr[ADAU1466_CH_FADER_TARGET_B], ch);
 }
 
 void select_ch_fader_assign_post_source(uint8_t ch)
 {
-    ADI_REG_TYPE Mode0[4] = {0x00, 0x00, 0x00, 0x00};
-
-    switch (ch)
-    {
-    case INPUT_CH1:
-        Mode0[3] = 0x00;
-        break;
-    case INPUT_CH2:
-        Mode0[3] = 0x01;
-        break;
-    case INPUT_USB12:
-        Mode0[3] = 0x02;
-        break;
-    case INPUT_USB34:
-        Mode0[3] = 0x03;
-        break;
-    }
-
-    SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, MOD_CH_FADER_ASSIGN_SW_POST_INDEX_ADDR, 4, Mode0);
+    adau1466_select_ch_fader_source(s_ch_fader_assign_addr[ADAU1466_CH_FADER_TARGET_POST], ch);
 }
 
 void select_return_ch_source(uint8_t ch)
 {
-    ADI_REG_TYPE Mode0[4] = {0x00, 0x00, 0x00, 0x00};
+    uint8_t mux_index;
 
-    switch (ch)
+    if (!adau1466_return_source_to_mux_index(ch, &mux_index))
     {
-    case INPUT_USB12:
-        Mode0[3] = 0x00;
-        break;
-    case INPUT_USB34:
-        Mode0[3] = 0x01;
-        break;
-    default:
         return;
     }
 
-    SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, MOD_RETURN_CH_SW_INDEX_ADDR, 4, Mode0);
+    adau1466_write_int_mux(MOD_RETURN_CH_SW_INDEX_ADDR, mux_index);
 }
 
 void select_hp_out_source(uint8_t ch)
 {
-    ADI_REG_TYPE Mode0[4] = {0x00, 0x00, 0x00, 0x00};
+    uint8_t mux_index = 0U;
 
-    switch (ch)
-    {
-    case CUE_SEL_CH_FADER_A:
-        Mode0[3] = 0x00;
-        break;
-    case CUE_SEL_CH_FADER_B:
-        Mode0[3] = 0x01;
-        break;
-    case CUE_SEL_THRU:
-        Mode0[3] = 0x02;
-        break;
-    case CUE_SEL_MST:
-        Mode0[3] = 0x03;
-        break;
-    default:
-    	break;
-    }
-
-    SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, MOD_HP_OUT_SW_INDEX_ADDR, 4, Mode0);
+    // Existing behavior: an invalid source still writes index 0 (the previous
+    // zero-initialized payload value). Do not change it in this refactoring.
+    (void) adau1466_hp_source_to_mux_index(ch, &mux_index);
+    adau1466_write_int_mux(MOD_HP_OUT_SW_INDEX_ADDR, mux_index);
 }
