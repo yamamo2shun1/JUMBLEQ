@@ -59,6 +59,47 @@ typedef struct
 #define UI_CH_FADER_CURVE_WIDTH_A_DEFAULT (0.30771654f)
 #define UI_CH_FADER_CURVE_WIDTH_B_DEFAULT (0.30771654f)
 
+// OLED表示用の1フレーム分の状態。値のコピーであり、UI内部状態への
+// pointerやEEPROM用UI_ControlPersistState_tとは兼用しない。
+typedef struct
+{
+    bool curve_edit_mode;
+    UI_Uf2TransitionState_t uf2_transition_state;
+    uint8_t uf2_seconds_remaining;
+
+    uint32_t sample_rate_hz;
+    int16_t ch1_input_db;
+    int16_t ch2_input_db;
+    int16_t ch1_output_db;
+    int16_t ch2_output_db;
+    int16_t return_db;
+    int16_t hp_output_db;
+    bool return_enabled;
+
+    uint8_t ch_fader_curve_a_cc;
+    uint8_t ch_fader_curve_b_cc;
+    uint8_t ch_fader_dvs_delay_ms;
+    bool dvs_enabled;
+    bool ch_fader_reverse_a;
+    bool ch_fader_reverse_b;
+
+    const char* input_source_a_text;
+    const char* input_source_b_text;
+    const char* input_type_a_text;
+    const char* input_type_b_text;
+    const char* thru_source_text;
+    const char* return_source_text;
+    const char* hp_source_text;
+
+    bool input_source_a_mode_visible;
+    UI_InputMode_t input_source_a_mode;
+    bool input_source_b_mode_visible;
+    UI_InputMode_t input_source_b_mode;
+} UI_DisplaySnapshot_t;
+
+// OLED Task専用。1回の呼出で一貫した時点の表示状態を取得する。
+bool ui_control_get_display_snapshot(UI_DisplaySnapshot_t* snapshot);
+
 uint8_t get_current_ch_fader_a_position(void);
 uint8_t get_current_ch_fader_b_position(void);
 int16_t get_current_ch1_in_db(void);

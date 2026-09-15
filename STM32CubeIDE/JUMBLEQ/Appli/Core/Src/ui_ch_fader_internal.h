@@ -35,4 +35,16 @@ void ui_ch_fader_capture_persist(UI_ControlPersistState_t* state);
 
 void ui_ch_fader_reset(void);
 
+// OLED表示用: curve幅、DVS delay、Reverseの軽量コピー。scheduler停止区間専用。
+typedef struct
+{
+    float curve_width_a;
+    float curve_width_b;
+    uint8_t dvs_delay_ms;
+    bool reverse_a;
+    bool reverse_b;
+} UI_ChFaderDisplayState_t;
+
+void ui_ch_fader_capture_display_state(UI_ChFaderDisplayState_t* state);
+
 #endif /* UI_CH_FADER_INTERNAL_H_ */

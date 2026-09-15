@@ -237,3 +237,34 @@ void ui_uf2_control_reset(void)
     memset(&s_uf2, 0, sizeof(s_uf2));
     s_uf2.state = UI_UF2_TRANSITION_IDLE;
 }
+
+// OLED表示用: stateと残り秒数を同じcaptureで取得する。scheduler停止区間専用。
+void ui_uf2_control_capture_display_state(UI_Uf2DisplayState_t* state)
+{
+    if (state == NULL)
+    {
+        return;
+    }
+
+    const UI_Uf2TransitionState_t uf2_state = s_uf2.state;
+    __DMB();
+
+    state->state = uf2_state;
+    state->seconds_remaining = 0U;
+
+    if ((uf2_state != UI_UF2_TRANSITION_WAIT_RELEASE) &&
+        (uf2_state != UI_UF2_TRANSITION_WAIT_HOLD) &&
+        (uf2_state != UI_UF2_TRANSITION_HOLDING))
+    {
+        return;
+    }
+
+    const uint32_t elapsed_ms = HAL_GetTick() - s_uf2.arm_started_ms;
+    if (elapsed_ms >= UF2_ARM_WINDOW_MS)
+    {
+        return;
+    }
+
+    const uint32_t remaining_ms = UF2_ARM_WINDOW_MS - elapsed_ms;
+    state->seconds_remaining = (uint8_t) ((remaining_ms + 999U) / 1000U);
+}

@@ -47,4 +47,25 @@ void ui_routing_apply_input_mode(uint8_t input_ch, UI_InputMode_t mode);
 
 void ui_routing_reset(void);
 
+// OLED表示用: 同一時点のrouting状態から導出した表示値。
+// 文字列は既存の文字列リテラルを指す。scheduler停止区間専用。
+typedef struct
+{
+    const char* input_source_a_text;
+    const char* input_source_b_text;
+    const char* input_type_a_text;
+    const char* input_type_b_text;
+    const char* thru_source_text;
+    const char* return_source_text;
+    const char* hp_source_text;
+    bool return_enabled;
+    bool dvs_enabled;
+    bool input_source_a_mode_visible;
+    UI_InputMode_t input_source_a_mode;
+    bool input_source_b_mode_visible;
+    UI_InputMode_t input_source_b_mode;
+} UI_RoutingDisplayState_t;
+
+void ui_routing_capture_display_state(UI_RoutingDisplayState_t* state);
+
 #endif /* UI_ROUTING_CONTROL_INTERNAL_H_ */

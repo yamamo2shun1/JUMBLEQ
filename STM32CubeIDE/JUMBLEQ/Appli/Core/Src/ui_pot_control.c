@@ -663,3 +663,19 @@ int16_t get_current_dry_wet(void)
     }
     return pct;
 }
+
+// OLED表示用: 6個のpot生値(ADC値)を軽量コピーする。scheduler停止区間専用。
+void ui_pot_control_capture_display_state(UI_PotDisplayState_t* state)
+{
+    if (state == NULL)
+    {
+        return;
+    }
+
+    state->ch1_input    = s_pot.pot_val[POT_CH_CH1_IN];
+    state->ch2_input    = s_pot.pot_val[POT_CH_CH2_IN];
+    state->ch1_output   = s_pot.pot_val[POT_CH_CH1_OUT];
+    state->ch2_output   = s_pot.pot_val[POT_CH_CH2_OUT];
+    state->return_input = s_pot.pot_val[POT_CH_RETURN_IN];
+    state->hp_output    = s_pot.pot_val[POT_CH_HP_OUT];
+}

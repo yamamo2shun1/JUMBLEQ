@@ -1581,3 +1581,18 @@ void ui_ch_fader_reset(void)
     mark_ch_fader_curve_dirty();
     s_ch_fader.fade_prev_valid = false;
 }
+
+// OLED表示用: curve幅、DVS delay、Reverseの軽量コピー。scheduler停止区間専用。
+void ui_ch_fader_capture_display_state(UI_ChFaderDisplayState_t* state)
+{
+    if (state == NULL)
+    {
+        return;
+    }
+
+    state->curve_width_a = s_ch_fader_curve_width_a;
+    state->curve_width_b = s_ch_fader_curve_width_b;
+    state->dvs_delay_ms  = s_ch_fader_dvs_delay_ms;
+    state->reverse_a     = s_ch_fader_reverse_a;
+    state->reverse_b     = s_ch_fader_reverse_b;
+}
