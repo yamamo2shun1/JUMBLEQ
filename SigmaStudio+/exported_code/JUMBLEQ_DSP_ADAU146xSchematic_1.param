@@ -88,7 +88,7 @@ Parameter Data :
 
 Module Name			= input_from_ch2
 Parameter Name		= Gain
-Parameter Address	= 125
+Parameter Address	= 129
 Parameter Value		= 1
 Data Memory			= DM0
 Mem Page			= 0
@@ -132,7 +132,7 @@ Parameter Data :
 
 Module Name			= Ph_EQ_Gain_1
 Parameter Name		= Gain
-Parameter Address	= 126
+Parameter Address	= 130
 Parameter Value		= 1.41253754462275
 Data Memory			= DM0
 Mem Page			= 0
@@ -176,7 +176,7 @@ Parameter Data :
 
 Module Name			= SignalMerger_2
 Parameter Name		= gain
-Parameter Address	= 157
+Parameter Address	= 161
 Parameter Value		= 0
 Data Memory			= DM0
 Mem Page			= 0
@@ -190,7 +190,7 @@ Parameter Data :
 
 Module Name			= SignalMerger_3
 Parameter Name		= gain
-Parameter Address	= 153
+Parameter Address	= 157
 Parameter Value		= 0
 Data Memory			= DM0
 Mem Page			= 0
@@ -204,7 +204,7 @@ Parameter Data :
 
 Module Name			= input_from_ch1
 Parameter Name		= Gain
-Parameter Address	= 127
+Parameter Address	= 131
 Parameter Value		= 1
 Data Memory			= DM0
 Mem Page			= 0
@@ -215,7 +215,7 @@ Parameter Data :
 
 Module Name			= ch1_output
 Parameter Name		= Gain
-Parameter Address	= 165
+Parameter Address	= 169
 Parameter Value		= 1
 Data Memory			= DM0
 Mem Page			= 0
@@ -248,7 +248,7 @@ Parameter Data :
 
 Module Name			= Ph_EQ_Gain_2
 Parameter Name		= Gain
-Parameter Address	= 124
+Parameter Address	= 128
 Parameter Value		= 1.41253754462275
 Data Memory			= DM0
 Mem Page			= 0
@@ -259,7 +259,7 @@ Parameter Data :
 
 Module Name			= SignalMerger_B
 Parameter Name		= gain
-Parameter Address	= 142
+Parameter Address	= 146
 Parameter Value		= 0
 Data Memory			= DM0
 Mem Page			= 0
@@ -282,7 +282,7 @@ Parameter Data :
 
 Module Name			= RunningAverage_B
 Parameter Name		= RmsTCinDBps
-Parameter Address	= 144
+Parameter Address	= 148
 Parameter Value		= 0.000287864561677509
 Data Memory			= DM0
 Mem Page			= 0
@@ -293,7 +293,7 @@ Parameter Data :
 
 Module Name			= RunningAverage_B
 Parameter Name		= Decay
-Parameter Address	= 146
+Parameter Address	= 150
 Parameter Value		= 1.30208333333333E-05
 Data Memory			= DM0
 Mem Page			= 0
@@ -304,7 +304,7 @@ Parameter Data :
 
 Module Name			= RunningAverage_B
 Parameter Name		= Hold
-Parameter Address	= 145
+Parameter Address	= 149
 Parameter Value		= 0
 Data Memory			= DM0
 Mem Page			= 0
@@ -315,7 +315,7 @@ Parameter Data :
 
 Module Name			= ch_fader_assign_sw_B
 Parameter Name		= Index
-Parameter Address	= 141
+Parameter Address	= 145
 Parameter Value		= 0
 Data Memory			= DM0
 Mem Page			= 0
@@ -326,7 +326,7 @@ Parameter Data :
 
 Module Name			= ch_fader_assign_sw_A
 Parameter Name		= Index
-Parameter Address	= 129
+Parameter Address	= 133
 Parameter Value		= 1
 Data Memory			= DM0
 Mem Page			= 0
@@ -337,7 +337,7 @@ Parameter Data :
 
 Module Name			= ch_fader_assign_sw_post
 Parameter Name		= Index
-Parameter Address	= 128
+Parameter Address	= 132
 Parameter Value		= 2
 Data Memory			= DM0
 Mem Page			= 0
@@ -348,7 +348,7 @@ Parameter Data :
 
 Module Name			= SignalMerger_A
 Parameter Name		= gain
-Parameter Address	= 130
+Parameter Address	= 134
 Parameter Value		= 0
 Data Memory			= DM0
 Mem Page			= 0
@@ -371,7 +371,7 @@ Parameter Data :
 
 Module Name			= RunningAverage_A
 Parameter Name		= RmsTCinDBps
-Parameter Address	= 132
+Parameter Address	= 136
 Parameter Value		= 0.000287864561677509
 Data Memory			= DM0
 Mem Page			= 0
@@ -382,7 +382,7 @@ Parameter Data :
 
 Module Name			= RunningAverage_A
 Parameter Name		= Decay
-Parameter Address	= 134
+Parameter Address	= 138
 Parameter Value		= 1.30208333333333E-05
 Data Memory			= DM0
 Mem Page			= 0
@@ -393,7 +393,7 @@ Parameter Data :
 
 Module Name			= RunningAverage_A
 Parameter Name		= Hold
-Parameter Address	= 133
+Parameter Address	= 137
 Parameter Value		= 0
 Data Memory			= DM0
 Mem Page			= 0
@@ -404,7 +404,7 @@ Parameter Data :
 
 Module Name			= input_from_usb1
 Parameter Name		= Gain
-Parameter Address	= 121
+Parameter Address	= 124
 Parameter Value		= 1
 Data Memory			= DM0
 Mem Page			= 0
@@ -415,7 +415,7 @@ Parameter Data :
 
 Module Name			= input_from_usb3
 Parameter Name		= Gain
-Parameter Address	= 119
+Parameter Address	= 120
 Parameter Value		= 1
 Data Memory			= DM0
 Mem Page			= 0
@@ -426,7 +426,7 @@ Parameter Data :
 
 Module Name			= send2_output
 Parameter Name		= Gain
-Parameter Address	= 152
+Parameter Address	= 156
 Parameter Value		= 1
 Data Memory			= DM0
 Mem Page			= 0
@@ -657,7 +657,7 @@ Parameter Data :
 
 Module Name			= send1_output
 Parameter Name		= Gain
-Parameter Address	= 140
+Parameter Address	= 144
 Parameter Value		= 1
 Data Memory			= DM0
 Mem Page			= 0
@@ -668,7 +668,7 @@ Parameter Data :
 
 Module Name			= input_from_return
 Parameter Name		= Gain
-Parameter Address	= 123
+Parameter Address	= 127
 Parameter Value		= 1
 Data Memory			= DM0
 Mem Page			= 0
@@ -679,7 +679,7 @@ Parameter Data :
 
 Module Name			= input_from_usb2
 Parameter Name		= Gain
-Parameter Address	= 120
+Parameter Address	= 122
 Parameter Value		= 1
 Data Memory			= DM0
 Mem Page			= 0
@@ -701,7 +701,7 @@ Parameter Data :
 
 Module Name			= ch2_output
 Parameter Name		= Gain
-Parameter Address	= 164
+Parameter Address	= 168
 Parameter Value		= 1
 Data Memory			= DM0
 Mem Page			= 0
@@ -712,7 +712,7 @@ Parameter Data :
 
 Module Name			= return_ch_SW
 Parameter Name		= Index
-Parameter Address	= 122
+Parameter Address	= 126
 Parameter Value		= 1
 Data Memory			= DM0
 Mem Page			= 0
@@ -723,7 +723,7 @@ Parameter Data :
 
 Module Name			= send_sw_1
 Parameter Name		= Index
-Parameter Address	= 139
+Parameter Address	= 143
 Parameter Value		= 0
 Data Memory			= DM0
 Mem Page			= 0
@@ -734,7 +734,7 @@ Parameter Data :
 
 Module Name			= send_sw_2
 Parameter Name		= Index
-Parameter Address	= 151
+Parameter Address	= 155
 Parameter Value		= 0
 Data Memory			= DM0
 Mem Page			= 0
@@ -745,7 +745,7 @@ Parameter Data :
 
 Module Name			= hp_output
 Parameter Name		= Gain
-Parameter Address	= 162
+Parameter Address	= 166
 Parameter Value		= 1
 Data Memory			= DM0
 Mem Page			= 0
@@ -756,7 +756,7 @@ Parameter Data :
 
 Module Name			= hp_out_sw
 Parameter Name		= Index
-Parameter Address	= 161
+Parameter Address	= 165
 Parameter Value		= 3
 Data Memory			= DM0
 Mem Page			= 0
@@ -767,7 +767,7 @@ Parameter Data :
 
 Module Name			= SingleVolumeControl_19
 Parameter Name		= Gain
-Parameter Address	= 163
+Parameter Address	= 167
 Parameter Value		= 1.25892541179417
 Data Memory			= DM0
 Mem Page			= 0
@@ -1022,6 +1022,50 @@ Data Memory			= DM0
 Mem Page			= 0
 Parameter Data :
 0x00, 0x00, 0x00, 0x04, 
+
+
+
+Module Name			= mute_usb1
+Parameter Name		= Mute
+Parameter Address	= 125
+Parameter Value		= 1
+Data Memory			= DM0
+Mem Page			= 0
+Parameter Data :
+0x01, 0x00, 0x00, 0x00, 
+
+
+
+Module Name			= mute_usb2
+Parameter Name		= Mute
+Parameter Address	= 123
+Parameter Value		= 1
+Data Memory			= DM0
+Mem Page			= 0
+Parameter Data :
+0x01, 0x00, 0x00, 0x00, 
+
+
+
+Module Name			= mute_usb3
+Parameter Name		= Mute
+Parameter Address	= 121
+Parameter Value		= 1
+Data Memory			= DM0
+Mem Page			= 0
+Parameter Data :
+0x01, 0x00, 0x00, 0x00, 
+
+
+
+Module Name			= mute_usb4
+Parameter Name		= Mute
+Parameter Address	= 119
+Parameter Value		= 1
+Data Memory			= DM0
+Mem Page			= 0
+Parameter Data :
+0x01, 0x00, 0x00, 0x00, 
 
 
 
