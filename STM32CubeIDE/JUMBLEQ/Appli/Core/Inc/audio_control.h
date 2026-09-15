@@ -46,6 +46,7 @@ typedef struct
     uint32_t tx_half_callbacks;
     uint32_t tx_cplt_callbacks;
     uint32_t both_pending_events;
+    uint32_t dma_events_dropped;
     uint32_t half_rewrite_events;
     uint32_t cplt_rewrite_events;
     uint32_t underrun_events;
