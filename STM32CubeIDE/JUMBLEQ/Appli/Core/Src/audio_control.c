@@ -1413,13 +1413,13 @@ static inline void fill_tx_half(uint32_t index0)
         return;
     }
 
-    // 長時間再生時のUSB/SAIクロック差を吸収するため、
-    // リング水位に応じて 1 frame だけ消費量を増減する
-    const int32_t target_level = (int32_t) SAI_TX_TARGET_LEVEL_WORDS;
-    const int32_t high_thr     = target_level + (int32_t) (SAI_TX_BUF_SIZE / 2);
-    const int32_t low_thr      = target_level - (int32_t) (SAI_TX_BUF_SIZE / 2);
+    // 長時間再生時のUSB/SAIクロック差を吸収するため、リング水位に応じて
+    // 1 frameだけ消費量を増減する。usedはDMA half消費前の水位なので、
+    // 消費後の目標水位に今回の通常消費量を加えた値を判定基準にする。
+    const int32_t target_before_consume =
+        (int32_t) SAI_TX_TARGET_LEVEL_WORDS + (int32_t) n;
 
-    if (used >= (int32_t) n && used > high_thr && used >= (int32_t) (n + frame_words))
+    if (used > target_before_consume && used >= (int32_t) (n + frame_words))
     {
         // バッファ過多: 最古の1 frameを捨て、DMA halfには通常量だけ書き込む
         consume_words     = n + frame_words;
@@ -1433,7 +1433,7 @@ static inline void fill_tx_half(uint32_t index0)
         dbg_tx_drift_up_events++;
 #endif
     }
-    else if (used >= (int32_t) n && used < low_thr && n > frame_words)
+    else if (used >= (int32_t) n && used < target_before_consume && n > frame_words)
     {
         // バッファ不足傾向: 1 frame 少なく消費して追従
         consume_words = n - frame_words;

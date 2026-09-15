@@ -17,8 +17,8 @@
 #define SAI_RNG_BUF_SIZE 8192  // リングバッファ（2のべき乗必須）
 #define SAI_TX_BUF_SIZE  256  // 4ch DMAバッファ (USB->SAI)
 #define SAI_RX_BUF_SIZE  256  // 4ch DMAバッファ (SAI->USB)
-// TXリングの目標水位（word単位）。
-// DMAバッファ縮小後は half-buffer より少し低めにして平均滞留量をさらに下げる。
+// DMA halfを消費した後のTXリング目標水位（word単位）。
+// 消費前の判定基準は、この値にDMA half-buffer分を加えた水位になる。
 #define SAI_TX_TARGET_LEVEL_WORDS 96
 
 // Runtime DSP parameter update switch for A/B diagnosis.
