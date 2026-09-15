@@ -1,0 +1,451 @@
+/*
+ * audio_usb_control.c
+ *
+ * TinyUSB UAC2 control-plane adapter. Owns the device callbacks, the
+ * host-visible Mute/Volume state and the supported sample-rate list.
+ *
+ * Sample-rate and stream changes are published as requests and applied by the
+ * Audio Task. Callbacks never reinitialize SAI/GPDMA or the DSP path.
+ */
+
+#include "audio_control.h"
+#include "audio_control_internal.h"
+#include "audio_transport_internal.h"
+#include "audio_usb_control_internal.h"
+#include "adau1466.h"
+
+#define N_SAMPLE_RATES TU_ARRAY_SIZE(sample_rates)
+
+enum
+{
+    BLINK_STREAMING   = 25,
+    BLINK_NOT_MOUNTED = 250,
+    BLINK_MOUNTED     = 1000,
+    BLINK_SUSPENDED   = 2500,
+};
+
+enum
+{
+    VOLUME_CTRL_0_DB    = 0,
+    VOLUME_CTRL_50_DB   = 12800,
+};
+
+// Audio controls
+static volatile uint32_t tx_blink_interval_ms = BLINK_NOT_MOUNTED;
+static volatile uint32_t rx_blink_interval_ms = BLINK_NOT_MOUNTED;
+
+const uint32_t sample_rates[] = {48000, 96000};
+
+// Current states
+int8_t mute[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX + 1];     // +1 for master channel 0
+int16_t volume[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX + 1];  // +1 for master channel 0
+
+void audio_usb_control_set_tx_stream_blink(bool streaming)
+{
+    tx_blink_interval_ms = streaming ? BLINK_STREAMING :
+                                        (tud_mounted() ? BLINK_MOUNTED : BLINK_NOT_MOUNTED);
+}
+
+void audio_usb_control_set_rx_stream_blink(bool streaming)
+{
+    rx_blink_interval_ms = streaming ? BLINK_STREAMING :
+                                        (tud_mounted() ? BLINK_MOUNTED : BLINK_NOT_MOUNTED);
+}
+
+uint32_t get_tx_blink_interval_ms(void)
+{
+    return tx_blink_interval_ms;
+}
+
+uint32_t get_rx_blink_interval_ms(void)
+{
+    return rx_blink_interval_ms;
+}
+
+//--------------------------------------------------------------------+
+// Device callbacks
+//--------------------------------------------------------------------+
+
+// Invoked when device is mounted
+void tud_mount_cb(void)
+{
+    tx_blink_interval_ms = BLINK_MOUNTED;
+    rx_blink_interval_ms = BLINK_MOUNTED;
+}
+
+// Invoked when device is unmounted
+void tud_umount_cb(void)
+{
+    tx_blink_interval_ms = BLINK_NOT_MOUNTED;
+    rx_blink_interval_ms = BLINK_NOT_MOUNTED;
+    audio_transport_request_stream(AUDIO_TRANSPORT_STREAM_OUT, false);
+    audio_transport_request_stream(AUDIO_TRANSPORT_STREAM_IN, false);
+}
+
+// Invoked when usb bus is suspended
+// remote_wakeup_en : if host allow us  to perform remote wakeup
+// Within 7ms, device must draw an average of current less than 2.5 mA from bus
+void tud_suspend_cb(bool remote_wakeup_en)
+{
+    (void) remote_wakeup_en;
+    tx_blink_interval_ms = BLINK_SUSPENDED;
+    rx_blink_interval_ms = BLINK_SUSPENDED;
+}
+
+// Invoked when usb bus is resumed
+void tud_resume_cb(void)
+{
+    tx_blink_interval_ms = tud_mounted() ? BLINK_MOUNTED : BLINK_NOT_MOUNTED;
+    rx_blink_interval_ms = tud_mounted() ? BLINK_MOUNTED : BLINK_NOT_MOUNTED;
+}
+
+//--------------------------------------------------------------------+
+// Audio Callback Functions
+//--------------------------------------------------------------------+
+
+//--------------------------------------------------------------------+
+// UAC2 Helper Functions
+//--------------------------------------------------------------------+
+
+static void audio20_feature_unit_apply_channel(uint8_t channel)
+{
+    const int32_t effective_volume_q8_8 = (int32_t) volume[0] + volume[channel];
+    const int16_t effective_volume_db   = (int16_t) (effective_volume_q8_8 / 256);
+    const bool effective_mute           = (mute[0] != 0) || (mute[channel] != 0);
+
+    control_input_from_usb_gain(channel, effective_volume_db);
+    control_input_from_usb_mute(channel, effective_mute);
+}
+
+static void audio20_feature_unit_apply_all_channels(void)
+{
+    for (uint8_t channel = 1U; channel <= CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX; channel++)
+    {
+        audio20_feature_unit_apply_channel(channel);
+    }
+}
+
+// Helper for clock get requests
+static bool audio20_clock_get_request(uint8_t rhport, tusb_control_request_t const* request)
+{
+    TU_ASSERT(TU_U16_HIGH(request->wIndex) == UAC2_ENTITY_CLOCK);
+
+    if (TU_U16_HIGH(request->wValue) == AUDIO20_CS_CTRL_SAM_FREQ)
+    {
+        if (request->bRequest == AUDIO20_CS_REQ_CUR)
+        {
+            const uint32_t current_sample_rate = get_current_sample_rate_hz();
+            TU_LOG1("Clock get current freq %" PRIu32 "\r\n", current_sample_rate);
+
+            audio20_control_cur_4_t curf = {(int32_t) tu_htole32(current_sample_rate)};
+            return tud_audio_buffer_and_schedule_control_xfer(rhport, (tusb_control_request_t const*) request, &curf, sizeof(curf));
+        }
+        else if (request->bRequest == AUDIO20_CS_REQ_RANGE)
+        {
+            audio20_control_range_4_n_t(N_SAMPLE_RATES) rangef =
+                {
+                    .wNumSubRanges = tu_htole16(N_SAMPLE_RATES)};
+            SEGGER_RTT_printf(0,
+                              "[USB] GET_RANGE sample-rate: count=%u request_len=%u response_len=%u\n",
+                              (unsigned) N_SAMPLE_RATES,
+                              (unsigned) tu_le16toh(request->wLength),
+                              (unsigned) sizeof(rangef));
+            TU_LOG1("Clock get %d freq ranges\r\n", N_SAMPLE_RATES);
+            for (uint8_t i = 0; i < N_SAMPLE_RATES; i++)
+            {
+                rangef.subrange[i].bMin = (int32_t) sample_rates[i];
+                rangef.subrange[i].bMax = (int32_t) sample_rates[i];
+                rangef.subrange[i].bRes = 0;
+                SEGGER_RTT_printf(0,
+                                  "[USB] RANGE[%u]: min=%lu max=%lu res=%lu\n",
+                                  (unsigned) i,
+                                  (unsigned long) rangef.subrange[i].bMin,
+                                  (unsigned long) rangef.subrange[i].bMax,
+                                  (unsigned long) rangef.subrange[i].bRes);
+                TU_LOG1("Range %d (%d, %d, %d)\r\n", i, (int) rangef.subrange[i].bMin, (int) rangef.subrange[i].bMax, (int) rangef.subrange[i].bRes);
+            }
+
+            return tud_audio_buffer_and_schedule_control_xfer(rhport, (tusb_control_request_t const*) request, &rangef, sizeof(rangef));
+        }
+    }
+    else if (TU_U16_HIGH(request->wValue) == AUDIO20_CS_CTRL_CLK_VALID && request->bRequest == AUDIO20_CS_REQ_CUR)
+    {
+        audio20_control_cur_1_t cur_valid = {.bCur = 1};
+        TU_LOG1("Clock get is valid %u\r\n", cur_valid.bCur);
+        return tud_audio_buffer_and_schedule_control_xfer(rhport, (tusb_control_request_t const*) request, &cur_valid, sizeof(cur_valid));
+    }
+    TU_LOG1("Clock get request not supported, entity = %u, selector = %u, request = %u\r\n", TU_U16_HIGH(request->wIndex), TU_U16_HIGH(request->wValue), request->bRequest);
+    return false;
+}
+
+// Helper for clock set requests
+static bool audio20_clock_set_request(uint8_t rhport, tusb_control_request_t const* request, uint8_t const* buf)
+{
+    (void) rhport;
+
+    TU_ASSERT(TU_U16_HIGH(request->wIndex) == UAC2_ENTITY_CLOCK);
+    TU_VERIFY(request->bRequest == AUDIO20_CS_REQ_CUR);
+
+    if (TU_U16_HIGH(request->wValue) == AUDIO20_CS_CTRL_SAM_FREQ)
+    {
+        TU_VERIFY(request->wLength == sizeof(audio20_control_cur_4_t));
+
+        uint32_t requested_sample_rate =
+            tu_le32toh((uint32_t) ((audio20_control_cur_4_t const*) buf)->bCur);
+        bool supported = false;
+        for (uint8_t i = 0U; i < N_SAMPLE_RATES; i++)
+        {
+            if (requested_sample_rate == sample_rates[i])
+            {
+                supported = true;
+                break;
+            }
+        }
+
+        if (!supported)
+        {
+            SEGGER_RTT_printf(0,
+                              "[USB] unsupported sample-rate request: %lu Hz\n",
+                              (unsigned long) requested_sample_rate);
+            return false;
+        }
+
+        audio_control_request_sample_rate(requested_sample_rate);
+
+        SEGGER_RTT_printf(0,
+                          "[USB] sample-rate request: %lu Hz\n",
+                          (unsigned long) requested_sample_rate);
+        TU_LOG1("Clock set current freq: %" PRIu32 "\r\n", requested_sample_rate);
+
+        return true;
+    }
+    else
+    {
+        TU_LOG1("Clock set request not supported, entity = %u, selector = %u, request = %u\r\n", TU_U16_HIGH(request->wIndex), TU_U16_HIGH(request->wValue), request->bRequest);
+        return false;
+    }
+}
+
+static bool audio20_feature_unit_channel_is_valid(uint8_t channel)
+{
+    return channel <= CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX;
+}
+
+// Helper for feature unit get requests
+static bool audio20_feature_unit_get_request(uint8_t rhport, tusb_control_request_t const* request)
+{
+    TU_ASSERT(TU_U16_HIGH(request->wIndex) == UAC2_ENTITY_STEREO_OUT_FEATURE_UNIT);
+
+    const uint8_t channel = TU_U16_LOW(request->wValue);
+    if (!audio20_feature_unit_channel_is_valid(channel))
+    {
+        TU_LOG1("Feature unit get request has invalid channel %u\r\n", channel);
+        return false;
+    }
+
+    if (TU_U16_HIGH(request->wValue) == AUDIO20_FU_CTRL_MUTE && request->bRequest == AUDIO20_CS_REQ_CUR)
+    {
+        audio20_control_cur_1_t mute1 = {.bCur = mute[channel]};
+        TU_LOG1("Get channel %u mute %d\r\n", channel, mute1.bCur);
+        return tud_audio_buffer_and_schedule_control_xfer(rhport, (tusb_control_request_t const*) request, &mute1, sizeof(mute1));
+    }
+    else if (TU_U16_HIGH(request->wValue) == AUDIO20_FU_CTRL_VOLUME)
+    {
+        if (request->bRequest == AUDIO20_CS_REQ_RANGE)
+        {
+            audio20_control_range_2_n_t(1) range_vol = {
+                .wNumSubRanges = tu_htole16(1),
+                .subrange[0]   = {.bMin = tu_htole16(-VOLUME_CTRL_50_DB), tu_htole16(VOLUME_CTRL_0_DB), tu_htole16(256)}
+            };
+            TU_LOG1("Get channel %u volume range (%d, %d, %u) dB\r\n", TU_U16_LOW(request->wValue), range_vol.subrange[0].bMin / 256, range_vol.subrange[0].bMax / 256, range_vol.subrange[0].bRes / 256);
+            return tud_audio_buffer_and_schedule_control_xfer(rhport, (tusb_control_request_t const*) request, &range_vol, sizeof(range_vol));
+        }
+        else if (request->bRequest == AUDIO20_CS_REQ_CUR)
+        {
+            audio20_control_cur_2_t cur_vol = {.bCur = tu_htole16(volume[channel])};
+            TU_LOG1("Get channel %u volume %d dB\r\n", channel, cur_vol.bCur / 256);
+            return tud_audio_buffer_and_schedule_control_xfer(rhport, (tusb_control_request_t const*) request, &cur_vol, sizeof(cur_vol));
+        }
+    }
+    TU_LOG1("Feature unit get request not supported, entity = %u, selector = %u, request = %u\r\n", TU_U16_HIGH(request->wIndex), TU_U16_HIGH(request->wValue), request->bRequest);
+
+    return false;
+}
+
+// Helper for feature unit set requests
+static bool audio20_feature_unit_set_request(uint8_t rhport, tusb_control_request_t const* request, uint8_t const* buf)
+{
+    (void) rhport;
+
+    TU_ASSERT(TU_U16_HIGH(request->wIndex) == UAC2_ENTITY_STEREO_OUT_FEATURE_UNIT);
+    TU_VERIFY(request->bRequest == AUDIO20_CS_REQ_CUR);
+
+    const uint8_t channel = TU_U16_LOW(request->wValue);
+    if (!audio20_feature_unit_channel_is_valid(channel))
+    {
+        TU_LOG1("Feature unit set request has invalid channel %u\r\n", channel);
+        return false;
+    }
+
+    if (TU_U16_HIGH(request->wValue) == AUDIO20_FU_CTRL_MUTE)
+    {
+        TU_VERIFY(request->wLength == sizeof(audio20_control_cur_1_t));
+
+        mute[channel] = ((audio20_control_cur_1_t const*) buf)->bCur;
+
+        TU_LOG1("Set channel %d Mute: %d\r\n", channel, mute[channel]);
+
+        if (channel == 0U)
+        {
+            audio20_feature_unit_apply_all_channels();
+        }
+        else
+        {
+            audio20_feature_unit_apply_channel(channel);
+        }
+
+        return true;
+    }
+    else if (TU_U16_HIGH(request->wValue) == AUDIO20_FU_CTRL_VOLUME)
+    {
+        TU_VERIFY(request->wLength == sizeof(audio20_control_cur_2_t));
+
+        volume[channel] = ((audio20_control_cur_2_t const*) buf)->bCur;
+
+        TU_LOG1("Set channel %d volume: %d dB\r\n", channel, volume[channel] / 256);
+
+        if (channel == 0U)
+        {
+            audio20_feature_unit_apply_all_channels();
+        }
+        else
+        {
+            audio20_feature_unit_apply_channel(channel);
+        }
+
+        return true;
+    }
+    else
+    {
+        TU_LOG1("Feature unit set request not supported, entity = %u, selector = %u, request = %u\r\n", TU_U16_HIGH(request->wIndex), TU_U16_HIGH(request->wValue), request->bRequest);
+        return false;
+    }
+}
+
+static bool audio20_get_req_entity(uint8_t rhport, tusb_control_request_t const* p_request)
+{
+    tusb_control_request_t const* request = p_request;
+
+    if (TU_U16_HIGH(request->wIndex) == UAC2_ENTITY_CLOCK)
+        return audio20_clock_get_request(rhport, request);
+    if (TU_U16_HIGH(request->wIndex) == UAC2_ENTITY_STEREO_OUT_FEATURE_UNIT)
+        return audio20_feature_unit_get_request(rhport, request);
+    else
+    {
+        TU_LOG1("Get request not handled, entity = %d, selector = %d, request = %d\r\n", TU_U16_HIGH(request->wIndex), TU_U16_HIGH(request->wValue), request->bRequest);
+    }
+    return false;
+}
+
+static bool audio20_set_req_entity(uint8_t rhport, tusb_control_request_t const* p_request, uint8_t* buf)
+{
+    tusb_control_request_t const* request = p_request;
+
+    if (TU_U16_HIGH(request->wIndex) == UAC2_ENTITY_STEREO_OUT_FEATURE_UNIT)
+        return audio20_feature_unit_set_request(rhport, request, buf);
+    if (TU_U16_HIGH(request->wIndex) == UAC2_ENTITY_CLOCK)
+        return audio20_clock_set_request(rhport, request, buf);
+    TU_LOG1("Set request not handled, entity = %d, selector = %d, request = %d\r\n", TU_U16_HIGH(request->wIndex), TU_U16_HIGH(request->wValue), request->bRequest);
+
+    return false;
+}
+
+// Invoked when audio class specific set request received for an EP
+bool tud_audio_set_req_ep_cb(uint8_t rhport, tusb_control_request_t const* p_request, uint8_t* pBuff)
+{
+    (void) rhport;
+    (void) pBuff;
+    (void) p_request;
+    return false;  // EP-specific requests are not used for UAC2 in this project.
+}
+
+// Invoked when audio class specific get request received for an EP
+bool tud_audio_get_req_ep_cb(uint8_t rhport, tusb_control_request_t const* p_request)
+{
+    (void) rhport;
+    (void) p_request;
+    return false;  // EP-specific requests are not used for UAC2 in this project.
+}
+
+// Invoked when audio class specific get request received for an entity
+bool tud_audio_get_req_entity_cb(uint8_t rhport, tusb_control_request_t const* p_request)
+{
+    (void) rhport;
+    return audio20_get_req_entity(rhport, p_request);
+}
+
+// Invoked when audio class specific set request received for an entity
+bool tud_audio_set_req_entity_cb(uint8_t rhport, tusb_control_request_t const* p_request, uint8_t* buf)
+{
+    (void) rhport;
+    return audio20_set_req_entity(rhport, p_request, buf);
+}
+
+bool tud_audio_set_itf_close_ep_cb(uint8_t rhport, tusb_control_request_t const* p_request)
+{
+    (void) rhport;
+
+    uint8_t const itf = tu_u16_low(tu_le16toh(p_request->wIndex));
+    uint8_t const alt = tu_u16_low(tu_le16toh(p_request->wValue));
+
+    if (ITF_NUM_AUDIO_STREAMING_STEREO_OUT == itf && alt == 0)
+    {
+        audio_transport_request_stream(AUDIO_TRANSPORT_STREAM_OUT, false);
+    }
+
+    if (ITF_NUM_AUDIO_STREAMING_STEREO_IN == itf && alt == 0)
+    {
+        audio_transport_request_stream(AUDIO_TRANSPORT_STREAM_IN, false);
+    }
+
+    return true;
+}
+
+bool tud_audio_set_itf_cb(uint8_t rhport, tusb_control_request_t const* p_request)
+{
+    (void) rhport;
+    uint8_t const itf = tu_u16_low(tu_le16toh(p_request->wIndex));
+    uint8_t const alt = tu_u16_low(tu_le16toh(p_request->wValue));
+
+    TU_LOG2("Set interface %d alt %d\r\n", itf, alt);
+    if (ITF_NUM_AUDIO_STREAMING_STEREO_OUT == itf && alt != 0)
+    {
+        audio_transport_request_stream(AUDIO_TRANSPORT_STREAM_OUT, true);
+    }
+
+    if (ITF_NUM_AUDIO_STREAMING_STEREO_IN == itf && alt != 0)
+    {
+        audio_transport_request_stream(AUDIO_TRANSPORT_STREAM_IN, true);
+    }
+
+    return true;
+}
+
+#if CFG_TUD_AUDIO_ENABLE_EP_OUT && CFG_TUD_AUDIO_ENABLE_FEEDBACK_EP
+void tud_audio_feedback_params_cb(uint8_t func_id, uint8_t alt_itf, audio_feedback_params_t* feedback_param)
+{
+    (void) alt_itf;
+    if (func_id != AUDIO_FUNC_ID)
+    {
+        return;
+    }
+
+    // Use TinyUSB's FIFO-count based feedback so host OUT packet rate follows
+    // this device's effective consume rate and suppresses long-term drift.
+    feedback_param->method      = AUDIO_FEEDBACK_METHOD_FIFO_COUNT;
+    feedback_param->sample_freq = get_current_sample_rate_hz();
+
+    // Keep FIFO around the middle to balance jitter tolerance and latency.
+    feedback_param->fifo_count.fifo_threshold = (uint16_t) (CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ / 2U);
+}
+#endif
