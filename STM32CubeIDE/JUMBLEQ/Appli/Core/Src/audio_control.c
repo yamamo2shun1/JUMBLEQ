@@ -1235,6 +1235,98 @@ void HAL_SAI_ErrorCallback(SAI_HandleTypeDef* hsai)
     }
 }
 
+static bool audio_transport_start_tx_path(void)
+{
+    if (MX_List_GPDMA1_Channel2_Config() != HAL_OK)
+    {
+        return false;
+    }
+    if (HAL_DMAEx_List_LinkQ(&handle_GPDMA1_Channel2, &List_GPDMA1_Channel2) != HAL_OK)
+    {
+        return false;
+    }
+
+    handle_GPDMA1_Channel2.XferHalfCpltCallback = dma_sai2_tx_half;
+    handle_GPDMA1_Channel2.XferCpltCallback     = dma_sai2_tx_cplt;
+    handle_GPDMA1_Channel2.XferErrorCallback    = dma_sai_error;
+    if (HAL_DMAEx_List_Start_IT(&handle_GPDMA1_Channel2) != HAL_OK)
+    {
+        return false;
+    }
+
+    hsai_BlockA2.Instance->CR1 |= SAI_xCR1_DMAEN;
+    __HAL_SAI_ENABLE(&hsai_BlockA2);
+    return true;
+}
+
+static bool audio_transport_start_rx_path(void)
+{
+    if (MX_List_GPDMA1_Channel3_Config() != HAL_OK)
+    {
+        return false;
+    }
+    if (HAL_DMAEx_List_LinkQ(&handle_GPDMA1_Channel3, &List_GPDMA1_Channel3) != HAL_OK)
+    {
+        return false;
+    }
+
+    handle_GPDMA1_Channel3.XferHalfCpltCallback = dma_sai1_rx_half;
+    handle_GPDMA1_Channel3.XferCpltCallback     = dma_sai1_rx_cplt;
+    handle_GPDMA1_Channel3.XferErrorCallback    = dma_sai_error;
+    if (HAL_DMAEx_List_Start_IT(&handle_GPDMA1_Channel3) != HAL_OK)
+    {
+        return false;
+    }
+
+    hsai_BlockA1.Instance->CR1 |= SAI_xCR1_DMAEN;
+    __HAL_SAI_ENABLE(&hsai_BlockA1);
+    return true;
+}
+
+static void audio_transport_stop_sai_paths(void)
+{
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    hsai_BlockA2.Instance->CR1 &= ~SAI_xCR1_DMAEN;
+    hsai_BlockA1.Instance->CR1 &= ~SAI_xCR1_DMAEN;
+    __HAL_SAI_DISABLE(&hsai_BlockA2);
+    __HAL_SAI_DISABLE(&hsai_BlockA1);
+    __DSB();
+
+    __set_PRIMASK(primask);
+
+    (void) HAL_DMA_Abort(&handle_GPDMA1_Channel2);
+    (void) HAL_DMA_Abort(&handle_GPDMA1_Channel3);
+    __DSB();
+
+    (void) HAL_SAI_DeInit(&hsai_BlockA2);
+    (void) HAL_SAI_DeInit(&hsai_BlockA1);
+}
+
+static bool audio_transport_init_dma_channel(DMA_HandleTypeDef* hdma,
+                                             DMA_Channel_TypeDef* instance)
+{
+    hdma->Instance                         = instance;
+    hdma->InitLinkedList.Priority          = DMA_LOW_PRIORITY_HIGH_WEIGHT;
+    hdma->InitLinkedList.LinkStepMode      = DMA_LSM_FULL_EXECUTION;
+    hdma->InitLinkedList.LinkAllocatedPort = DMA_LINK_ALLOCATED_PORT0;
+    hdma->InitLinkedList.TransferEventMode = DMA_TCEM_LAST_LL_ITEM_TRANSFER;
+    hdma->InitLinkedList.LinkedListMode    = DMA_LINKEDLIST_CIRCULAR;
+
+    return (HAL_DMAEx_List_Init(hdma) == HAL_OK) &&
+           (HAL_DMA_ConfigChannelAttributes(hdma, DMA_CHANNEL_NPRIV) == HAL_OK);
+}
+
+static bool audio_transport_reinit_dma_channels(void)
+{
+    (void) HAL_DMA_DeInit(&handle_GPDMA1_Channel2);
+    (void) HAL_DMA_DeInit(&handle_GPDMA1_Channel3);
+
+    return audio_transport_init_dma_channel(&handle_GPDMA1_Channel2, GPDMA1_Channel2) &&
+           audio_transport_init_dma_channel(&handle_GPDMA1_Channel3, GPDMA1_Channel3);
+}
+
 void start_sai(void)
 {
     // ========================================
@@ -1257,32 +1349,10 @@ void start_sai(void)
 
     // SAI2 -> Slave Transmit
     // USB -> STM32 -(SAI)-> ADAU1466
-    if (MX_List_GPDMA1_Channel2_Config() != HAL_OK)
+    if (!audio_transport_start_tx_path())
     {
         Error_Handler();
     }
-    if (HAL_DMAEx_List_LinkQ(&handle_GPDMA1_Channel2, &List_GPDMA1_Channel2) != HAL_OK)
-    {
-        /* DMA link list error */
-        Error_Handler();
-    }
-    handle_GPDMA1_Channel2.XferHalfCpltCallback = dma_sai2_tx_half;
-    handle_GPDMA1_Channel2.XferCpltCallback     = dma_sai2_tx_cplt;
-    handle_GPDMA1_Channel2.XferErrorCallback    = dma_sai_error;
-    if (HAL_DMAEx_List_Start_IT(&handle_GPDMA1_Channel2) != HAL_OK)
-    {
-        /* DMA start error */
-        Error_Handler();
-    }
-#if 0
-    if (HAL_SAI_Transmit_DMA(&hsai_BlockA2, (uint8_t*) stereo_out_buf, SAI_TX_BUF_SIZE) != HAL_OK)
-    {
-        /* SAI transmit start error */
-        Error_Handler();
-    }
-#endif
-    hsai_BlockA2.Instance->CR1 |= SAI_xCR1_DMAEN;  // ここでDMAリクエストを有効化
-    __HAL_SAI_ENABLE(&hsai_BlockA2);
 
     osDelay(500);
     HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, 1);
@@ -1291,32 +1361,10 @@ void start_sai(void)
 
     // SAI1 -> Slave Receize
     // ADAU1466 -(SAI)-> STM32 -> USB
-    if (MX_List_GPDMA1_Channel3_Config() != HAL_OK)
+    if (!audio_transport_start_rx_path())
     {
         Error_Handler();
     }
-    if (HAL_DMAEx_List_LinkQ(&handle_GPDMA1_Channel3, &List_GPDMA1_Channel3) != HAL_OK)
-    {
-        /* DMA link list error */
-        Error_Handler();
-    }
-    handle_GPDMA1_Channel3.XferHalfCpltCallback = dma_sai1_rx_half;
-    handle_GPDMA1_Channel3.XferCpltCallback     = dma_sai1_rx_cplt;
-    handle_GPDMA1_Channel3.XferErrorCallback    = dma_sai_error;
-    if (HAL_DMAEx_List_Start_IT(&handle_GPDMA1_Channel3) != HAL_OK)
-    {
-        /* DMA start error */
-        Error_Handler();
-    }
-#if 0
-    if (HAL_SAI_Receive_DMA(&hsai_BlockA1, (uint8_t*) stereo_in_buf, SAI_RX_BUF_SIZE) != HAL_OK)
-    {
-        /* SAI receive start error */
-        Error_Handler();
-    }
-#endif
-    hsai_BlockA1.Instance->CR1 |= SAI_xCR1_DMAEN;  // ここでDMAリクエストを有効化
-    __HAL_SAI_ENABLE(&hsai_BlockA1);
 }
 
 // ==============================
@@ -2204,29 +2252,7 @@ void AUDIO_SAI_Reset_ForNewRate(void)
     ui_control_set_adc_complete(false);
     __DSB();
 
-    /* Disable interrupts during critical DMA/SAI stop sequence */
-    uint32_t primask = __get_PRIMASK();
-    __disable_irq();
-
-    /* Disable SAI DMA requests first */
-    hsai_BlockA2.Instance->CR1 &= ~SAI_xCR1_DMAEN;
-    hsai_BlockA1.Instance->CR1 &= ~SAI_xCR1_DMAEN;
-
-    /* Disable SAI blocks */
-    __HAL_SAI_DISABLE(&hsai_BlockA2);
-    __HAL_SAI_DISABLE(&hsai_BlockA1);
-    __DSB();
-
-    __set_PRIMASK(primask);
-
-    /* Abort DMA transfers */
-    (void) HAL_DMA_Abort(&handle_GPDMA1_Channel2);
-    (void) HAL_DMA_Abort(&handle_GPDMA1_Channel3);
-    __DSB();
-
-    /* Fully re-init SAI blocks so FIFOs/flags are reset as well */
-    (void) HAL_SAI_DeInit(&hsai_BlockA2);
-    (void) HAL_SAI_DeInit(&hsai_BlockA1);
+    audio_transport_stop_sai_paths();
 
     sai_tx_rng_buf_index = 0;
     sai_rx_rng_buf_index = 0;
@@ -2261,35 +2287,7 @@ void AUDIO_SAI_Reset_ForNewRate(void)
 #endif
 
     /* Re-init DMA channels (linked-list mode) */
-    (void) HAL_DMA_DeInit(&handle_GPDMA1_Channel2);
-    (void) HAL_DMA_DeInit(&handle_GPDMA1_Channel3);
-
-    handle_GPDMA1_Channel2.Instance                         = GPDMA1_Channel2;
-    handle_GPDMA1_Channel2.InitLinkedList.Priority          = DMA_LOW_PRIORITY_HIGH_WEIGHT;
-    handle_GPDMA1_Channel2.InitLinkedList.LinkStepMode      = DMA_LSM_FULL_EXECUTION;
-    handle_GPDMA1_Channel2.InitLinkedList.LinkAllocatedPort = DMA_LINK_ALLOCATED_PORT0;
-    handle_GPDMA1_Channel2.InitLinkedList.TransferEventMode = DMA_TCEM_LAST_LL_ITEM_TRANSFER;
-    handle_GPDMA1_Channel2.InitLinkedList.LinkedListMode    = DMA_LINKEDLIST_CIRCULAR;
-    if (HAL_DMAEx_List_Init(&handle_GPDMA1_Channel2) != HAL_OK)
-    {
-        Error_Handler();
-    }
-    if (HAL_DMA_ConfigChannelAttributes(&handle_GPDMA1_Channel2, DMA_CHANNEL_NPRIV) != HAL_OK)
-    {
-        Error_Handler();
-    }
-
-    handle_GPDMA1_Channel3.Instance                         = GPDMA1_Channel3;
-    handle_GPDMA1_Channel3.InitLinkedList.Priority          = DMA_LOW_PRIORITY_HIGH_WEIGHT;
-    handle_GPDMA1_Channel3.InitLinkedList.LinkStepMode      = DMA_LSM_FULL_EXECUTION;
-    handle_GPDMA1_Channel3.InitLinkedList.LinkAllocatedPort = DMA_LINK_ALLOCATED_PORT0;
-    handle_GPDMA1_Channel3.InitLinkedList.TransferEventMode = DMA_TCEM_LAST_LL_ITEM_TRANSFER;
-    handle_GPDMA1_Channel3.InitLinkedList.LinkedListMode    = DMA_LINKEDLIST_CIRCULAR;
-    if (HAL_DMAEx_List_Init(&handle_GPDMA1_Channel3) != HAL_OK)
-    {
-        Error_Handler();
-    }
-    if (HAL_DMA_ConfigChannelAttributes(&handle_GPDMA1_Channel3, DMA_CHANNEL_NPRIV) != HAL_OK)
+    if (!audio_transport_reinit_dma_channels())
     {
         Error_Handler();
     }
@@ -2305,45 +2303,19 @@ void AUDIO_SAI_Reset_ForNewRate(void)
     sai_transmit_index   = 0;
 
     /* Configure and link DMA for SAI2 TX */
-    if (MX_List_GPDMA1_Channel2_Config() != HAL_OK)
+    if (!audio_transport_start_tx_path())
     {
         Error_Handler();
     }
-    if (HAL_DMAEx_List_LinkQ(&handle_GPDMA1_Channel2, &List_GPDMA1_Channel2) != HAL_OK)
-    {
-        Error_Handler();
-    }
-    handle_GPDMA1_Channel2.XferHalfCpltCallback = dma_sai2_tx_half;
-    handle_GPDMA1_Channel2.XferCpltCallback     = dma_sai2_tx_cplt;
-    handle_GPDMA1_Channel2.XferErrorCallback    = dma_sai_error;
-    if (HAL_DMAEx_List_Start_IT(&handle_GPDMA1_Channel2) != HAL_OK)
-    {
-        Error_Handler();
-    }
-    hsai_BlockA2.Instance->CR1 |= SAI_xCR1_DMAEN;
-    __HAL_SAI_ENABLE(&hsai_BlockA2);
 
     /* Wait for SAI TX to synchronize with external clock before starting RX */
     osDelay(10);
 
     /* Configure and link DMA for SAI1 RX */
-    if (MX_List_GPDMA1_Channel3_Config() != HAL_OK)
+    if (!audio_transport_start_rx_path())
     {
         Error_Handler();
     }
-    if (HAL_DMAEx_List_LinkQ(&handle_GPDMA1_Channel3, &List_GPDMA1_Channel3) != HAL_OK)
-    {
-        Error_Handler();
-    }
-    handle_GPDMA1_Channel3.XferHalfCpltCallback = dma_sai1_rx_half;
-    handle_GPDMA1_Channel3.XferCpltCallback     = dma_sai1_rx_cplt;
-    handle_GPDMA1_Channel3.XferErrorCallback    = dma_sai_error;
-    if (HAL_DMAEx_List_Start_IT(&handle_GPDMA1_Channel3) != HAL_OK)
-    {
-        Error_Handler();
-    }
-    hsai_BlockA1.Instance->CR1 |= SAI_xCR1_DMAEN;
-    __HAL_SAI_ENABLE(&hsai_BlockA1);
 
     /* Restart ADC DMA after sample rate change is complete */
     if (MX_List_HPDMA1_Channel0_Config() != HAL_OK)
