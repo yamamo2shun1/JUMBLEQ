@@ -42,6 +42,8 @@ enum
     DMA_AUDIO_EVENT_NONE       = 0u,
     DMA_AUDIO_EVENT_HALF       = 1u,
     DMA_AUDIO_EVENT_COMPLETE   = 2u,
+    AUDIO_STREAM_OUT_BIT       = (1u << 0),
+    AUDIO_STREAM_IN_BIT        = (1u << 1),
 };
 
 extern DMA_QListTypeDef List_GPDMA1_Channel2;
@@ -63,8 +65,8 @@ enum
 };
 
 // Audio controls
-static uint32_t tx_blink_interval_ms = BLINK_NOT_MOUNTED;
-static uint32_t rx_blink_interval_ms = BLINK_NOT_MOUNTED;
+static volatile uint32_t tx_blink_interval_ms = BLINK_NOT_MOUNTED;
+static volatile uint32_t rx_blink_interval_ms = BLINK_NOT_MOUNTED;
 
 volatile uint32_t sai_tx_rng_buf_index = 0;
 volatile uint32_t sai_rx_rng_buf_index = 0;
@@ -75,8 +77,11 @@ static volatile bool usb_tx_pending     = false;  // USB TX送信要求フラグ
 static volatile bool usb_rx_pending     = false;  // USB RX受信通知フラグ (ISR→Task通知用)
 static TaskHandle_t s_audio_task_handle = NULL;
 
-bool s_streaming_out = false;
-bool s_streaming_in  = false;
+static volatile bool s_streaming_out = false;
+static volatile bool s_streaming_in  = false;
+static volatile uint32_t s_stream_requested_mask     = 0u;
+static volatile uint32_t s_stream_request_sequence   = 0u;
+static uint32_t s_stream_applied_request_sequence    = 0u;
 
 typedef struct
 {
@@ -146,15 +151,20 @@ static bool dma_audio_event_take_latest(volatile DmaAudioEventState_t* state,
     return true;
 }
 
+static inline void dma_audio_event_reset_locked(volatile DmaAudioEventState_t* state)
+{
+    state->consumed_sequence = state->produced_sequence;
+    state->latest_event      = DMA_AUDIO_EVENT_NONE;
+    state->latest_cycle      = 0u;
+    state->dropped_events    = 0u;
+}
+
 static void dma_audio_event_reset(volatile DmaAudioEventState_t* state)
 {
     const uint32_t primask = __get_PRIMASK();
     __disable_irq();
 
-    state->consumed_sequence = state->produced_sequence;
-    state->latest_event      = DMA_AUDIO_EVENT_NONE;
-    state->latest_cycle      = 0u;
-    state->dropped_events    = 0u;
+    dma_audio_event_reset_locked(state);
 
     __set_PRIMASK(primask);
 }
@@ -168,10 +178,7 @@ static void audio_tx_diagnostics_reset(void)
     reset.reset_count          = reset_count;
     reset.tx_used_min_words    = UINT32_MAX;
     g_audio_tx_diagnostics     = reset;
-    s_tx_dma_event.consumed_sequence = s_tx_dma_event.produced_sequence;
-    s_tx_dma_event.latest_event      = DMA_AUDIO_EVENT_NONE;
-    s_tx_dma_event.latest_cycle      = 0u;
-    s_tx_dma_event.dropped_events    = 0u;
+    dma_audio_event_reset_locked(&s_tx_dma_event);
     __set_PRIMASK(primask);
 }
 
@@ -236,6 +243,45 @@ static inline void audio_task_notify_from_isr(void)
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     vTaskNotifyGiveFromISR(s_audio_task_handle, &xHigherPriorityTaskWoken);
     portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
+
+static void audio_stream_request_state(uint32_t stream_bit, bool enabled)
+{
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    if (enabled)
+    {
+        s_stream_requested_mask |= stream_bit;
+    }
+    else
+    {
+        s_stream_requested_mask &= ~stream_bit;
+    }
+    __DMB();
+    s_stream_request_sequence++;
+
+    __set_PRIMASK(primask);
+    audio_task_notify();
+}
+
+static bool audio_stream_take_requested_state(uint32_t* requested_mask)
+{
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    const uint32_t request_sequence = s_stream_request_sequence;
+    if (request_sequence == s_stream_applied_request_sequence)
+    {
+        __set_PRIMASK(primask);
+        return false;
+    }
+
+    *requested_mask = s_stream_requested_mask;
+    s_stream_applied_request_sequence = request_sequence;
+
+    __set_PRIMASK(primask);
+    return true;
 }
 
 #if AUDIO_DIAG_LOG
@@ -308,6 +354,18 @@ static volatile bool is_sr_changed = false;
 const uint32_t sample_rates[] = {48000, 96000};
 static volatile uint32_t current_sample_rate = 48000U;
 
+static bool audio_sample_rate_change_take_pending(void)
+{
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    const bool pending = is_sr_changed;
+    is_sr_changed = false;
+
+    __set_PRIMASK(primask);
+    return pending;
+}
+
 __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t usb_out_buf[CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ / 4] = {0};
 __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t usb_in_buf[CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ / 4] = {0};
 
@@ -323,6 +381,99 @@ uint16_t spk_data_size;
 // Current states
 int8_t mute[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX + 1];     // +1 for master channel 0
 int16_t volume[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX + 1];  // +1 for master channel 0
+
+static void audio_stream_apply_out_state(bool enabled)
+{
+    if (enabled == s_streaming_out)
+    {
+        tx_blink_interval_ms = enabled ? BLINK_STREAMING :
+                                         (tud_mounted() ? BLINK_MOUNTED : BLINK_NOT_MOUNTED);
+        return;
+    }
+
+    if (enabled)
+    {
+        audio_tx_diagnostics_reset();
+
+        const uint32_t primask = __get_PRIMASK();
+        __disable_irq();
+        spk_data_size   = 0u;
+        usb_rx_pending  = false;
+        s_streaming_out = true;
+        __set_PRIMASK(primask);
+
+        tx_blink_interval_ms = BLINK_STREAMING;
+    }
+    else
+    {
+        const uint32_t primask = __get_PRIMASK();
+        __disable_irq();
+        s_streaming_out      = false;
+        spk_data_size        = 0u;
+        usb_rx_pending       = false;
+        sai_tx_rng_buf_index = 0u;
+        sai_transmit_index   = 0u;
+        dma_audio_event_reset_locked(&s_tx_dma_event);
+        __set_PRIMASK(primask);
+
+        tx_blink_interval_ms = tud_mounted() ? BLINK_MOUNTED : BLINK_NOT_MOUNTED;
+    }
+
+#if AUDIO_DIAG_LOG
+    dbg_usb_out_prev_cycle_valid = false;
+#endif
+}
+
+static void audio_stream_apply_in_state(bool enabled)
+{
+    if (enabled == s_streaming_in)
+    {
+        rx_blink_interval_ms = enabled ? BLINK_STREAMING :
+                                         (tud_mounted() ? BLINK_MOUNTED : BLINK_NOT_MOUNTED);
+        return;
+    }
+
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    if (enabled)
+    {
+        usb_tx_pending = true;
+        dma_audio_event_reset_locked(&s_rx_dma_event);
+        s_streaming_in = true;
+    }
+    else
+    {
+        s_streaming_in       = false;
+        usb_tx_pending       = false;
+        sai_rx_rng_buf_index = 0u;
+        sai_receive_index    = 0u;
+        dma_audio_event_reset_locked(&s_rx_dma_event);
+    }
+
+    __set_PRIMASK(primask);
+    rx_blink_interval_ms = enabled ? BLINK_STREAMING :
+                                     (tud_mounted() ? BLINK_MOUNTED : BLINK_NOT_MOUNTED);
+
+#if AUDIO_DIAG_LOG
+    if (enabled)
+    {
+        dbg_usb_in_notify_events++;
+    }
+#endif
+}
+
+static void audio_stream_apply_requested_state(void)
+{
+    uint32_t requested_mask;
+    if (!audio_stream_take_requested_state(&requested_mask))
+    {
+        return;
+    }
+
+    audio_stream_apply_out_state((requested_mask & AUDIO_STREAM_OUT_BIT) != 0u);
+    audio_stream_apply_in_state((requested_mask & AUDIO_STREAM_IN_BIT) != 0u);
+}
 
 static void audio20_feature_unit_apply_channel(uint8_t channel)
 {
@@ -502,6 +653,8 @@ void tud_umount_cb(void)
 {
     tx_blink_interval_ms = BLINK_NOT_MOUNTED;
     rx_blink_interval_ms = BLINK_NOT_MOUNTED;
+    audio_stream_request_state(AUDIO_STREAM_OUT_BIT, false);
+    audio_stream_request_state(AUDIO_STREAM_IN_BIT, false);
 }
 
 // Invoked when usb bus is suspended
@@ -806,26 +959,12 @@ bool tud_audio_set_itf_close_ep_cb(uint8_t rhport, tusb_control_request_t const*
 
     if (ITF_NUM_AUDIO_STREAMING_STEREO_OUT == itf && alt == 0)
     {
-        tx_blink_interval_ms = BLINK_MOUNTED;
-        s_streaming_out      = false;
-        spk_data_size        = 0;
-        usb_rx_pending       = false;
-        sai_tx_rng_buf_index = 0;
-        sai_transmit_index   = 0;
-        dma_audio_event_reset(&s_tx_dma_event);
-#if AUDIO_DIAG_LOG
-        dbg_usb_out_prev_cycle_valid = false;
-#endif
+        audio_stream_request_state(AUDIO_STREAM_OUT_BIT, false);
     }
 
     if (ITF_NUM_AUDIO_STREAMING_STEREO_IN == itf && alt == 0)
     {
-        rx_blink_interval_ms = BLINK_MOUNTED;
-        s_streaming_in       = false;
-        usb_tx_pending       = false;
-        sai_rx_rng_buf_index = 0;
-        sai_receive_index    = 0;
-        dma_audio_event_reset(&s_rx_dma_event);
+        audio_stream_request_state(AUDIO_STREAM_IN_BIT, false);
     }
 
     return true;
@@ -840,32 +979,13 @@ bool tud_audio_set_itf_cb(uint8_t rhport, tusb_control_request_t const* p_reques
     TU_LOG2("Set interface %d alt %d\r\n", itf, alt);
     if (ITF_NUM_AUDIO_STREAMING_STEREO_OUT == itf && alt != 0)
     {
-        tx_blink_interval_ms = BLINK_STREAMING;
-
-        s_streaming_out = true;
-        spk_data_size   = 0;
-        usb_rx_pending  = false;
-        audio_tx_diagnostics_reset();
-#if AUDIO_DIAG_LOG
-        dbg_usb_out_prev_cycle_valid = false;
-#endif
+        audio_stream_request_state(AUDIO_STREAM_OUT_BIT, true);
     }
 
     if (ITF_NUM_AUDIO_STREAMING_STEREO_IN == itf && alt != 0)
     {
-        rx_blink_interval_ms = BLINK_STREAMING;
-
-        s_streaming_in  = true;
-        usb_tx_pending  = true;
-        dma_audio_event_reset(&s_rx_dma_event);
-#if AUDIO_DIAG_LOG
-        dbg_usb_in_notify_events++;
-#endif
-        audio_task_notify();
+        audio_stream_request_state(AUDIO_STREAM_IN_BIT, true);
     }
-
-    // Clear buffer when streaming is changed
-    spk_data_size = 0;
 
     return true;
 }
@@ -1815,6 +1935,9 @@ void audio_task(void)
         return;
     }
 
+    // USBコールバックは要求だけを発行し、共有状態の変更はAudio Taskへ集約する。
+    audio_stream_apply_requested_state();
+
     // 呼び出し頻度計測
     audio_task_call_count++;
     uint32_t now = HAL_GetTick();
@@ -1967,12 +2090,9 @@ void audio_task(void)
 #endif
     }
 
-    if (is_sr_changed)
+    if (audio_sample_rate_change_take_pending())
     {
-        // Consume the current request before doing the blocking reconfiguration.
-        // A new SET_CUR received during the switch will set the flag again.
-        is_sr_changed = false;
-        __DMB();
+        // A new SET_CUR received during the switch remains pending for the next call.
 #if RESET_FROM_FW
         AUDIO_SAI_Reset_ForNewRate();
 #endif
