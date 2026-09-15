@@ -2205,10 +2205,12 @@ void audio_task(void)
 
 void AUDIO_SAI_Reset_ForNewRate(void)
 {
-    static uint32_t prev_hz = 48000;
-    const uint32_t new_hz   = current_sample_rate;
+    static uint32_t applied_hz = 48000U;
+    static bool applied_hz_valid = true;
+    const uint32_t new_hz = current_sample_rate;
+    bool rate_switch_succeeded = true;
 
-    if (new_hz == prev_hz)
+    if (applied_hz_valid && (new_hz == applied_hz))
     {
         return;
     }
@@ -2317,6 +2319,7 @@ void AUDIO_SAI_Reset_ForNewRate(void)
     if (!AUDIO_Update_ADAU1466_SampleRate(new_hz))
     {
         SEGGER_RTT_printf(0, "[AUD] ADAU1466 rate switch failed: %lu Hz\n", (unsigned long) new_hz);
+        rate_switch_succeeded = false;
     }
 #endif
 
@@ -2424,7 +2427,21 @@ void AUDIO_SAI_Reset_ForNewRate(void)
         Error_Handler();
     }
 
-    SEGGER_RTT_printf(0, "[SAI] reset for %lu Hz (prev=%lu)\n", (unsigned long) new_hz, (unsigned long) prev_hz);
-
-    prev_hz = new_hz;
+    if (rate_switch_succeeded)
+    {
+        SEGGER_RTT_printf(0,
+                          "[SAI] reset for %lu Hz (prev=%lu)\n",
+                          (unsigned long) new_hz,
+                          (unsigned long) applied_hz);
+        applied_hz = new_hz;
+        applied_hz_valid = true;
+    }
+    else
+    {
+        applied_hz_valid = false;
+        SEGGER_RTT_printf(0,
+                          "[SAI] rate switch not finalized: requested=%lu last_applied=%lu\n",
+                          (unsigned long) new_hz,
+                          (unsigned long) applied_hz);
+    }
 }
