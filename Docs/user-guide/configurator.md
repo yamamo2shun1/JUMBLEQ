@@ -14,7 +14,7 @@ The browser-based [JUMBLEQ Configurator](https://configurator.jumbleq.io/) is th
 2. Open the Web app and allow MIDI access when prompted by the browser.
 3. Confirm that the connection status shows **JUMBLEQ connected** and that the device settings are synchronized.
 
-The Web app provides controls for input and channel-fader routing, channel-fader response curves, DVS, monitor and Return routing, magnetic-switch behavior, and device settings. It also supports reading the current settings from JUMBLEQ and importing or exporting presets.
+The Web app provides controls for input and channel-fader routing, channel-fader response curves, DVS, global SYNTH Ratio Set and Warp Algorithm selection, monitor and Return routing, magnetic-switch behavior, and device settings. It also supports reading the current settings from JUMBLEQ and importing or exporting presets.
 
 ### Using the Web App on iPad
 
@@ -32,7 +32,7 @@ Connection and MIDI communication have been verified with MIDIWeb Browser on iPa
 
 ## Alternative Max Versions
 
-The Max Standalone and Max for Live versions remain in the repository for existing workflows, but they have a lower maintenance priority than the Web app. Their source files and packaged versions are available in the [`Max` directory](../../Max/).
+The Max Standalone and Max for Live versions remain in the repository for existing workflows, but they have a lower maintenance priority than the Web app. Their source files and packaged versions are available in the [`Max` directory](../../Max/). The source patches expose Off, DVS, and SYNTH input-mode choices for both input channels.
 
 ### Max Standalone
 

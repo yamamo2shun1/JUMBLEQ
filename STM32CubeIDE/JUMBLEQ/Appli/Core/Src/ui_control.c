@@ -8,6 +8,7 @@
 #include "ui_control_internal.h"
 
 #include "audio_control.h"
+#include "timecode_synth.h"
 
 #include "adc.h"
 #include "eeprom.h"
@@ -123,8 +124,8 @@ typedef struct
     uint8_t current_ch_fader_post_assign;
     uint8_t current_return_assign;
     uint8_t current_hp_out_source;
-    uint8_t current_ch1_dvs_enable;
-    uint8_t current_ch2_dvs_enable;
+    uint8_t current_ch1_input_mode;
+    uint8_t current_ch2_input_mode;
     uint8_t ch_fader_dvs_delay_ms;
     uint8_t sensor2_aux_fade_down_assign;
     uint8_t sensor3_aux_fade_down_assign;
@@ -179,8 +180,8 @@ static ui_control_state_t s_ui = {
     .current_ch_fader_post_assign  = INPUT_SRC_USB12,
     .current_return_assign  = INPUT_SRC_USB34,
     .current_hp_out_source  = CUE_SEL_MST,
-    .current_ch1_dvs_enable = 0U,
-    .current_ch2_dvs_enable = 0U,
+    .current_ch1_input_mode = UI_INPUT_MODE_DISABLED,
+    .current_ch2_input_mode = UI_INPUT_MODE_DISABLED,
     .ch_fader_dvs_delay_ms  = UI_CH_FADER_DVS_DELAY_DEFAULT_MS,
     .sensor2_aux_fade_down_assign = UI_CH_FADER_AUX_ASSIGN_A,
     .sensor3_aux_fade_down_assign = UI_CH_FADER_AUX_ASSIGN_B,
@@ -348,11 +349,11 @@ static bool ch_fader_assign_uses_dvs(uint8_t assign)
     case INPUT_SRC_CH1_LN:
     case INPUT_SRC_CH1_PN:
     case INPUT_SRC_USB12:  // PC return for Ch. 1 DVS, including direct USB routing.
-        return s_ui.current_ch1_dvs_enable != 0U;
+        return s_ui.current_ch1_input_mode == UI_INPUT_MODE_DVS;
     case INPUT_SRC_CH2_LN:
     case INPUT_SRC_CH2_PN:
     case INPUT_SRC_USB34:  // PC return for Ch. 2 DVS, including direct USB routing.
-        return s_ui.current_ch2_dvs_enable != 0U;
+        return s_ui.current_ch2_input_mode == UI_INPUT_MODE_DVS;
     default:
         return false;
     }
@@ -999,12 +1000,22 @@ uint8_t get_current_input_srcB_channel(void)
 
 bool get_current_ch1_dvs_enabled(void)
 {
-    return (s_ui.current_ch1_dvs_enable != 0U);
+    return (s_ui.current_ch1_input_mode == UI_INPUT_MODE_DVS);
 }
 
 bool get_current_ch2_dvs_enabled(void)
 {
-    return (s_ui.current_ch2_dvs_enable != 0U);
+    return (s_ui.current_ch2_input_mode == UI_INPUT_MODE_DVS);
+}
+
+UI_InputMode_t get_current_ch1_input_mode(void)
+{
+    return (UI_InputMode_t) s_ui.current_ch1_input_mode;
+}
+
+UI_InputMode_t get_current_ch2_input_mode(void)
+{
+    return (UI_InputMode_t) s_ui.current_ch2_input_mode;
 }
 
 uint8_t ui_control_get_ch_fader_dvs_delay_ms(void)
@@ -1228,17 +1239,22 @@ static bool is_usb_assign(uint8_t assign)
     return (assign == INPUT_SRC_USB12) || (assign == INPUT_SRC_USB34);
 }
 
+static bool input_mode_uses_insert(uint8_t mode)
+{
+    return (mode == UI_INPUT_MODE_DVS) || (mode == UI_INPUT_MODE_SYNTH);
+}
+
 static void apply_send_source_selection(uint8_t input_ch)
 {
     if (input_ch == INPUT_CH1)
     {
-        const bool select_dvs = (s_ui.current_ch1_dvs_enable != 0U) || is_usb_assign(s_ui.current_ch_fader_a_assign);
-        select_send_source(INPUT_CH1, select_dvs);
+        const bool select_insert = input_mode_uses_insert(s_ui.current_ch1_input_mode) || is_usb_assign(s_ui.current_ch_fader_a_assign);
+        select_send_source(INPUT_CH1, select_insert);
     }
     else if (input_ch == INPUT_CH2)
     {
-        const bool select_dvs = (s_ui.current_ch2_dvs_enable != 0U) || is_usb_assign(s_ui.current_ch_fader_b_assign);
-        select_send_source(INPUT_CH2, select_dvs);
+        const bool select_insert = input_mode_uses_insert(s_ui.current_ch2_input_mode) || is_usb_assign(s_ui.current_ch_fader_b_assign);
+        select_send_source(INPUT_CH2, select_insert);
     }
 }
 
@@ -1312,18 +1328,21 @@ static void apply_hp_out_source(uint8_t source)
     s_ui.current_hp_out_source = source;
 }
 
-static void apply_dvs_state(uint8_t input_ch, bool enable)
+static void apply_input_mode(uint8_t input_ch, UI_InputMode_t mode)
 {
-    enable_dvs(input_ch, enable);
+    const bool enable_insert = input_mode_uses_insert((uint8_t) mode);
+
+    set_input_insert_enabled(input_ch, enable_insert);
     if (input_ch == INPUT_CH1)
     {
-        s_ui.current_ch1_dvs_enable = enable ? 1U : 0U;
+        s_ui.current_ch1_input_mode = (uint8_t) mode;
     }
     else if (input_ch == INPUT_CH2)
     {
-        s_ui.current_ch2_dvs_enable = enable ? 1U : 0U;
+        s_ui.current_ch2_input_mode = (uint8_t) mode;
     }
     apply_send_source_selection(input_ch);
+    ui_control_reapply_ch_fader_outputs();
 }
 
 static void apply_ch_fader_dvs_delay(uint8_t delay_ms)
@@ -1465,19 +1484,35 @@ static uint8_t midi_program_for_ch_fader_assign_post(uint8_t assign)
     }
 }
 
-static uint8_t midi_program_for_dvs(uint8_t input_ch, uint8_t enable)
+static uint8_t midi_program_for_input_mode(uint8_t input_ch, uint8_t mode)
 {
     if (input_ch == INPUT_CH1)
     {
-        return (enable != 0U) ? CH1_DVS_ENABLE : CH1_DVS_DISABLE;
+        if (mode == UI_INPUT_MODE_DVS)
+        {
+            return CH1_MODE_DVS;
+        }
+        if (mode == UI_INPUT_MODE_SYNTH)
+        {
+            return CH1_MODE_SYNTH;
+        }
+        return CH1_MODE_DISABLE;
     }
 
     if (input_ch == INPUT_CH2)
     {
-        return (enable != 0U) ? CH2_DVS_ENABLE : CH2_DVS_DISABLE;
+        if (mode == UI_INPUT_MODE_DVS)
+        {
+            return CH2_MODE_DVS;
+        }
+        if (mode == UI_INPUT_MODE_SYNTH)
+        {
+            return CH2_MODE_SYNTH;
+        }
+        return CH2_MODE_DISABLE;
     }
 
-    return CH1_DVS_DISABLE;
+    return CH1_MODE_DISABLE;
 }
 
 static uint8_t midi_program_for_return_assign(uint8_t assign)
@@ -1522,6 +1557,35 @@ static uint8_t midi_program_for_ch_fader_aux_assignment(uint8_t sensor_idx, uint
     return (assign == UI_CH_FADER_AUX_ASSIGN_A) ? CH_FADER_AUX_SENSOR3_TO_A : CH_FADER_AUX_SENSOR3_TO_B;
 }
 
+static uint8_t midi_program_for_timecode_synth_ratio_set(uint8_t ratio_set)
+{
+    if (ratio_set == TIMECODE_RATIO_HARMONIC)
+    {
+        return SYNTH_RATIO_HARMONIC;
+    }
+    if (ratio_set == TIMECODE_RATIO_CHORD)
+    {
+        return SYNTH_RATIO_CHORD;
+    }
+    return SYNTH_RATIO_OCTAVE;
+}
+
+static uint8_t midi_program_for_timecode_synth_warp_algorithm(uint8_t warp_algorithm)
+{
+    switch (warp_algorithm)
+    {
+    case TIMECODE_WARP_CLEAN:
+        return SYNTH_WARP_CLEAN;
+    case TIMECODE_WARP_RING_MOD:
+        return SYNTH_WARP_RING_MOD;
+    case TIMECODE_WARP_COMPARATOR:
+        return SYNTH_WARP_COMPARATOR;
+    case TIMECODE_WARP_CROSSFOLD:
+    default:
+        return SYNTH_WARP_CROSSFOLD;
+    }
+}
+
 static void send_midi_config_dump(const EEPROM_DeviceConfig_t* cfg)
 {
     if (cfg == NULL)
@@ -1536,12 +1600,14 @@ static void send_midi_config_dump(const EEPROM_DeviceConfig_t* cfg)
     send_program_change(midi_program_for_ch_fader_assign_post(cfg->current_ch_fader_post_assign), MIDI_CH_15);
     send_program_change(midi_program_for_return_assign(cfg->current_return_assign), MIDI_CH_15);
     send_program_change(midi_program_for_hp_out_source(cfg->current_hp_out_source), MIDI_CH_15);
-    send_program_change(midi_program_for_dvs(INPUT_CH1, cfg->current_ch1_dvs_enable), MIDI_CH_15);
-    send_program_change(midi_program_for_dvs(INPUT_CH2, cfg->current_ch2_dvs_enable), MIDI_CH_15);
+    send_program_change(midi_program_for_input_mode(INPUT_CH1, cfg->current_ch1_input_mode), MIDI_CH_15);
+    send_program_change(midi_program_for_input_mode(INPUT_CH2, cfg->current_ch2_input_mode), MIDI_CH_15);
     send_program_change(midi_program_for_ch_fader_aux_assignment(2U, cfg->sensor2_aux_fade_down_assign), MIDI_CH_15);
     send_program_change(midi_program_for_ch_fader_aux_assignment(3U, cfg->sensor3_aux_fade_down_assign), MIDI_CH_15);
     send_program_change((cfg->ch_fader_reverse_flags & EEPROM_CFG_FLAG_CH_FADER_REVERSE_A) != 0U ? CH_FADER_REVERSE_A_ON : CH_FADER_REVERSE_A_OFF, MIDI_CH_15);
     send_program_change((cfg->ch_fader_reverse_flags & EEPROM_CFG_FLAG_CH_FADER_REVERSE_B) != 0U ? CH_FADER_REVERSE_B_ON : CH_FADER_REVERSE_B_OFF, MIDI_CH_15);
+    send_program_change(midi_program_for_timecode_synth_ratio_set(cfg->timecode_synth_ratio_set), MIDI_CH_15);
+    send_program_change(midi_program_for_timecode_synth_warp_algorithm(cfg->timecode_synth_warp_algorithm), MIDI_CH_15);
     send_control_change(MIDI_CC_CH_FADER_CURVE_A, ch_fader_curve_width_to_midi_cc(cfg->current_ch_fader_curve_width_a), MIDI_CH_15);
     send_control_change(MIDI_CC_CH_FADER_CURVE_B, ch_fader_curve_width_to_midi_cc(cfg->current_ch_fader_curve_width_b), MIDI_CH_15);
     send_control_change(MIDI_CC_CH_FADER_DVS_DELAY, cfg->ch_fader_dvs_delay_ms, MIDI_CH_15);
@@ -1589,25 +1655,49 @@ static void set_pot_mux_channel(uint8_t channel)
 
 static void apply_pot_value(uint8_t channel, uint16_t value)
 {
+    const bool synth_mode_active =
+        (s_ui.current_ch1_input_mode == UI_INPUT_MODE_SYNTH) ||
+        (s_ui.current_ch2_input_mode == UI_INPUT_MODE_SYNTH);
+
     switch (channel)
     {
     case POT_CH_CC0:
-        send_control_change(0, value, 0);
+        timecode_synth_set_control(TIMECODE_SYNTH_CONTROL_ROOT, (uint8_t) value);
+        if (!synth_mode_active)
+        {
+            send_control_change(0, value, 0);
+        }
         break;
     case POT_CH_CC1:
-        send_control_change(1, value, 0);
+        timecode_synth_set_control(TIMECODE_SYNTH_CONTROL_MORPH, (uint8_t) value);
+        if (!synth_mode_active)
+        {
+            send_control_change(1, value, 0);
+        }
         break;
     case POT_CH_CH1_IN:
         control_input_from_ch1_gain(value);
         break;
     case POT_CH_CC2:
-        send_control_change(2, value, 0);
+        timecode_synth_set_control(TIMECODE_SYNTH_CONTROL_SLOPE, (uint8_t) value);
+        if (!synth_mode_active)
+        {
+            send_control_change(2, value, 0);
+        }
         break;
     case POT_CH_CC3:
-        send_control_change(3, value, 0);
+        timecode_synth_set_control(TIMECODE_SYNTH_CONTROL_SMOOTH_FOLD, (uint8_t) value);
+        if (!synth_mode_active)
+        {
+            send_control_change(3, value, 0);
+        }
         break;
     case POT_CH_CC4:
-        send_control_change(4, value, 0);
+        timecode_synth_set_control(TIMECODE_SYNTH_CONTROL_WARP_AMOUNT, (uint8_t) value);
+        if (!synth_mode_active)
+        {
+            send_control_change(4, value, 0);
+        }
         break;
     case POT_CH_CH2_IN:
         control_input_from_ch2_gain(value);
@@ -2963,11 +3053,15 @@ static void midi_program_apply_hp_out(uint8_t source)
     apply_hp_out_source(source);
 }
 
-static void midi_program_enable_dvs(uint8_t arg)
+static void midi_program_apply_input_mode(uint8_t arg)
 {
-    uint8_t input_ch = (arg >> 4) & 0x0F;
-    bool enable      = ((arg & 0x01U) != 0U);
-    apply_dvs_state(input_ch, enable);
+    const uint8_t input_ch = (arg >> 4) & 0x0FU;
+    const uint8_t mode     = arg & 0x0FU;
+
+    if (mode <= UI_INPUT_MODE_SYNTH)
+    {
+        apply_input_mode(input_ch, (UI_InputMode_t) mode);
+    }
 }
 
 static void midi_program_apply_ch_fader_aux_assignment(uint8_t arg)
@@ -2988,6 +3082,18 @@ static void midi_program_apply_ch_fader_aux_assignment(uint8_t arg)
                       "Channel fader aux assignment: sensor2=%c sensor3=%c\r\n",
                       (s_ui.sensor2_aux_fade_down_assign == UI_CH_FADER_AUX_ASSIGN_A) ? 'A' : 'B',
                       (s_ui.sensor3_aux_fade_down_assign == UI_CH_FADER_AUX_ASSIGN_A) ? 'A' : 'B');
+}
+
+static void midi_program_apply_timecode_synth_ratio_set(uint8_t arg)
+{
+    timecode_synth_set_ratio_set((TimecodeOscillatorRatioSet_t) arg);
+    SEGGER_RTT_printf(0, "SYNTH ratio set: %u\r\n", (unsigned) arg);
+}
+
+static void midi_program_apply_timecode_synth_warp_algorithm(uint8_t arg)
+{
+    timecode_synth_set_warp_algorithm((TimecodeOscillatorWarpAlgorithm_t) arg);
+    SEGGER_RTT_printf(0, "SYNTH warp algorithm: %u\r\n", (unsigned) arg);
 }
 
 static bool dispatch_midi_program_change(uint8_t channel, uint8_t program)
@@ -3059,7 +3165,7 @@ static bool dispatch_midi_program_change(uint8_t channel, uint8_t program)
 
         EEPROM_ConfigCaptureCurrent(&cfg);
         send_midi_config_dump(&cfg);
-        SEGGER_RTT_printf(0, "Current config dumped by MIDI PC126: CH1=%u CH2=%u CH_FADER_A=%u CH_FADER_B=%u CH_FADER_POST=%u RTN=%u HP=%u DVS1=%u DVS2=%u MAG_AS_NOTE=%u AUX2=%u AUX3=%u REVERSE_A=%u REVERSE_B=%u CURVE_WIDTH_A=%.4f CURVE_WIDTH_B=%.4f\r\n", (unsigned) cfg.current_ch1_input_type, (unsigned) cfg.current_ch2_input_type, (unsigned) cfg.current_ch_fader_a_assign, (unsigned) cfg.current_ch_fader_b_assign, (unsigned) cfg.current_ch_fader_post_assign, (unsigned) cfg.current_return_assign, (unsigned) cfg.current_hp_out_source, (unsigned) cfg.current_ch1_dvs_enable, (unsigned) cfg.current_ch2_dvs_enable, (unsigned) ((cfg.mag_output_mode_flags & EEPROM_CFG_FLAG_MAG_OUT_AS_NOTE) != 0U), (unsigned) cfg.sensor2_aux_fade_down_assign, (unsigned) cfg.sensor3_aux_fade_down_assign, (unsigned) ((cfg.ch_fader_reverse_flags & EEPROM_CFG_FLAG_CH_FADER_REVERSE_A) != 0U), (unsigned) ((cfg.ch_fader_reverse_flags & EEPROM_CFG_FLAG_CH_FADER_REVERSE_B) != 0U), (double) cfg.current_ch_fader_curve_width_a, (double) cfg.current_ch_fader_curve_width_b);
+        SEGGER_RTT_printf(0, "Current config dumped by MIDI PC126: CH1=%u CH2=%u CH_FADER_A=%u CH_FADER_B=%u CH_FADER_POST=%u RTN=%u HP=%u MODE1=%u MODE2=%u MAG_AS_NOTE=%u AUX2=%u AUX3=%u REVERSE_A=%u REVERSE_B=%u CURVE_WIDTH_A=%.4f CURVE_WIDTH_B=%.4f\r\n", (unsigned) cfg.current_ch1_input_type, (unsigned) cfg.current_ch2_input_type, (unsigned) cfg.current_ch_fader_a_assign, (unsigned) cfg.current_ch_fader_b_assign, (unsigned) cfg.current_ch_fader_post_assign, (unsigned) cfg.current_return_assign, (unsigned) cfg.current_hp_out_source, (unsigned) cfg.current_ch1_input_mode, (unsigned) cfg.current_ch2_input_mode, (unsigned) ((cfg.mag_output_mode_flags & EEPROM_CFG_FLAG_MAG_OUT_AS_NOTE) != 0U), (unsigned) cfg.sensor2_aux_fade_down_assign, (unsigned) cfg.sensor3_aux_fade_down_assign, (unsigned) ((cfg.ch_fader_reverse_flags & EEPROM_CFG_FLAG_CH_FADER_REVERSE_A) != 0U), (unsigned) ((cfg.ch_fader_reverse_flags & EEPROM_CFG_FLAG_CH_FADER_REVERSE_B) != 0U), (double) cfg.current_ch_fader_curve_width_a, (double) cfg.current_ch_fader_curve_width_b);
 
         return true;
     }
@@ -3072,7 +3178,7 @@ static bool dispatch_midi_program_change(uint8_t channel, uint8_t program)
         if (EEPROM_SaveConfig(&hi2c2, &cfg) == HAL_OK)
         {
             led_notify_save_success();
-            SEGGER_RTT_printf(0, "EEPROM config saved by MIDI PC127: CH1=%u CH2=%u CH_FADER_A=%u CH_FADER_B=%u CH_FADER_POST=%u RTN=%u HP=%u DVS1=%u DVS2=%u AUX2=%u AUX3=%u REVERSE_A=%u REVERSE_B=%u CURVE_WIDTH_A=%.4f CURVE_WIDTH_B=%.4f\r\n", (unsigned) cfg.current_ch1_input_type, (unsigned) cfg.current_ch2_input_type, (unsigned) cfg.current_ch_fader_a_assign, (unsigned) cfg.current_ch_fader_b_assign, (unsigned) cfg.current_ch_fader_post_assign, (unsigned) cfg.current_return_assign, (unsigned) cfg.current_hp_out_source, (unsigned) cfg.current_ch1_dvs_enable, (unsigned) cfg.current_ch2_dvs_enable, (unsigned) cfg.sensor2_aux_fade_down_assign, (unsigned) cfg.sensor3_aux_fade_down_assign, (unsigned) ((cfg.ch_fader_reverse_flags & EEPROM_CFG_FLAG_CH_FADER_REVERSE_A) != 0U), (unsigned) ((cfg.ch_fader_reverse_flags & EEPROM_CFG_FLAG_CH_FADER_REVERSE_B) != 0U), (double) cfg.current_ch_fader_curve_width_a, (double) cfg.current_ch_fader_curve_width_b);
+            SEGGER_RTT_printf(0, "EEPROM config saved by MIDI PC127: CH1=%u CH2=%u CH_FADER_A=%u CH_FADER_B=%u CH_FADER_POST=%u RTN=%u HP=%u MODE1=%u MODE2=%u AUX2=%u AUX3=%u REVERSE_A=%u REVERSE_B=%u CURVE_WIDTH_A=%.4f CURVE_WIDTH_B=%.4f\r\n", (unsigned) cfg.current_ch1_input_type, (unsigned) cfg.current_ch2_input_type, (unsigned) cfg.current_ch_fader_a_assign, (unsigned) cfg.current_ch_fader_b_assign, (unsigned) cfg.current_ch_fader_post_assign, (unsigned) cfg.current_return_assign, (unsigned) cfg.current_hp_out_source, (unsigned) cfg.current_ch1_input_mode, (unsigned) cfg.current_ch2_input_mode, (unsigned) cfg.sensor2_aux_fade_down_assign, (unsigned) cfg.sensor3_aux_fade_down_assign, (unsigned) ((cfg.ch_fader_reverse_flags & EEPROM_CFG_FLAG_CH_FADER_REVERSE_A) != 0U), (unsigned) ((cfg.ch_fader_reverse_flags & EEPROM_CFG_FLAG_CH_FADER_REVERSE_B) != 0U), (double) cfg.current_ch_fader_curve_width_a, (double) cfg.current_ch_fader_curve_width_b);
         }
         else
         {
@@ -3098,10 +3204,12 @@ static bool dispatch_midi_program_change(uint8_t channel, uint8_t program)
         {CH_FADER_ASSIGN_POST_CH2,   midi_program_apply_ch_fader_post,  INPUT_CH2                                      },
         {CH_FADER_ASSIGN_POST_USB12, midi_program_apply_ch_fader_post,  INPUT_USB12                                    },
         {CH_FADER_ASSIGN_POST_USB34, midi_program_apply_ch_fader_post,  INPUT_USB34                                    },
-        {CH1_DVS_DISABLE,      midi_program_enable_dvs,     (uint8_t) ((INPUT_CH1 << 4) | 0U)              },
-        {CH1_DVS_ENABLE,       midi_program_enable_dvs,     (uint8_t) ((INPUT_CH1 << 4) | 1U)              },
-        {CH2_DVS_DISABLE,      midi_program_enable_dvs,     (uint8_t) ((INPUT_CH2 << 4) | 0U)              },
-        {CH2_DVS_ENABLE,       midi_program_enable_dvs,     (uint8_t) ((INPUT_CH2 << 4) | 1U)              },
+        {CH1_MODE_DISABLE,     midi_program_apply_input_mode, (uint8_t) ((INPUT_CH1 << 4) | UI_INPUT_MODE_DISABLED)},
+        {CH1_MODE_DVS,         midi_program_apply_input_mode, (uint8_t) ((INPUT_CH1 << 4) | UI_INPUT_MODE_DVS)     },
+        {CH1_MODE_SYNTH,       midi_program_apply_input_mode, (uint8_t) ((INPUT_CH1 << 4) | UI_INPUT_MODE_SYNTH)   },
+        {CH2_MODE_DISABLE,     midi_program_apply_input_mode, (uint8_t) ((INPUT_CH2 << 4) | UI_INPUT_MODE_DISABLED)},
+        {CH2_MODE_DVS,         midi_program_apply_input_mode, (uint8_t) ((INPUT_CH2 << 4) | UI_INPUT_MODE_DVS)     },
+        {CH2_MODE_SYNTH,       midi_program_apply_input_mode, (uint8_t) ((INPUT_CH2 << 4) | UI_INPUT_MODE_SYNTH)   },
         {RETURN_CH_USB12,      midi_program_apply_return,   INPUT_USB12                                    },
         {RETURN_CH_USB34,      midi_program_apply_return,   INPUT_USB34                                    },
         {RETURN_CH_NONE,       midi_program_apply_return,   INPUT_SRC_NONE                                 },
@@ -3113,6 +3221,13 @@ static bool dispatch_midi_program_change(uint8_t channel, uint8_t program)
         {CH_FADER_AUX_SENSOR2_TO_B,  midi_program_apply_ch_fader_aux_assignment, (uint8_t) ((2U << 4) | UI_CH_FADER_AUX_ASSIGN_B)},
         {CH_FADER_AUX_SENSOR3_TO_A,  midi_program_apply_ch_fader_aux_assignment, (uint8_t) ((3U << 4) | UI_CH_FADER_AUX_ASSIGN_A)},
         {CH_FADER_AUX_SENSOR3_TO_B,  midi_program_apply_ch_fader_aux_assignment, (uint8_t) ((3U << 4) | UI_CH_FADER_AUX_ASSIGN_B)},
+        {SYNTH_RATIO_OCTAVE,         midi_program_apply_timecode_synth_ratio_set, TIMECODE_RATIO_OCTAVE                  },
+        {SYNTH_RATIO_HARMONIC,       midi_program_apply_timecode_synth_ratio_set, TIMECODE_RATIO_HARMONIC                },
+        {SYNTH_RATIO_CHORD,          midi_program_apply_timecode_synth_ratio_set, TIMECODE_RATIO_CHORD                   },
+        {SYNTH_WARP_CLEAN,           midi_program_apply_timecode_synth_warp_algorithm, TIMECODE_WARP_CLEAN                },
+        {SYNTH_WARP_CROSSFOLD,       midi_program_apply_timecode_synth_warp_algorithm, TIMECODE_WARP_CROSSFOLD            },
+        {SYNTH_WARP_RING_MOD,        midi_program_apply_timecode_synth_warp_algorithm, TIMECODE_WARP_RING_MOD             },
+        {SYNTH_WARP_COMPARATOR,      midi_program_apply_timecode_synth_warp_algorithm, TIMECODE_WARP_COMPARATOR           },
     };
 
     for (uint32_t i = 0; i < TU_ARRAY_SIZE(commands); i++)
@@ -3251,8 +3366,8 @@ void ui_control_get_persist_state(UI_ControlPersistState_t* state)
     state->current_ch_fader_post_assign  = s_ui.current_ch_fader_post_assign;
     state->current_return_assign  = s_ui.current_return_assign;
     state->current_hp_out_source  = s_ui.current_hp_out_source;
-    state->current_ch1_dvs_enable    = s_ui.current_ch1_dvs_enable;
-    state->current_ch2_dvs_enable    = s_ui.current_ch2_dvs_enable;
+    state->current_ch1_input_mode    = s_ui.current_ch1_input_mode;
+    state->current_ch2_input_mode    = s_ui.current_ch2_input_mode;
     state->ch_fader_dvs_delay_ms     = s_ui.ch_fader_dvs_delay_ms;
     state->sensor2_aux_fade_down_assign = s_ui.sensor2_aux_fade_down_assign;
     state->sensor3_aux_fade_down_assign = s_ui.sensor3_aux_fade_down_assign;
@@ -3278,8 +3393,8 @@ bool ui_control_apply_persist_state(const UI_ControlPersistState_t* state)
     if ((state->current_ch1_input_type > INPUT_TYPE_PHONO) ||
         (state->current_ch2_input_type > INPUT_TYPE_PHONO) ||
         (state->current_hp_out_source > CUE_SEL_MST) ||
-        (state->current_ch1_dvs_enable > 1U) ||
-        (state->current_ch2_dvs_enable > 1U) ||
+        (state->current_ch1_input_mode > UI_INPUT_MODE_SYNTH) ||
+        (state->current_ch2_input_mode > UI_INPUT_MODE_SYNTH) ||
         (state->sensor2_aux_fade_down_assign > UI_CH_FADER_AUX_ASSIGN_B) ||
         (state->sensor3_aux_fade_down_assign > UI_CH_FADER_AUX_ASSIGN_B))
     {
@@ -3301,8 +3416,8 @@ bool ui_control_apply_persist_state(const UI_ControlPersistState_t* state)
     apply_ch_fader_assign_post(input_ch_post);
     apply_return_source(input_ch_return);
     apply_hp_out_source(state->current_hp_out_source);
-    apply_dvs_state(INPUT_CH1, state->current_ch1_dvs_enable != 0U);
-    apply_dvs_state(INPUT_CH2, state->current_ch2_dvs_enable != 0U);
+    apply_input_mode(INPUT_CH1, (UI_InputMode_t) state->current_ch1_input_mode);
+    apply_input_mode(INPUT_CH2, (UI_InputMode_t) state->current_ch2_input_mode);
     apply_ch_fader_dvs_delay(state->ch_fader_dvs_delay_ms);
     (void) apply_ch_fader_aux_assignments(state->sensor2_aux_fade_down_assign,
                                        state->sensor3_aux_fade_down_assign);
@@ -3373,8 +3488,8 @@ void ui_control_reset_state(void)
     s_ui.current_ch_fader_post_assign  = INPUT_SRC_USB12;
     s_ui.current_return_assign  = INPUT_SRC_USB34;
     s_ui.current_hp_out_source  = CUE_SEL_MST;
-    s_ui.current_ch1_dvs_enable = 0U;
-    s_ui.current_ch2_dvs_enable = 0U;
+    s_ui.current_ch1_input_mode = UI_INPUT_MODE_DISABLED;
+    s_ui.current_ch2_input_mode = UI_INPUT_MODE_DISABLED;
     s_ui.ch_fader_dvs_delay_ms  = UI_CH_FADER_DVS_DELAY_DEFAULT_MS;
     s_ui.sensor2_aux_fade_down_assign = UI_CH_FADER_AUX_ASSIGN_A;
     s_ui.sensor3_aux_fade_down_assign = UI_CH_FADER_AUX_ASSIGN_B;

@@ -27,6 +27,13 @@ typedef enum
     UI_UF2_TRANSITION_TIMED_OUT,
 } UI_Uf2TransitionState_t;
 
+typedef enum
+{
+    UI_INPUT_MODE_DISABLED = 0,
+    UI_INPUT_MODE_DVS,
+    UI_INPUT_MODE_SYNTH,
+} UI_InputMode_t;
+
 typedef struct
 {
     uint8_t current_ch1_input_type;
@@ -36,8 +43,8 @@ typedef struct
     uint8_t current_ch_fader_post_assign;
     uint8_t current_return_assign;
     uint8_t current_hp_out_source;
-    uint8_t current_ch1_dvs_enable;
-    uint8_t current_ch2_dvs_enable;
+    uint8_t current_ch1_input_mode;
+    uint8_t current_ch2_input_mode;
     uint8_t ch_fader_dvs_delay_ms;
     uint8_t sensor2_aux_fade_down_assign;
     uint8_t sensor3_aux_fade_down_assign;
@@ -75,6 +82,8 @@ uint8_t get_current_input_srcA_channel(void);  // 0:none, 1:CH1, 2:CH2
 uint8_t get_current_input_srcB_channel(void);  // 0:none, 1:CH1, 2:CH2
 bool get_current_ch1_dvs_enabled(void);
 bool get_current_ch2_dvs_enabled(void);
+UI_InputMode_t get_current_ch1_input_mode(void);
+UI_InputMode_t get_current_ch2_input_mode(void);
 uint8_t ui_control_get_ch_fader_dvs_delay_ms(void);
 bool ui_control_is_ch_fader_reverse_a_enabled(void);
 bool ui_control_is_ch_fader_reverse_b_enabled(void);

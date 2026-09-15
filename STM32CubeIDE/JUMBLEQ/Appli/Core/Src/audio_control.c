@@ -7,6 +7,7 @@
 
 #include "audio_control.h"
 #include "ui_control_internal.h"
+#include "timecode_synth.h"
 
 #include "adc.h"
 #include "gpdma.h"
@@ -72,6 +73,69 @@ static volatile uint8_t rx_pending_mask = 0;      // bit0: first-half, bit1: sec
 static volatile bool usb_tx_pending     = false;  // USB TX送信要求フラグ (ISR→Task通知用)
 static volatile bool usb_rx_pending     = false;  // USB RX受信通知フラグ (ISR→Task通知用)
 static TaskHandle_t s_audio_task_handle = NULL;
+
+bool s_streaming_out = false;
+bool s_streaming_in  = false;
+
+volatile AudioTxDiagnostics_t g_audio_tx_diagnostics = {
+    .tx_used_min_words = UINT32_MAX,
+};
+
+static volatile uint32_t s_tx_half_pending_cycle = 0u;
+static volatile uint32_t s_tx_cplt_pending_cycle = 0u;
+static volatile uint8_t s_tx_last_pending_callback = 0u;
+
+static void audio_tx_diagnostics_reset(void)
+{
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    const uint32_t reset_count = g_audio_tx_diagnostics.reset_count + 1u;
+    AudioTxDiagnostics_t reset = {0};
+    reset.reset_count          = reset_count;
+    reset.tx_used_min_words    = UINT32_MAX;
+    g_audio_tx_diagnostics     = reset;
+    const uint32_t now_cycles  = DWT->CYCCNT;
+    s_tx_half_pending_cycle    = ((tx_pending_mask & 0x01u) != 0u) ? now_cycles : 0u;
+    s_tx_cplt_pending_cycle    = ((tx_pending_mask & 0x02u) != 0u) ? now_cycles : 0u;
+    s_tx_last_pending_callback = 0u;
+    __set_PRIMASK(primask);
+}
+
+static inline int32_t audio_tx_used_words(void)
+{
+    return (int32_t) (sai_tx_rng_buf_index - sai_transmit_index);
+}
+
+static inline void audio_tx_diagnostics_record_level(int32_t used)
+{
+    if (!s_streaming_out || used < 0)
+    {
+        return;
+    }
+
+    const uint32_t level = (uint32_t) used;
+    if (level < g_audio_tx_diagnostics.tx_used_min_words)
+    {
+        g_audio_tx_diagnostics.tx_used_min_words = level;
+    }
+    if (level > g_audio_tx_diagnostics.tx_used_max_words)
+    {
+        g_audio_tx_diagnostics.tx_used_max_words = level;
+    }
+}
+
+static inline void audio_tx_diagnostics_record_event(uint32_t flags, int32_t used)
+{
+    if (!s_streaming_out)
+    {
+        return;
+    }
+
+    g_audio_tx_diagnostics.last_event_used_words = used;
+    g_audio_tx_diagnostics.last_event_flags      = flags;
+    g_audio_tx_diagnostics.last_event_tick_ms    = HAL_GetTick();
+    g_audio_tx_diagnostics.last_event_cycle      = DWT->CYCCNT;
+}
 
 void audio_control_register_task(void)
 {
@@ -165,9 +229,6 @@ static uint32_t audio_diag_cycles_to_us(uint32_t cycles)
 }
 #endif
 
-bool s_streaming_out = false;
-bool s_streaming_in  = false;
-
 static volatile bool is_sr_changed = false;
 
 const uint32_t sample_rates[] = {48000, 96000};
@@ -194,6 +255,8 @@ void control_input_from_usb_gain(uint8_t ch, int16_t db);
 void reset_audio_buffer(void)
 {
     ui_control_reset_state();
+
+    timecode_synth_init(current_sample_rate);
 
     for (uint16_t i = 0; i < CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ / 4; i++)
     {
@@ -238,8 +301,8 @@ void AUDIO_LoadAndApplyRoutingFromEEPROM(void)
         ui_state.current_ch_fader_post_assign  = cfg.current_ch_fader_post_assign;
         ui_state.current_return_assign  = cfg.current_return_assign;
         ui_state.current_hp_out_source  = cfg.current_hp_out_source;
-        ui_state.current_ch1_dvs_enable = cfg.current_ch1_dvs_enable;
-        ui_state.current_ch2_dvs_enable = cfg.current_ch2_dvs_enable;
+        ui_state.current_ch1_input_mode = cfg.current_ch1_input_mode;
+        ui_state.current_ch2_input_mode = cfg.current_ch2_input_mode;
         ui_state.ch_fader_dvs_delay_ms = cfg.ch_fader_dvs_delay_ms;
         ui_state.sensor2_aux_fade_down_assign = cfg.sensor2_aux_fade_down_assign;
         ui_state.sensor3_aux_fade_down_assign = cfg.sensor3_aux_fade_down_assign;
@@ -251,8 +314,12 @@ void AUDIO_LoadAndApplyRoutingFromEEPROM(void)
 
         if (ui_control_apply_persist_state(&ui_state))
         {
+            timecode_synth_set_ratio_set(
+                (TimecodeOscillatorRatioSet_t) cfg.timecode_synth_ratio_set);
+            timecode_synth_set_warp_algorithm(
+                (TimecodeOscillatorWarpAlgorithm_t) cfg.timecode_synth_warp_algorithm);
             SEGGER_RTT_printf(0,
-                              "EEPROM routing applied: CH1=%u CH2=%u CH_FADER_A=%u CH_FADER_B=%u CH_FADER_POST=%u RTN=%u HP=%u DVS1=%u DVS2=%u DVS_DELAY_MS=%u AUX2=%u AUX3=%u REVERSE_A=%u REVERSE_B=%u CURVE_WIDTH_A=%.4f CURVE_WIDTH_B=%.4f\r\n",
+                              "EEPROM routing applied: CH1=%u CH2=%u CH_FADER_A=%u CH_FADER_B=%u CH_FADER_POST=%u RTN=%u HP=%u MODE1=%u MODE2=%u DVS_DELAY_MS=%u AUX2=%u AUX3=%u REVERSE_A=%u REVERSE_B=%u CURVE_WIDTH_A=%.4f CURVE_WIDTH_B=%.4f RATIO=%u WARP=%u\r\n",
                               (unsigned)cfg.current_ch1_input_type,
                               (unsigned)cfg.current_ch2_input_type,
                               (unsigned)cfg.current_ch_fader_a_assign,
@@ -260,15 +327,17 @@ void AUDIO_LoadAndApplyRoutingFromEEPROM(void)
                               (unsigned)cfg.current_ch_fader_post_assign,
                               (unsigned)cfg.current_return_assign,
                               (unsigned)cfg.current_hp_out_source,
-                              (unsigned)cfg.current_ch1_dvs_enable,
-                              (unsigned)cfg.current_ch2_dvs_enable,
+                              (unsigned)cfg.current_ch1_input_mode,
+                              (unsigned)cfg.current_ch2_input_mode,
                               (unsigned)cfg.ch_fader_dvs_delay_ms,
                               (unsigned)cfg.sensor2_aux_fade_down_assign,
                               (unsigned)cfg.sensor3_aux_fade_down_assign,
                               (unsigned)ui_state.ch_fader_reverse_a,
                               (unsigned)ui_state.ch_fader_reverse_b,
                               (double)cfg.current_ch_fader_curve_width_a,
-                              (double)cfg.current_ch_fader_curve_width_b);
+                              (double)cfg.current_ch_fader_curve_width_b,
+                              (unsigned)cfg.timecode_synth_ratio_set,
+                              (unsigned)cfg.timecode_synth_warp_algorithm);
         }
         else
         {
@@ -285,8 +354,8 @@ void AUDIO_LoadAndApplyRoutingFromEEPROM(void)
         ui_state.current_ch_fader_post_assign  = cfg.current_ch_fader_post_assign;
         ui_state.current_return_assign  = cfg.current_return_assign;
         ui_state.current_hp_out_source  = cfg.current_hp_out_source;
-        ui_state.current_ch1_dvs_enable = cfg.current_ch1_dvs_enable;
-        ui_state.current_ch2_dvs_enable = cfg.current_ch2_dvs_enable;
+        ui_state.current_ch1_input_mode = cfg.current_ch1_input_mode;
+        ui_state.current_ch2_input_mode = cfg.current_ch2_input_mode;
         ui_state.ch_fader_dvs_delay_ms = cfg.ch_fader_dvs_delay_ms;
         ui_state.sensor2_aux_fade_down_assign = cfg.sensor2_aux_fade_down_assign;
         ui_state.sensor3_aux_fade_down_assign = cfg.sensor3_aux_fade_down_assign;
@@ -296,6 +365,10 @@ void AUDIO_LoadAndApplyRoutingFromEEPROM(void)
         ui_state.current_ch_fader_curve_width_a = cfg.current_ch_fader_curve_width_a;
         ui_state.current_ch_fader_curve_width_b = cfg.current_ch_fader_curve_width_b;
         (void)ui_control_apply_persist_state(&ui_state);
+        timecode_synth_set_ratio_set(
+            (TimecodeOscillatorRatioSet_t) cfg.timecode_synth_ratio_set);
+        timecode_synth_set_warp_algorithm(
+            (TimecodeOscillatorWarpAlgorithm_t) cfg.timecode_synth_warp_algorithm);
 
         if (EEPROM_SaveConfig(&hi2c2, &cfg) == HAL_OK)
         {
@@ -647,6 +720,7 @@ bool tud_audio_set_itf_cb(uint8_t rhport, tusb_control_request_t const* p_reques
         s_streaming_out = true;
         spk_data_size   = 0;
         usb_rx_pending  = false;
+        audio_tx_diagnostics_reset();
 #if AUDIO_DIAG_LOG
         dbg_usb_out_prev_cycle_valid = false;
 #endif
@@ -692,6 +766,19 @@ void tud_audio_feedback_params_cb(uint8_t func_id, uint8_t alt_itf, audio_feedba
 static void dma_sai2_tx_half(DMA_HandleTypeDef* hdma)
 {
     (void) hdma;
+    s_tx_half_pending_cycle    = DWT->CYCCNT;
+    s_tx_last_pending_callback = 1u;
+    if (s_streaming_out)
+    {
+        g_audio_tx_diagnostics.tx_half_callbacks++;
+        if ((tx_pending_mask & 0x01U) != 0U)
+        {
+            g_audio_tx_diagnostics.half_rewrite_events++;
+            audio_tx_diagnostics_record_event(AUDIO_TX_DIAG_EVENT_HALF_REWRITE,
+                                              audio_tx_used_words());
+        }
+        g_audio_tx_diagnostics.last_pending_callback = 1u;
+    }
 #if AUDIO_DIAG_LOG
     if ((tx_pending_mask & 0x01U) != 0U)
     {
@@ -705,6 +792,19 @@ static void dma_sai2_tx_half(DMA_HandleTypeDef* hdma)
 static void dma_sai2_tx_cplt(DMA_HandleTypeDef* hdma)
 {
     (void) hdma;
+    s_tx_cplt_pending_cycle    = DWT->CYCCNT;
+    s_tx_last_pending_callback = 2u;
+    if (s_streaming_out)
+    {
+        g_audio_tx_diagnostics.tx_cplt_callbacks++;
+        if ((tx_pending_mask & 0x02U) != 0U)
+        {
+            g_audio_tx_diagnostics.cplt_rewrite_events++;
+            audio_tx_diagnostics_record_event(AUDIO_TX_DIAG_EVENT_CPLT_REWRITE,
+                                              audio_tx_used_words());
+        }
+        g_audio_tx_diagnostics.last_pending_callback = 2u;
+    }
 #if AUDIO_DIAG_LOG
     if ((tx_pending_mask & 0x02U) != 0U)
     {
@@ -746,6 +846,13 @@ static void dma_sai1_rx_cplt(DMA_HandleTypeDef* hdma)
 static void dma_sai_error(DMA_HandleTypeDef* hdma)
 {
     SEGGER_RTT_printf(0, "DMA ERR! code=%08X\n", hdma->ErrorCode);
+    if (s_streaming_out && hdma == &handle_GPDMA1_Channel2)
+    {
+        g_audio_tx_diagnostics.dma_error_events++;
+        g_audio_tx_diagnostics.last_dma_error_code = hdma->ErrorCode;
+        audio_tx_diagnostics_record_event(AUDIO_TX_DIAG_EVENT_DMA_ERROR,
+                                          audio_tx_used_words());
+    }
 #if AUDIO_DIAG_LOG
     (void) hdma;
     dbg_dma_err_events++;
@@ -754,23 +861,32 @@ static void dma_sai_error(DMA_HandleTypeDef* hdma)
 
 void HAL_SAI_ErrorCallback(SAI_HandleTypeDef* hsai)
 {
-#if AUDIO_DIAG_LOG
     uint32_t sr = hsai->Instance->SR;
     if (hsai == &hsai_BlockA2)
     {
+        if (s_streaming_out)
+        {
+            g_audio_tx_diagnostics.sai_error_events++;
+            g_audio_tx_diagnostics.last_sai_error_code  = HAL_SAI_GetError(hsai);
+            g_audio_tx_diagnostics.last_sai_status_flags =
+                sr & (SAI_xSR_OVRUDR | SAI_xSR_WCKCFG | SAI_xSR_CNRDY | SAI_xSR_AFSDET | SAI_xSR_LFSDET);
+            audio_tx_diagnostics_record_event(AUDIO_TX_DIAG_EVENT_SAI_ERROR,
+                                              audio_tx_used_words());
+        }
+#if AUDIO_DIAG_LOG
         dbg_sai_tx_err_events++;
         dbg_sai_tx_last_err = HAL_SAI_GetError(hsai);
         dbg_sai_tx_sr_flags |= (sr & (SAI_xSR_OVRUDR | SAI_xSR_WCKCFG | SAI_xSR_CNRDY | SAI_xSR_AFSDET | SAI_xSR_LFSDET));
+#endif
     }
     else if (hsai == &hsai_BlockA1)
     {
+#if AUDIO_DIAG_LOG
         dbg_sai_rx_err_events++;
         dbg_sai_rx_last_err = HAL_SAI_GetError(hsai);
         dbg_sai_rx_sr_flags |= (sr & (SAI_xSR_OVRUDR | SAI_xSR_WCKCFG | SAI_xSR_CNRDY | SAI_xSR_AFSDET | SAI_xSR_LFSDET));
-    }
-#else
-    (void) hsai;
 #endif
+    }
 }
 
 void start_sai(void)
@@ -787,6 +903,7 @@ void start_sai(void)
     sai_tx_rng_buf_index = prefill_size;
     sai_transmit_index   = 0;
     tx_pending_mask      = 0;
+    audio_tx_diagnostics_reset();
 
 #if AUDIO_DIAG_LOG
     dbg_tx_used_min            = 0xFFFFFFFFu;
@@ -949,16 +1066,19 @@ static inline void fill_tx_half(uint32_t index0)
 {
     const uint32_t n           = (SAI_TX_BUF_SIZE / 2);
     const uint32_t frame_words = 4;  // 4ch x 32bit = 1 frame
-    uint32_t pull_words        = n;
+    uint32_t consume_words     = n;
+    uint32_t source_skip_words = 0;
+    uint32_t diagnostic_event_flags = 0u;
 
     // index0の範囲チェック
-    if (index0 >= SAI_TX_BUF_SIZE)
+    if (index0 > (SAI_TX_BUF_SIZE - n))
     {
         // 不正な値は無音で埋める
         return;
     }
 
     int32_t used = (int32_t) (sai_tx_rng_buf_index - sai_transmit_index);
+    audio_tx_diagnostics_record_level(used);
 #if AUDIO_DIAG_LOG
     if (used >= 0)
     {
@@ -980,18 +1100,31 @@ static inline void fill_tx_half(uint32_t index0)
     // いきなり無音にせず、クリック感を抑える
     if (used < (int32_t) n)
     {
+        if (s_streaming_out)
+        {
+            g_audio_tx_diagnostics.underrun_events++;
+            diagnostic_event_flags |= AUDIO_TX_DIAG_EVENT_UNDERRUN;
+        }
 #if AUDIO_DIAG_LOG
         dbg_tx_underrun_events++;
 #endif
         if (used <= 0)
         {
             memset(stereo_out_buf + index0, 0, n * sizeof(int32_t));
+            audio_tx_diagnostics_record_event(diagnostic_event_flags, used);
+            timecode_synth_render_output(stereo_out_buf + index0,
+                                         AUDIO_RING_FRAME_WORDS,
+                                         (SAI_TX_BUF_SIZE / 2u) / AUDIO_RING_FRAME_WORDS);
             return;
         }
-        pull_words = ((uint32_t) used / frame_words) * frame_words;
-        if (pull_words == 0)
+        consume_words = ((uint32_t) used / frame_words) * frame_words;
+        if (consume_words == 0)
         {
             memset(stereo_out_buf + index0, 0, n * sizeof(int32_t));
+            audio_tx_diagnostics_record_event(diagnostic_event_flags, used);
+            timecode_synth_render_output(stereo_out_buf + index0,
+                                         AUDIO_RING_FRAME_WORDS,
+                                         (SAI_TX_BUF_SIZE / 2u) / AUDIO_RING_FRAME_WORDS);
             return;
         }
     }
@@ -1002,6 +1135,9 @@ static inline void fill_tx_half(uint32_t index0)
         // リセットして無音で埋める
         sai_transmit_index = sai_tx_rng_buf_index;
         memset(stereo_out_buf + index0, 0, n * sizeof(int32_t));
+        timecode_synth_render_output(stereo_out_buf + index0,
+                                     AUDIO_RING_FRAME_WORDS,
+                                     (SAI_TX_BUF_SIZE / 2u) / AUDIO_RING_FRAME_WORDS);
         return;
     }
 
@@ -1013,8 +1149,14 @@ static inline void fill_tx_half(uint32_t index0)
 
     if (used >= (int32_t) n && used > high_thr && used >= (int32_t) (n + frame_words))
     {
-        // バッファ過多: 1 frame 余分に消費して追従
-        pull_words = n + frame_words;
+        // バッファ過多: 最古の1 frameを捨て、DMA halfには通常量だけ書き込む
+        consume_words     = n + frame_words;
+        source_skip_words = frame_words;
+        if (s_streaming_out)
+        {
+            g_audio_tx_diagnostics.drift_up_events++;
+            diagnostic_event_flags |= AUDIO_TX_DIAG_EVENT_DRIFT_UP;
+        }
 #if AUDIO_DIAG_LOG
         dbg_tx_drift_up_events++;
 #endif
@@ -1022,43 +1164,67 @@ static inline void fill_tx_half(uint32_t index0)
     else if (used >= (int32_t) n && used < low_thr && n > frame_words)
     {
         // バッファ不足傾向: 1 frame 少なく消費して追従
-        pull_words = n - frame_words;
+        consume_words = n - frame_words;
+        if (s_streaming_out)
+        {
+            g_audio_tx_diagnostics.drift_down_events++;
+            diagnostic_event_flags |= AUDIO_TX_DIAG_EVENT_DRIFT_DOWN;
+        }
 #if AUDIO_DIAG_LOG
         dbg_tx_drift_dn_events++;
 #endif
     }
 
     // 安全ガード
-    if ((int32_t) pull_words > used)
+    if ((int32_t) consume_words > used)
     {
-        pull_words = (uint32_t) used;
+        consume_words = (uint32_t) used;
     }
-    pull_words = (pull_words / frame_words) * frame_words;
+    consume_words = (consume_words / frame_words) * frame_words;
 
-    if (pull_words == 0)
+    if (consume_words == 0)
     {
         memset(stereo_out_buf + index0, 0, n * sizeof(int32_t));
+        audio_tx_diagnostics_record_event(diagnostic_event_flags, used);
+        timecode_synth_render_output(stereo_out_buf + index0,
+                                     AUDIO_RING_FRAME_WORDS,
+                                     (SAI_TX_BUF_SIZE / 2u) / AUDIO_RING_FRAME_WORDS);
         return;
     }
 
-    const uint32_t index1 = sai_transmit_index & (SAI_RNG_BUF_SIZE - 1);
+    if (source_skip_words > consume_words)
+    {
+        source_skip_words = 0;
+    }
+    uint32_t copy_words = consume_words - source_skip_words;
+    if (copy_words > n)
+    {
+        copy_words = n;
+    }
+
+    const uint32_t index1 = (sai_transmit_index + source_skip_words) & (SAI_RNG_BUF_SIZE - 1);
     uint32_t first        = SAI_RNG_BUF_SIZE - index1;
-    if (first > pull_words)
-        first = pull_words;
+    if (first > copy_words)
+        first = copy_words;
 
     memcpy(stereo_out_buf + index0, sai_tx_rng_buf + index1, first * sizeof(int32_t));
-    if (first < pull_words)
-        memcpy(stereo_out_buf + index0 + first, sai_tx_rng_buf, (pull_words - first) * sizeof(int32_t));
+    if (first < copy_words)
+        memcpy(stereo_out_buf + index0 + first, sai_tx_rng_buf, (copy_words - first) * sizeof(int32_t));
 
-    if (pull_words < n)
+    if (copy_words < n)
     {
+        if (s_streaming_out)
+        {
+            g_audio_tx_diagnostics.partial_fill_events++;
+            diagnostic_event_flags |= AUDIO_TX_DIAG_EVENT_PARTIAL_FILL;
+        }
 #if AUDIO_DIAG_LOG
         dbg_tx_partial_fill_events++;
 #endif
         // 不足分は最後の1frameを繰り返し、クリックノイズを抑える
-        uint32_t* dst = (uint32_t*) (stereo_out_buf + index0 + pull_words);
-        uint32_t* src = (uint32_t*) (stereo_out_buf + index0 + pull_words - frame_words);
-        for (uint32_t i = pull_words; i < n; i += frame_words)
+        uint32_t* dst = (uint32_t*) (stereo_out_buf + index0 + copy_words);
+        uint32_t* src = (uint32_t*) (stereo_out_buf + index0 + copy_words - frame_words);
+        for (uint32_t i = copy_words; i < n; i += frame_words)
         {
             dst[0] = src[0];
             dst[1] = src[1];
@@ -1068,18 +1234,69 @@ static inline void fill_tx_half(uint32_t index0)
         }
     }
 
-    sai_transmit_index += pull_words;
+    sai_transmit_index += consume_words;
+    audio_tx_diagnostics_record_level(used - (int32_t) consume_words);
+    if (diagnostic_event_flags != 0u)
+    {
+        audio_tx_diagnostics_record_event(diagnostic_event_flags, used);
+    }
+    timecode_synth_render_output(stereo_out_buf + index0,
+                                 AUDIO_RING_FRAME_WORDS,
+                                 (SAI_TX_BUF_SIZE / 2u) / AUDIO_RING_FRAME_WORDS);
 }
 
 void copybuf_ring2sai(void)
 {
     // ISRからの更新要求を取り出し、該当halfを更新する
     uint8_t mask;
+    uint8_t last_pending_callback;
+    uint32_t half_pending_cycle;
+    uint32_t cplt_pending_cycle;
     uint32_t primask = __get_PRIMASK();
     __disable_irq();
-    mask            = tx_pending_mask;
-    tx_pending_mask = 0;
+    mask                       = tx_pending_mask;
+    last_pending_callback      = s_tx_last_pending_callback;
+    half_pending_cycle         = s_tx_half_pending_cycle;
+    cplt_pending_cycle         = s_tx_cplt_pending_cycle;
+    tx_pending_mask            = 0;
+    s_tx_last_pending_callback = 0u;
+    if ((mask & 0x01u) != 0u)
+    {
+        s_tx_half_pending_cycle = 0u;
+    }
+    if ((mask & 0x02u) != 0u)
+    {
+        s_tx_cplt_pending_cycle = 0u;
+    }
     __set_PRIMASK(primask);
+
+    if (s_streaming_out && mask != 0u)
+    {
+        const uint32_t now_cycles = DWT->CYCCNT;
+        if ((mask & 0x01u) != 0u)
+        {
+            const uint32_t service_cycles = now_cycles - half_pending_cycle;
+            if (service_cycles > g_audio_tx_diagnostics.half_service_cycles_max)
+            {
+                g_audio_tx_diagnostics.half_service_cycles_max = service_cycles;
+            }
+        }
+        if ((mask & 0x02u) != 0u)
+        {
+            const uint32_t service_cycles = now_cycles - cplt_pending_cycle;
+            if (service_cycles > g_audio_tx_diagnostics.cplt_service_cycles_max)
+            {
+                g_audio_tx_diagnostics.cplt_service_cycles_max = service_cycles;
+            }
+        }
+        if ((mask & 0x03u) == 0x03u)
+        {
+            g_audio_tx_diagnostics.both_pending_events++;
+            g_audio_tx_diagnostics.both_pending_last_callback = last_pending_callback;
+            audio_tx_diagnostics_record_event(AUDIO_TX_DIAG_EVENT_BOTH_PENDING,
+                                              audio_tx_used_words());
+        }
+    }
 
     if (mask & 0x01)
         fill_tx_half(0);
@@ -1099,6 +1316,10 @@ static inline void fill_rx_half(uint32_t index0)
     {
         return;
     }
+
+    timecode_synth_process_input(stereo_in_buf + index0,
+                                 AUDIO_RING_FRAME_WORDS,
+                                 (SAI_RX_BUF_SIZE / 2u) / AUDIO_RING_FRAME_WORDS);
 
     int32_t used = (int32_t) (sai_rx_rng_buf_index - sai_receive_index);
     if (used < 0)
@@ -1175,6 +1396,7 @@ static bool audio_usb_in_source_ready(void)
 static uint16_t audio_out_read_budget_bytes(void)
 {
     int32_t used = (int32_t) (sai_tx_rng_buf_index - sai_transmit_index);
+    audio_tx_diagnostics_record_level(used);
     if (used < 0)
     {
         used = 0;
@@ -1260,16 +1482,19 @@ static void copybuf_ring2usb_and_send(void)
     if (usb_bytes > sizeof(usb_out_buf))
         return;
 
+    const bool send_ch1_to_usb = !timecode_synth_is_channel_enabled(0u);
+    const bool send_ch2_to_usb = !timecode_synth_is_channel_enabled(1u);
+
     for (uint32_t f = 0; f < frames; f++)
     {
         uint32_t r_L1          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 0) & (SAI_RNG_BUF_SIZE - 1);
         uint32_t r_R1          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 1) & (SAI_RNG_BUF_SIZE - 1);
         uint32_t r_L2          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 2) & (SAI_RNG_BUF_SIZE - 1);
         uint32_t r_R2          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 3) & (SAI_RNG_BUF_SIZE - 1);
-        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 0] = sai_rx_rng_buf[r_L1];  // L1
-        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 1] = sai_rx_rng_buf[r_R1];  // R1
-        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 2] = sai_rx_rng_buf[r_L2];  // L2
-        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 3] = sai_rx_rng_buf[r_R2];  // R2
+        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 0] = send_ch1_to_usb ? sai_rx_rng_buf[r_L1] : 0;  // L1
+        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 1] = send_ch1_to_usb ? sai_rx_rng_buf[r_R1] : 0;  // R1
+        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 2] = send_ch2_to_usb ? sai_rx_rng_buf[r_L2] : 0;  // L2
+        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 3] = send_ch2_to_usb ? sai_rx_rng_buf[r_R2] : 0;  // R2
     }
 
     // ISRコンテキストから呼ばれるので通常版を使用
@@ -1610,6 +1835,12 @@ void audio_task(void)
     }
     else
     {
+        timecode_synth_update();
+        timecode_synth_set_channel_enabled(
+            0u, get_current_ch1_input_mode() == UI_INPUT_MODE_SYNTH);
+        timecode_synth_set_channel_enabled(
+            1u, get_current_ch2_input_mode() == UI_INPUT_MODE_SYNTH);
+
         bool usb_rx_event = false;
         bool usb_tx_event = false;
 #if AUDIO_DIAG_LOG
@@ -1754,6 +1985,7 @@ void AUDIO_SAI_Reset_ForNewRate(void)
     sai_receive_index    = 0;
     tx_pending_mask      = 0;
     rx_pending_mask      = 0;
+    audio_tx_diagnostics_reset();
 
 #if AUDIO_DIAG_LOG
     dbg_tx_used_min            = 0xFFFFFFFFu;
@@ -1812,6 +2044,7 @@ void AUDIO_SAI_Reset_ForNewRate(void)
     memset(stereo_in_buf, 0, sizeof(stereo_in_buf));
     memset(usb_in_buf, 0, sizeof(usb_in_buf));
     memset(usb_out_buf, 0, sizeof(usb_out_buf));
+    timecode_synth_reset_for_sample_rate(new_hz);
     __DSB();
 
 #if RESET_FROM_FW
