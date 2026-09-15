@@ -542,15 +542,27 @@ static bool audio20_clock_set_request(uint8_t rhport, tusb_control_request_t con
     }
 }
 
+static bool audio20_feature_unit_channel_is_valid(uint8_t channel)
+{
+    return channel <= CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX;
+}
+
 // Helper for feature unit get requests
 static bool audio20_feature_unit_get_request(uint8_t rhport, tusb_control_request_t const* request)
 {
     TU_ASSERT(TU_U16_HIGH(request->wIndex) == UAC2_ENTITY_STEREO_OUT_FEATURE_UNIT);
 
+    const uint8_t channel = TU_U16_LOW(request->wValue);
+    if (!audio20_feature_unit_channel_is_valid(channel))
+    {
+        TU_LOG1("Feature unit get request has invalid channel %u\r\n", channel);
+        return false;
+    }
+
     if (TU_U16_HIGH(request->wValue) == AUDIO20_FU_CTRL_MUTE && request->bRequest == AUDIO20_CS_REQ_CUR)
     {
-        audio20_control_cur_1_t mute1 = {.bCur = mute[TU_U16_LOW(request->wValue)]};
-        TU_LOG1("Get channel %u mute %d\r\n", TU_U16_LOW(request->wValue), mute1.bCur);
+        audio20_control_cur_1_t mute1 = {.bCur = mute[channel]};
+        TU_LOG1("Get channel %u mute %d\r\n", channel, mute1.bCur);
         return tud_audio_buffer_and_schedule_control_xfer(rhport, (tusb_control_request_t const*) request, &mute1, sizeof(mute1));
     }
     else if (TU_U16_HIGH(request->wValue) == AUDIO20_FU_CTRL_VOLUME)
@@ -566,8 +578,8 @@ static bool audio20_feature_unit_get_request(uint8_t rhport, tusb_control_reques
         }
         else if (request->bRequest == AUDIO20_CS_REQ_CUR)
         {
-            audio20_control_cur_2_t cur_vol = {.bCur = tu_htole16(volume[TU_U16_LOW(request->wValue)])};
-            TU_LOG1("Get channel %u volume %d dB\r\n", TU_U16_LOW(request->wValue), cur_vol.bCur / 256);
+            audio20_control_cur_2_t cur_vol = {.bCur = tu_htole16(volume[channel])};
+            TU_LOG1("Get channel %u volume %d dB\r\n", channel, cur_vol.bCur / 256);
             return tud_audio_buffer_and_schedule_control_xfer(rhport, (tusb_control_request_t const*) request, &cur_vol, sizeof(cur_vol));
         }
     }
@@ -584,13 +596,20 @@ static bool audio20_feature_unit_set_request(uint8_t rhport, tusb_control_reques
     TU_ASSERT(TU_U16_HIGH(request->wIndex) == UAC2_ENTITY_STEREO_OUT_FEATURE_UNIT);
     TU_VERIFY(request->bRequest == AUDIO20_CS_REQ_CUR);
 
+    const uint8_t channel = TU_U16_LOW(request->wValue);
+    if (!audio20_feature_unit_channel_is_valid(channel))
+    {
+        TU_LOG1("Feature unit set request has invalid channel %u\r\n", channel);
+        return false;
+    }
+
     if (TU_U16_HIGH(request->wValue) == AUDIO20_FU_CTRL_MUTE)
     {
         TU_VERIFY(request->wLength == sizeof(audio20_control_cur_1_t));
 
-        mute[TU_U16_LOW(request->wValue)] = ((audio20_control_cur_1_t const*) buf)->bCur;
+        mute[channel] = ((audio20_control_cur_1_t const*) buf)->bCur;
 
-        TU_LOG1("Set channel %d Mute: %d\r\n", TU_U16_LOW(request->wValue), mute[TU_U16_LOW(request->wValue)]);
+        TU_LOG1("Set channel %d Mute: %d\r\n", channel, mute[channel]);
 
         return true;
     }
@@ -598,11 +617,11 @@ static bool audio20_feature_unit_set_request(uint8_t rhport, tusb_control_reques
     {
         TU_VERIFY(request->wLength == sizeof(audio20_control_cur_2_t));
 
-        volume[TU_U16_LOW(request->wValue)] = ((audio20_control_cur_2_t const*) buf)->bCur;
+        volume[channel] = ((audio20_control_cur_2_t const*) buf)->bCur;
 
-        TU_LOG1("Set channel %d volume: %d dB\r\n", TU_U16_LOW(request->wValue), volume[TU_U16_LOW(request->wValue)] / 256);
+        TU_LOG1("Set channel %d volume: %d dB\r\n", channel, volume[channel] / 256);
 
-        control_input_from_usb_gain(TU_U16_LOW(request->wValue), volume[TU_U16_LOW(request->wValue)] / 256);
+        control_input_from_usb_gain(channel, volume[channel] / 256);
 
         return true;
     }
