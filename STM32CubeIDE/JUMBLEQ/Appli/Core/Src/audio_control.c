@@ -7,7 +7,7 @@
 
 #include "audio_control.h"
 #include "ui_control_internal.h"
-#include "timecode_oscillator.h"
+#include "timecode_synth.h"
 
 #include "adc.h"
 #include "gpdma.h"
@@ -243,352 +243,6 @@ __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t sai_rx_rng_
 __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t stereo_out_buf[SAI_TX_BUF_SIZE] = {0};
 __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t stereo_in_buf[SAI_RX_BUF_SIZE]  = {0};
 
-#if ENABLE_TIMECODE_OSCILLATOR
-enum
-{
-    TIMECODE_SYNTH_CHANNEL_COUNT = 2u,
-    TIMECODE_SYNTH_FIFO_FRAMES   = 256u,
-    TIMECODE_SYNTH_BLOCK_FRAMES  = (SAI_RX_BUF_SIZE / 2u) / AUDIO_RING_FRAME_WORDS,
-};
-
-_Static_assert((TIMECODE_SYNTH_FIFO_FRAMES & (TIMECODE_SYNTH_FIFO_FRAMES - 1u)) == 0u,
-               "Timecode synth FIFO size must be a power of two");
-_Static_assert(TIMECODE_SYNTH_BLOCK_FRAMES <= TIMECODE_OSCILLATOR_MAX_BLOCK_FRAMES,
-               "Timecode oscillator block buffer is too small");
-
-typedef struct
-{
-    int32_t samples[TIMECODE_SYNTH_FIFO_FRAMES];
-    uint32_t write_index;
-    uint32_t read_index;
-    volatile uint32_t overflow_frames;
-    volatile uint32_t underrun_frames;
-} TimecodeSynthFifo_t;
-
-static TimecodeOscillator_t s_timecode_oscillator[TIMECODE_SYNTH_CHANNEL_COUNT];
-static TimecodeSynthFifo_t s_timecode_synth_fifo[TIMECODE_SYNTH_CHANNEL_COUNT];
-static int32_t s_timecode_synth_block[TIMECODE_SYNTH_CHANNEL_COUNT][TIMECODE_SYNTH_BLOCK_FRAMES];
-static bool s_timecode_synth_active[TIMECODE_SYNTH_CHANNEL_COUNT] = {false, false};
-static volatile uint8_t s_timecode_synth_control[TIMECODE_SYNTH_CONTROL_COUNT] = {
-    [TIMECODE_SYNTH_CONTROL_ROOT]        = 64u,
-    [TIMECODE_SYNTH_CONTROL_MORPH]       = 0u,
-    [TIMECODE_SYNTH_CONTROL_SLOPE]       = 64u,
-    [TIMECODE_SYNTH_CONTROL_SMOOTH_FOLD] = 64u,
-    [TIMECODE_SYNTH_CONTROL_WARP_AMOUNT] = 0u,
-};
-static volatile uint8_t s_timecode_synth_ratio_set = TIMECODE_RATIO_OCTAVE;
-static volatile uint8_t s_timecode_synth_warp_algorithm = TIMECODE_WARP_CROSSFOLD;
-static volatile uint32_t s_timecode_synth_control_revision = 1u;
-static uint32_t s_timecode_synth_applied_revision = 0u;
-
-static float timecode_synth_normalize_control(uint8_t value)
-{
-    return (float) value * (1.0f / 127.0f);
-}
-
-static float timecode_synth_smooth_fold_from_control(uint8_t value)
-{
-    enum
-    {
-        SMOOTH_FOLD_DEAD_ZONE_LOW  = 60u,
-        SMOOTH_FOLD_DEAD_ZONE_HIGH = 67u,
-    };
-
-    if (value < SMOOTH_FOLD_DEAD_ZONE_LOW)
-    {
-        return -1.0f + ((float) value / (float) SMOOTH_FOLD_DEAD_ZONE_LOW);
-    }
-    if (value > SMOOTH_FOLD_DEAD_ZONE_HIGH)
-    {
-        return (float) (value - SMOOTH_FOLD_DEAD_ZONE_HIGH) /
-               (float) (127u - SMOOTH_FOLD_DEAD_ZONE_HIGH);
-    }
-    return 0.0f;
-}
-
-static void timecode_synth_apply_pending_controls(void)
-{
-    uint8_t controls[TIMECODE_SYNTH_CONTROL_COUNT];
-    uint8_t ratio_set;
-    uint8_t warp_algorithm;
-    uint32_t revision_before;
-    uint32_t revision_after;
-
-    do
-    {
-        revision_before = s_timecode_synth_control_revision;
-        __DMB();
-        for (uint32_t i = 0u; i < TIMECODE_SYNTH_CONTROL_COUNT; i++)
-        {
-            controls[i] = s_timecode_synth_control[i];
-        }
-        ratio_set = s_timecode_synth_ratio_set;
-        warp_algorithm = s_timecode_synth_warp_algorithm;
-        __DMB();
-        revision_after = s_timecode_synth_control_revision;
-    } while (revision_before != revision_after);
-
-    if (revision_after == s_timecode_synth_applied_revision)
-    {
-        return;
-    }
-
-    const float root_normalized =
-        timecode_synth_normalize_control(controls[TIMECODE_SYNTH_CONTROL_ROOT]);
-    const float root_hz = 27.5f * powf(2.0f, 4.0f * root_normalized);
-    const float morph =
-        timecode_synth_normalize_control(controls[TIMECODE_SYNTH_CONTROL_MORPH]);
-    const float slope = 0.1f + 0.8f *
-        timecode_synth_normalize_control(controls[TIMECODE_SYNTH_CONTROL_SLOPE]);
-    const float smooth_fold = timecode_synth_smooth_fold_from_control(
-        controls[TIMECODE_SYNTH_CONTROL_SMOOTH_FOLD]);
-    const float warp_amount =
-        timecode_synth_normalize_control(controls[TIMECODE_SYNTH_CONTROL_WARP_AMOUNT]);
-
-    for (uint32_t channel = 0u; channel < TIMECODE_SYNTH_CHANNEL_COUNT; channel++)
-    {
-        TimecodeOscillatorParameters_t parameters =
-            *timecode_oscillator_get_parameters(&s_timecode_oscillator[channel]);
-        parameters.root_hz        = root_hz;
-        parameters.morph          = morph;
-        parameters.slope          = slope;
-        parameters.smooth_fold    = smooth_fold;
-        parameters.ratio_set       = (TimecodeOscillatorRatioSet_t) ratio_set;
-        parameters.warp_algorithm = (TimecodeOscillatorWarpAlgorithm_t) warp_algorithm;
-        parameters.warp_amount    = warp_amount;
-        timecode_oscillator_set_parameters(&s_timecode_oscillator[channel], &parameters);
-    }
-
-    s_timecode_synth_applied_revision = revision_after;
-}
-
-static void timecode_synth_fifo_reset(TimecodeSynthFifo_t* fifo)
-{
-    fifo->write_index = 0u;
-    fifo->read_index  = 0u;
-    memset(fifo->samples, 0, sizeof(fifo->samples));
-}
-
-static uint32_t timecode_synth_fifo_used(TimecodeSynthFifo_t* fifo)
-{
-    uint32_t used = fifo->write_index - fifo->read_index;
-    if (used > TIMECODE_SYNTH_FIFO_FRAMES)
-    {
-        fifo->read_index = fifo->write_index;
-        used = 0u;
-    }
-    return used;
-}
-
-static void timecode_synth_fifo_push(TimecodeSynthFifo_t* fifo,
-                                     const int32_t* samples,
-                                     uint32_t frame_count)
-{
-    if (frame_count > TIMECODE_SYNTH_FIFO_FRAMES)
-    {
-        samples += frame_count - TIMECODE_SYNTH_FIFO_FRAMES;
-        frame_count = TIMECODE_SYNTH_FIFO_FRAMES;
-    }
-
-    const uint32_t used = timecode_synth_fifo_used(fifo);
-    const uint32_t free = TIMECODE_SYNTH_FIFO_FRAMES - used;
-    if (frame_count > free)
-    {
-        const uint32_t drop_frames = frame_count - free;
-        fifo->read_index += drop_frames;
-        fifo->overflow_frames += drop_frames;
-    }
-
-    for (uint32_t frame = 0u; frame < frame_count; frame++)
-    {
-        fifo->samples[fifo->write_index & (TIMECODE_SYNTH_FIFO_FRAMES - 1u)] = samples[frame];
-        fifo->write_index++;
-    }
-}
-
-static int32_t timecode_synth_fifo_pop(TimecodeSynthFifo_t* fifo)
-{
-    if (timecode_synth_fifo_used(fifo) == 0u)
-    {
-        fifo->underrun_frames++;
-        return 0;
-    }
-
-    const int32_t sample = fifo->samples[fifo->read_index & (TIMECODE_SYNTH_FIFO_FRAMES - 1u)];
-    fifo->read_index++;
-    return sample;
-}
-
-static void timecode_synth_reset_for_sample_rate(uint32_t sample_rate_hz)
-{
-    for (uint32_t channel = 0u; channel < TIMECODE_SYNTH_CHANNEL_COUNT; channel++)
-    {
-        timecode_oscillator_init(&s_timecode_oscillator[channel], sample_rate_hz);
-        timecode_oscillator_set_enabled(&s_timecode_oscillator[channel],
-                                        s_timecode_synth_active[channel]);
-        timecode_synth_fifo_reset(&s_timecode_synth_fifo[channel]);
-    }
-    s_timecode_synth_applied_revision = 0u;
-}
-
-static void timecode_synth_initialize(uint32_t sample_rate_hz)
-{
-    for (uint32_t channel = 0u; channel < TIMECODE_SYNTH_CHANNEL_COUNT; channel++)
-    {
-        s_timecode_synth_active[channel] = false;
-        s_timecode_synth_fifo[channel].overflow_frames = 0u;
-        s_timecode_synth_fifo[channel].underrun_frames = 0u;
-    }
-    timecode_synth_reset_for_sample_rate(sample_rate_hz);
-}
-
-static void timecode_synth_update_modes(void)
-{
-    timecode_synth_apply_pending_controls();
-
-    const bool requested[TIMECODE_SYNTH_CHANNEL_COUNT] = {
-        get_current_ch1_input_mode() == UI_INPUT_MODE_SYNTH,
-        get_current_ch2_input_mode() == UI_INPUT_MODE_SYNTH,
-    };
-
-    for (uint32_t channel = 0u; channel < TIMECODE_SYNTH_CHANNEL_COUNT; channel++)
-    {
-        if (requested[channel] == s_timecode_synth_active[channel])
-        {
-            continue;
-        }
-
-        s_timecode_synth_active[channel] = requested[channel];
-        timecode_synth_fifo_reset(&s_timecode_synth_fifo[channel]);
-        timecode_oscillator_set_enabled(&s_timecode_oscillator[channel], requested[channel]);
-    }
-}
-
-static void timecode_synth_process_rx_half(uint32_t index0)
-{
-    const int32_t* input = stereo_in_buf + index0;
-    for (uint32_t channel = 0u; channel < TIMECODE_SYNTH_CHANNEL_COUNT; channel++)
-    {
-        if (!s_timecode_synth_active[channel])
-        {
-            continue;
-        }
-
-        const uint32_t channel_offset = channel * 2u;
-        timecode_oscillator_process_interleaved(&s_timecode_oscillator[channel],
-                                                input + channel_offset,
-                                                input + channel_offset + 1u,
-                                                AUDIO_RING_FRAME_WORDS,
-                                                s_timecode_synth_block[channel],
-                                                TIMECODE_SYNTH_BLOCK_FRAMES);
-        timecode_synth_fifo_push(&s_timecode_synth_fifo[channel],
-                                 s_timecode_synth_block[channel],
-                                 TIMECODE_SYNTH_BLOCK_FRAMES);
-    }
-}
-
-static void timecode_synth_overlay_tx_half(uint32_t index0)
-{
-    int32_t* output = stereo_out_buf + index0;
-    const uint32_t frame_count = (SAI_TX_BUF_SIZE / 2u) / AUDIO_RING_FRAME_WORDS;
-
-    for (uint32_t channel = 0u; channel < TIMECODE_SYNTH_CHANNEL_COUNT; channel++)
-    {
-        if (!s_timecode_synth_active[channel])
-        {
-            continue;
-        }
-
-        const uint32_t channel_offset = channel * 2u;
-        for (uint32_t frame = 0u; frame < frame_count; frame++)
-        {
-            const int32_t sample = timecode_synth_fifo_pop(&s_timecode_synth_fifo[channel]);
-            output[frame * AUDIO_RING_FRAME_WORDS + channel_offset] = sample;
-            output[frame * AUDIO_RING_FRAME_WORDS + channel_offset + 1u] = sample;
-        }
-    }
-}
-#endif
-
-void audio_control_set_timecode_synth_control(TimecodeSynthControl_t control, uint8_t value)
-{
-#if ENABLE_TIMECODE_OSCILLATOR
-    if ((uint32_t) control >= TIMECODE_SYNTH_CONTROL_COUNT)
-    {
-        return;
-    }
-
-    if (value > 127u)
-    {
-        value = 127u;
-    }
-
-    if (s_timecode_synth_control[control] == value)
-    {
-        return;
-    }
-
-    s_timecode_synth_control[control] = value;
-    __DMB();
-    s_timecode_synth_control_revision++;
-#else
-    (void) control;
-    (void) value;
-#endif
-}
-
-void audio_control_set_timecode_synth_ratio_set(TimecodeOscillatorRatioSet_t ratio_set)
-{
-#if ENABLE_TIMECODE_OSCILLATOR
-    if ((uint32_t) ratio_set > TIMECODE_RATIO_CHORD ||
-        s_timecode_synth_ratio_set == (uint8_t) ratio_set)
-    {
-        return;
-    }
-
-    s_timecode_synth_ratio_set = (uint8_t) ratio_set;
-    __DMB();
-    s_timecode_synth_control_revision++;
-#else
-    (void) ratio_set;
-#endif
-}
-
-void audio_control_set_timecode_synth_warp_algorithm(TimecodeOscillatorWarpAlgorithm_t warp_algorithm)
-{
-#if ENABLE_TIMECODE_OSCILLATOR
-    if ((uint32_t) warp_algorithm > TIMECODE_WARP_COMPARATOR ||
-        s_timecode_synth_warp_algorithm == (uint8_t) warp_algorithm)
-    {
-        return;
-    }
-
-    s_timecode_synth_warp_algorithm = (uint8_t) warp_algorithm;
-    __DMB();
-    s_timecode_synth_control_revision++;
-#else
-    (void) warp_algorithm;
-#endif
-}
-
-TimecodeOscillatorRatioSet_t audio_control_get_timecode_synth_ratio_set(void)
-{
-#if ENABLE_TIMECODE_OSCILLATOR
-    return (TimecodeOscillatorRatioSet_t) s_timecode_synth_ratio_set;
-#else
-    return TIMECODE_RATIO_OCTAVE;
-#endif
-}
-
-TimecodeOscillatorWarpAlgorithm_t audio_control_get_timecode_synth_warp_algorithm(void)
-{
-#if ENABLE_TIMECODE_OSCILLATOR
-    return (TimecodeOscillatorWarpAlgorithm_t) s_timecode_synth_warp_algorithm;
-#else
-    return TIMECODE_WARP_CROSSFOLD;
-#endif
-}
-
 // Speaker data size received in the last frame
 uint16_t spk_data_size;
 
@@ -602,9 +256,7 @@ void reset_audio_buffer(void)
 {
     ui_control_reset_state();
 
-#if ENABLE_TIMECODE_OSCILLATOR
-    timecode_synth_initialize(current_sample_rate);
-#endif
+    timecode_synth_init(current_sample_rate);
 
     for (uint16_t i = 0; i < CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ / 4; i++)
     {
@@ -662,9 +314,9 @@ void AUDIO_LoadAndApplyRoutingFromEEPROM(void)
 
         if (ui_control_apply_persist_state(&ui_state))
         {
-            audio_control_set_timecode_synth_ratio_set(
+            timecode_synth_set_ratio_set(
                 (TimecodeOscillatorRatioSet_t) cfg.timecode_synth_ratio_set);
-            audio_control_set_timecode_synth_warp_algorithm(
+            timecode_synth_set_warp_algorithm(
                 (TimecodeOscillatorWarpAlgorithm_t) cfg.timecode_synth_warp_algorithm);
             SEGGER_RTT_printf(0,
                               "EEPROM routing applied: CH1=%u CH2=%u CH_FADER_A=%u CH_FADER_B=%u CH_FADER_POST=%u RTN=%u HP=%u MODE1=%u MODE2=%u DVS_DELAY_MS=%u AUX2=%u AUX3=%u REVERSE_A=%u REVERSE_B=%u CURVE_WIDTH_A=%.4f CURVE_WIDTH_B=%.4f RATIO=%u WARP=%u\r\n",
@@ -713,9 +365,9 @@ void AUDIO_LoadAndApplyRoutingFromEEPROM(void)
         ui_state.current_ch_fader_curve_width_a = cfg.current_ch_fader_curve_width_a;
         ui_state.current_ch_fader_curve_width_b = cfg.current_ch_fader_curve_width_b;
         (void)ui_control_apply_persist_state(&ui_state);
-        audio_control_set_timecode_synth_ratio_set(
+        timecode_synth_set_ratio_set(
             (TimecodeOscillatorRatioSet_t) cfg.timecode_synth_ratio_set);
-        audio_control_set_timecode_synth_warp_algorithm(
+        timecode_synth_set_warp_algorithm(
             (TimecodeOscillatorWarpAlgorithm_t) cfg.timecode_synth_warp_algorithm);
 
         if (EEPROM_SaveConfig(&hi2c2, &cfg) == HAL_OK)
@@ -1460,9 +1112,9 @@ static inline void fill_tx_half(uint32_t index0)
         {
             memset(stereo_out_buf + index0, 0, n * sizeof(int32_t));
             audio_tx_diagnostics_record_event(diagnostic_event_flags, used);
-#if ENABLE_TIMECODE_OSCILLATOR
-            timecode_synth_overlay_tx_half(index0);
-#endif
+            timecode_synth_render_output(stereo_out_buf + index0,
+                                         AUDIO_RING_FRAME_WORDS,
+                                         (SAI_TX_BUF_SIZE / 2u) / AUDIO_RING_FRAME_WORDS);
             return;
         }
         consume_words = ((uint32_t) used / frame_words) * frame_words;
@@ -1470,9 +1122,9 @@ static inline void fill_tx_half(uint32_t index0)
         {
             memset(stereo_out_buf + index0, 0, n * sizeof(int32_t));
             audio_tx_diagnostics_record_event(diagnostic_event_flags, used);
-#if ENABLE_TIMECODE_OSCILLATOR
-            timecode_synth_overlay_tx_half(index0);
-#endif
+            timecode_synth_render_output(stereo_out_buf + index0,
+                                         AUDIO_RING_FRAME_WORDS,
+                                         (SAI_TX_BUF_SIZE / 2u) / AUDIO_RING_FRAME_WORDS);
             return;
         }
     }
@@ -1483,9 +1135,9 @@ static inline void fill_tx_half(uint32_t index0)
         // リセットして無音で埋める
         sai_transmit_index = sai_tx_rng_buf_index;
         memset(stereo_out_buf + index0, 0, n * sizeof(int32_t));
-#if ENABLE_TIMECODE_OSCILLATOR
-        timecode_synth_overlay_tx_half(index0);
-#endif
+        timecode_synth_render_output(stereo_out_buf + index0,
+                                     AUDIO_RING_FRAME_WORDS,
+                                     (SAI_TX_BUF_SIZE / 2u) / AUDIO_RING_FRAME_WORDS);
         return;
     }
 
@@ -1534,9 +1186,9 @@ static inline void fill_tx_half(uint32_t index0)
     {
         memset(stereo_out_buf + index0, 0, n * sizeof(int32_t));
         audio_tx_diagnostics_record_event(diagnostic_event_flags, used);
-#if ENABLE_TIMECODE_OSCILLATOR
-        timecode_synth_overlay_tx_half(index0);
-#endif
+        timecode_synth_render_output(stereo_out_buf + index0,
+                                     AUDIO_RING_FRAME_WORDS,
+                                     (SAI_TX_BUF_SIZE / 2u) / AUDIO_RING_FRAME_WORDS);
         return;
     }
 
@@ -1588,9 +1240,9 @@ static inline void fill_tx_half(uint32_t index0)
     {
         audio_tx_diagnostics_record_event(diagnostic_event_flags, used);
     }
-#if ENABLE_TIMECODE_OSCILLATOR
-    timecode_synth_overlay_tx_half(index0);
-#endif
+    timecode_synth_render_output(stereo_out_buf + index0,
+                                 AUDIO_RING_FRAME_WORDS,
+                                 (SAI_TX_BUF_SIZE / 2u) / AUDIO_RING_FRAME_WORDS);
 }
 
 void copybuf_ring2sai(void)
@@ -1665,9 +1317,9 @@ static inline void fill_rx_half(uint32_t index0)
         return;
     }
 
-#if ENABLE_TIMECODE_OSCILLATOR
-    timecode_synth_process_rx_half(index0);
-#endif
+    timecode_synth_process_input(stereo_in_buf + index0,
+                                 AUDIO_RING_FRAME_WORDS,
+                                 (SAI_RX_BUF_SIZE / 2u) / AUDIO_RING_FRAME_WORDS);
 
     int32_t used = (int32_t) (sai_rx_rng_buf_index - sai_receive_index);
     if (used < 0)
@@ -1830,12 +1482,8 @@ static void copybuf_ring2usb_and_send(void)
     if (usb_bytes > sizeof(usb_out_buf))
         return;
 
-    bool send_ch1_to_usb = true;
-    bool send_ch2_to_usb = true;
-#if ENABLE_TIMECODE_OSCILLATOR
-    send_ch1_to_usb = !s_timecode_synth_active[0];
-    send_ch2_to_usb = !s_timecode_synth_active[1];
-#endif
+    const bool send_ch1_to_usb = !timecode_synth_is_channel_enabled(0u);
+    const bool send_ch2_to_usb = !timecode_synth_is_channel_enabled(1u);
 
     for (uint32_t f = 0; f < frames; f++)
     {
@@ -2187,9 +1835,11 @@ void audio_task(void)
     }
     else
     {
-#if ENABLE_TIMECODE_OSCILLATOR
-        timecode_synth_update_modes();
-#endif
+        timecode_synth_update();
+        timecode_synth_set_channel_enabled(
+            0u, get_current_ch1_input_mode() == UI_INPUT_MODE_SYNTH);
+        timecode_synth_set_channel_enabled(
+            1u, get_current_ch2_input_mode() == UI_INPUT_MODE_SYNTH);
 
         bool usb_rx_event = false;
         bool usb_tx_event = false;
@@ -2394,9 +2044,7 @@ void AUDIO_SAI_Reset_ForNewRate(void)
     memset(stereo_in_buf, 0, sizeof(stereo_in_buf));
     memset(usb_in_buf, 0, sizeof(usb_in_buf));
     memset(usb_out_buf, 0, sizeof(usb_out_buf));
-#if ENABLE_TIMECODE_OSCILLATOR
     timecode_synth_reset_for_sample_rate(new_hz);
-#endif
     __DSB();
 
 #if RESET_FROM_FW

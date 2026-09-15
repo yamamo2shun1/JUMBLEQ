@@ -9,7 +9,6 @@
 #define INC_AUDIO_CONTROL_H_
 
 #include "main.h"
-#include "timecode_oscillator.h"
 #include "ui_control.h"
 
 // バッファサイズ設定 - 小さいほど低レイテンシーだがアンダーラン/オーバーランのリスク増
@@ -26,22 +25,6 @@
 // 0: disable ui_control_task() DSP writes (noise root-cause test mode)
 // 1: enable normal runtime control updates
 #define ENABLE_DSP_RUNTIME_CONTROL 1
-
-// Timecode入力を相対速度として解析し、SYNTHモード時に発音する。
-// 0にすると既存のUSB/SAI経路だけで動作する。
-#ifndef ENABLE_TIMECODE_OSCILLATOR
-#define ENABLE_TIMECODE_OSCILLATOR 1
-#endif
-
-typedef enum
-{
-    TIMECODE_SYNTH_CONTROL_ROOT = 0,
-    TIMECODE_SYNTH_CONTROL_MORPH,
-    TIMECODE_SYNTH_CONTROL_SLOPE,
-    TIMECODE_SYNTH_CONTROL_SMOOTH_FOLD,
-    TIMECODE_SYNTH_CONTROL_WARP_AMOUNT,
-    TIMECODE_SYNTH_CONTROL_COUNT,
-} TimecodeSynthControl_t;
 
 // USB OUT -> SAI TX経路の軽量診断。RTT出力は行わず、デバッガから参照する。
 enum
@@ -93,11 +76,6 @@ uint32_t get_rx_blink_interval_ms(void);
 uint32_t get_current_sample_rate_hz(void);
 void reset_audio_buffer(void);
 void AUDIO_LoadAndApplyRoutingFromEEPROM(void);
-void audio_control_set_timecode_synth_control(TimecodeSynthControl_t control, uint8_t value);
-void audio_control_set_timecode_synth_ratio_set(TimecodeOscillatorRatioSet_t ratio_set);
-void audio_control_set_timecode_synth_warp_algorithm(TimecodeOscillatorWarpAlgorithm_t warp_algorithm);
-TimecodeOscillatorRatioSet_t audio_control_get_timecode_synth_ratio_set(void);
-TimecodeOscillatorWarpAlgorithm_t audio_control_get_timecode_synth_warp_algorithm(void);
 
 void AUDIO_Init_AK4619(uint32_t hz);
 void AUDIO_Init_ADAU1466(uint32_t hz);

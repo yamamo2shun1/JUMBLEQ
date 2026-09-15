@@ -5,6 +5,7 @@
 
 #include "adau1466.h"
 #include "audio_control.h"
+#include "timecode_synth.h"
 #include "ui_control.h"
 
 typedef struct
@@ -181,9 +182,9 @@ void EEPROM_ConfigCaptureCurrent(EEPROM_DeviceConfig_t* cfg)
         cfg->ch_fader_reverse_flags |= EEPROM_CFG_FLAG_CH_FADER_REVERSE_B;
     }
     cfg->timecode_synth_ratio_set =
-        (uint8_t) audio_control_get_timecode_synth_ratio_set();
+        (uint8_t) timecode_synth_get_ratio_set();
     cfg->timecode_synth_warp_algorithm =
-        (uint8_t) audio_control_get_timecode_synth_warp_algorithm();
+        (uint8_t) timecode_synth_get_warp_algorithm();
 }
 
 HAL_StatusTypeDef EEPROM_CheckConnection(I2C_HandleTypeDef* hi2c)

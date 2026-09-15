@@ -8,6 +8,7 @@
 #include "ui_control_internal.h"
 
 #include "audio_control.h"
+#include "timecode_synth.h"
 
 #include "adc.h"
 #include "eeprom.h"
@@ -1661,14 +1662,14 @@ static void apply_pot_value(uint8_t channel, uint16_t value)
     switch (channel)
     {
     case POT_CH_CC0:
-        audio_control_set_timecode_synth_control(TIMECODE_SYNTH_CONTROL_ROOT, (uint8_t) value);
+        timecode_synth_set_control(TIMECODE_SYNTH_CONTROL_ROOT, (uint8_t) value);
         if (!synth_mode_active)
         {
             send_control_change(0, value, 0);
         }
         break;
     case POT_CH_CC1:
-        audio_control_set_timecode_synth_control(TIMECODE_SYNTH_CONTROL_MORPH, (uint8_t) value);
+        timecode_synth_set_control(TIMECODE_SYNTH_CONTROL_MORPH, (uint8_t) value);
         if (!synth_mode_active)
         {
             send_control_change(1, value, 0);
@@ -1678,21 +1679,21 @@ static void apply_pot_value(uint8_t channel, uint16_t value)
         control_input_from_ch1_gain(value);
         break;
     case POT_CH_CC2:
-        audio_control_set_timecode_synth_control(TIMECODE_SYNTH_CONTROL_SLOPE, (uint8_t) value);
+        timecode_synth_set_control(TIMECODE_SYNTH_CONTROL_SLOPE, (uint8_t) value);
         if (!synth_mode_active)
         {
             send_control_change(2, value, 0);
         }
         break;
     case POT_CH_CC3:
-        audio_control_set_timecode_synth_control(TIMECODE_SYNTH_CONTROL_SMOOTH_FOLD, (uint8_t) value);
+        timecode_synth_set_control(TIMECODE_SYNTH_CONTROL_SMOOTH_FOLD, (uint8_t) value);
         if (!synth_mode_active)
         {
             send_control_change(3, value, 0);
         }
         break;
     case POT_CH_CC4:
-        audio_control_set_timecode_synth_control(TIMECODE_SYNTH_CONTROL_WARP_AMOUNT, (uint8_t) value);
+        timecode_synth_set_control(TIMECODE_SYNTH_CONTROL_WARP_AMOUNT, (uint8_t) value);
         if (!synth_mode_active)
         {
             send_control_change(4, value, 0);
@@ -3085,13 +3086,13 @@ static void midi_program_apply_ch_fader_aux_assignment(uint8_t arg)
 
 static void midi_program_apply_timecode_synth_ratio_set(uint8_t arg)
 {
-    audio_control_set_timecode_synth_ratio_set((TimecodeOscillatorRatioSet_t) arg);
+    timecode_synth_set_ratio_set((TimecodeOscillatorRatioSet_t) arg);
     SEGGER_RTT_printf(0, "SYNTH ratio set: %u\r\n", (unsigned) arg);
 }
 
 static void midi_program_apply_timecode_synth_warp_algorithm(uint8_t arg)
 {
-    audio_control_set_timecode_synth_warp_algorithm((TimecodeOscillatorWarpAlgorithm_t) arg);
+    timecode_synth_set_warp_algorithm((TimecodeOscillatorWarpAlgorithm_t) arg);
     SEGGER_RTT_printf(0, "SYNTH warp algorithm: %u\r\n", (unsigned) arg);
 }
 
