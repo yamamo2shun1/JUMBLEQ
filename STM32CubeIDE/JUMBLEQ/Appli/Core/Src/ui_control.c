@@ -23,6 +23,9 @@
 
 #include "adau1466.h"
 
+#include "FreeRTOS.h"
+#include "task.h"
+
 // Aggregated UI runtime state (ADC-derived controls + persisted selections).
 typedef struct
 {
@@ -615,6 +618,69 @@ void start_audio_control(void)
 bool is_started_audio_control(void)
 {
     return s_ui.is_start_audio_control;
+}
+
+// OLED Task専用。owner状態の軽量copyだけをscheduler停止区間で行い、
+// dB/CC変換とsnapshot組立てはtask切替再開後に行う。
+bool ui_control_get_display_snapshot(UI_DisplaySnapshot_t* snapshot)
+{
+    if (snapshot == NULL)
+    {
+        return false;
+    }
+
+    UI_PotDisplayState_t pot_state;
+    UI_RoutingDisplayState_t routing_state;
+    UI_ChFaderDisplayState_t ch_fader_state;
+    UI_Uf2DisplayState_t uf2_state;
+    bool curve_edit_mode;
+    uint32_t sample_rate_hz;
+
+    vTaskSuspendAll();
+    ui_pot_control_capture_display_state(&pot_state);
+    ui_routing_capture_display_state(&routing_state);
+    ui_ch_fader_capture_display_state(&ch_fader_state);
+    ui_uf2_control_capture_display_state(&uf2_state);
+    curve_edit_mode = s_ui.curve_edit_mode;
+    sample_rate_hz  = get_current_sample_rate_hz();
+    (void) xTaskResumeAll();
+
+    UI_DisplaySnapshot_t local;
+    local.curve_edit_mode        = curve_edit_mode;
+    local.uf2_transition_state   = uf2_state.state;
+    local.uf2_seconds_remaining  = uf2_state.seconds_remaining;
+
+    local.sample_rate_hz = sample_rate_hz;
+    local.ch1_input_db   = convert_pot2dB_int(pot_state.ch1_input);
+    local.ch2_input_db   = convert_pot2dB_int(pot_state.ch2_input);
+    local.ch1_output_db  = convert_pot2dB_int(pot_state.ch1_output);
+    local.ch2_output_db  = convert_pot2dB_int(pot_state.ch2_output);
+    local.return_db      = convert_pot2dB_int(pot_state.return_input);
+    local.hp_output_db   = convert_pot2dB_int(pot_state.hp_output);
+    local.return_enabled = routing_state.return_enabled;
+
+    local.ch_fader_curve_a_cc   = ui_ch_fader_curve_width_to_midi_cc(ch_fader_state.curve_width_a);
+    local.ch_fader_curve_b_cc   = ui_ch_fader_curve_width_to_midi_cc(ch_fader_state.curve_width_b);
+    local.ch_fader_dvs_delay_ms = ch_fader_state.dvs_delay_ms;
+    local.dvs_enabled           = routing_state.dvs_enabled;
+    local.ch_fader_reverse_a    = ch_fader_state.reverse_a;
+    local.ch_fader_reverse_b    = ch_fader_state.reverse_b;
+
+    local.input_source_a_text = routing_state.input_source_a_text;
+    local.input_source_b_text = routing_state.input_source_b_text;
+    local.input_type_a_text   = routing_state.input_type_a_text;
+    local.input_type_b_text   = routing_state.input_type_b_text;
+    local.thru_source_text    = routing_state.thru_source_text;
+    local.return_source_text  = routing_state.return_source_text;
+    local.hp_source_text      = routing_state.hp_source_text;
+
+    local.input_source_a_mode_visible = routing_state.input_source_a_mode_visible;
+    local.input_source_a_mode         = routing_state.input_source_a_mode;
+    local.input_source_b_mode_visible = routing_state.input_source_b_mode_visible;
+    local.input_source_b_mode         = routing_state.input_source_b_mode;
+
+    *snapshot = local;
+    return true;
 }
 
 void ui_control_get_persist_state(UI_ControlPersistState_t* state)

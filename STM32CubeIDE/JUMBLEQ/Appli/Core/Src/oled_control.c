@@ -10,7 +10,7 @@
 #include "oled_control.h"
 #include "app_version.h"
 
-#include "audio_control.h"
+#include "ui_control.h"
 #include "ssd1306_fonts.h"
 #include "cmsis_os2.h"
 #include <stdbool.h>
@@ -331,9 +331,13 @@ void OLED_ShowInitStatus(const char* text)
 
 void OLED_UpdateTask(void)
 {
-    const bool curve_edit_mode       = ui_control_is_curve_edit_mode_enabled();
-    const UI_Uf2TransitionState_t uf2_transition_state = ui_control_get_uf2_transition_state();
-    const uint8_t uf2_seconds_remaining = ui_control_get_uf2_seconds_remaining();
+    UI_DisplaySnapshot_t snapshot;
+
+    if (!ui_control_get_display_snapshot(&snapshot))
+    {
+        return;
+    }
+
     static bool prev_curve_edit_mode = false;
     static UI_Uf2TransitionState_t prev_uf2_transition_state = UI_UF2_TRANSITION_IDLE;
     static uint8_t prev_uf2_seconds_remaining = 0xFFU;
@@ -371,7 +375,7 @@ void OLED_UpdateTask(void)
     uint8_t dirty_start_page            = 0xFF;
     uint8_t dirty_end_page              = 0;
 
-    if (uf2_transition_state == UI_UF2_TRANSITION_CLEARING_DISPLAYS)
+    if (snapshot.uf2_transition_state == UI_UF2_TRANSITION_CLEARING_DISPLAYS)
     {
         if (prev_uf2_transition_state != UI_UF2_TRANSITION_CLEARING_DISPLAYS)
         {
@@ -386,14 +390,15 @@ void OLED_UpdateTask(void)
         return;
     }
 
-    if (uf2_transition_state != UI_UF2_TRANSITION_IDLE)
+    if (snapshot.uf2_transition_state != UI_UF2_TRANSITION_IDLE)
     {
-        if ((uf2_transition_state != prev_uf2_transition_state) ||
-            (uf2_seconds_remaining != prev_uf2_seconds_remaining))
+        if ((snapshot.uf2_transition_state != prev_uf2_transition_state) ||
+            (snapshot.uf2_seconds_remaining != prev_uf2_seconds_remaining))
         {
-            draw_main_uf2_transition(uf2_transition_state, uf2_seconds_remaining);
-            prev_uf2_transition_state = uf2_transition_state;
-            prev_uf2_seconds_remaining = uf2_seconds_remaining;
+            draw_main_uf2_transition(snapshot.uf2_transition_state,
+                                     snapshot.uf2_seconds_remaining);
+            prev_uf2_transition_state = snapshot.uf2_transition_state;
+            prev_uf2_seconds_remaining = snapshot.uf2_seconds_remaining;
         }
         return;
     }
@@ -425,12 +430,12 @@ void OLED_UpdateTask(void)
         dirty                        = true;
         dirty_start_page             = 0U;
         dirty_end_page               = (uint8_t) ((MAIN_OLED_HEIGHT / 8U) - 1U);
-        prev_curve_edit_mode         = curve_edit_mode;
+        prev_curve_edit_mode         = snapshot.curve_edit_mode;
         prev_uf2_transition_state    = UI_UF2_TRANSITION_IDLE;
         prev_uf2_seconds_remaining   = 0xFFU;
     }
 
-    if (curve_edit_mode != prev_curve_edit_mode)
+    if (snapshot.curve_edit_mode != prev_curve_edit_mode)
     {
         main_oled_Fill(Black);
         memset(prev_line1_sr, 0, sizeof(prev_line1_sr));
@@ -444,27 +449,27 @@ void OLED_UpdateTask(void)
         dirty                = true;
         dirty_start_page     = 0;
         dirty_end_page       = (uint8_t) ((MAIN_OLED_HEIGHT / 8U) - 1U);
-        prev_curve_edit_mode = curve_edit_mode;
+        prev_curve_edit_mode = snapshot.curve_edit_mode;
     }
 
-    if (!curve_edit_mode)
+    if (!snapshot.curve_edit_mode)
     {
         bool main_redraw = dirty;
-        uint32_t sample_rate_hz = get_current_sample_rate_hz();
-        const char* return_src = nonnull_str(get_current_return_src_str());
+        const uint32_t sample_rate_hz = snapshot.sample_rate_hz;
+        const char* return_src = nonnull_str(snapshot.return_source_text);
         snprintf(line1_sr, sizeof(line1_sr), "%luk", (unsigned long) (sample_rate_hz / 1000U));
-        snprintf(line1_ch2, sizeof(line1_ch2), "1:%3d 2:%3d", get_current_ch1_out_db(), get_current_ch2_out_db());
+        snprintf(line1_ch2, sizeof(line1_ch2), "1:%3d 2:%3d", snapshot.ch1_output_db, snapshot.ch2_output_db);
         // MAIN OLED shows both Out and In as CH1 and CH2.
-        snprintf(line2_ch1, sizeof(line2_ch1), "    IN 1:%3d 2:%3d", get_current_ch1_in_db(), get_current_ch2_in_db());
-        if (get_current_return_enabled())
+        snprintf(line2_ch1, sizeof(line2_ch1), "    IN 1:%3d 2:%3d", snapshot.ch1_input_db, snapshot.ch2_input_db);
+        if (snapshot.return_enabled)
         {
-            snprintf(line3_sr, sizeof(line3_sr), "RTN|%-3s:%3d ", return_src, get_current_return_db());
+            snprintf(line3_sr, sizeof(line3_sr), "RTN|%-3s:%3d ", return_src, snapshot.return_db);
         }
         else
         {
             snprintf(line3_sr, sizeof(line3_sr), "RTN|%-3s:--- ", return_src);
         }
-        snprintf(line3_hp, sizeof(line3_hp), ":%3d", get_current_hp_out_db());
+        snprintf(line3_hp, sizeof(line3_hp), ":%3d", snapshot.hp_output_db);
 
         if ((strcmp(prev_line1_sr, line1_sr) != 0) ||
             (strcmp(prev_line1_ch2, line1_ch2) != 0) ||
@@ -519,15 +524,15 @@ void OLED_UpdateTask(void)
     else
     {
         bool main_redraw = dirty;
-        const uint8_t curve_a_cc = ui_control_get_ch_fader_curve_a_cc();
-        const uint8_t curve_b_cc = ui_control_get_ch_fader_curve_b_cc();
-        const bool dvs_enabled = get_current_ch1_dvs_enabled() || get_current_ch2_dvs_enabled();
+        const uint8_t curve_a_cc = snapshot.ch_fader_curve_a_cc;
+        const uint8_t curve_b_cc = snapshot.ch_fader_curve_b_cc;
+        const bool dvs_enabled = snapshot.dvs_enabled;
         if (dvs_enabled)
         {
             snprintf(line_edit_mode,
                      sizeof(line_edit_mode),
                      "FADER DLY: %ums",
-                     (unsigned) ui_control_get_ch_fader_dvs_delay_ms());
+                     (unsigned) snapshot.ch_fader_dvs_delay_ms);
         }
         else
         {
@@ -570,12 +575,12 @@ void OLED_UpdateTask(void)
         main_oled_UpdateScreenPages(dirty_start_page, dirty_end_page);
     }
 
-    const char* srcA  = nonnull_str(get_current_input_srcA_str());
-    const char* srcB  = nonnull_str(get_current_input_srcB_str());
-    const char* typeA = nonnull_str(get_current_input_typeA_str());
-    const char* typeB = nonnull_str(get_current_input_typeB_str());
-    const char* srcP  = nonnull_str(get_current_input_srcP_str());
-    const char* hpSrc = nonnull_str(get_current_hp_out_src_str());
+    const char* srcA  = nonnull_str(snapshot.input_source_a_text);
+    const char* srcB  = nonnull_str(snapshot.input_source_b_text);
+    const char* typeA = nonnull_str(snapshot.input_type_a_text);
+    const char* typeB = nonnull_str(snapshot.input_type_b_text);
+    const char* srcP  = nonnull_str(snapshot.thru_source_text);
+    const char* hpSrc = nonnull_str(snapshot.hp_source_text);
 
     bool sub_dirty               = false;
     uint8_t sub_dirty_start_page = 0xFF;
@@ -602,24 +607,20 @@ void OLED_UpdateTask(void)
     update_sub_text_block(prev_typeA, sizeof(prev_typeA), typeA, 0, 30, 55, 39, 1, 30, 3, 4, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
     update_sub_text_block(prev_typeB, sizeof(prev_typeB), typeB, 73, 30, 127, 39, 77, 30, 3, 4, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
     update_sub_bottom_status(prev_srcP, sizeof(prev_srcP), prev_hp_src, sizeof(prev_hp_src), srcP, hpSrc, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
-    update_sub_reverse_indicators(ui_control_is_ch_fader_reverse_a_enabled(),
-                                  ui_control_is_ch_fader_reverse_b_enabled(),
+    update_sub_reverse_indicators(snapshot.ch_fader_reverse_a,
+                                  snapshot.ch_fader_reverse_b,
                                   &prev_reverse_a,
                                   &prev_reverse_b,
                                   &sub_dirty,
                                   &sub_dirty_start_page,
                                   &sub_dirty_end_page);
 
-    uint8_t srcA_channel = get_current_input_srcA_channel();
-    bool srcA_show_mode = (srcA_channel != 0U);
-    UI_InputMode_t srcA_mode = (srcA_channel == 1U) ? get_current_ch1_input_mode()
-                                                    : ((srcA_channel == 2U) ? get_current_ch2_input_mode() : UI_INPUT_MODE_DISABLED);
+    bool srcA_show_mode = snapshot.input_source_a_mode_visible;
+    UI_InputMode_t srcA_mode = snapshot.input_source_a_mode;
     update_sub_input_mode_badge(srcA_show_mode, srcA_mode, 35, 5, &prev_modeA_show, &prev_modeA, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
 
-    uint8_t srcB_channel = get_current_input_srcB_channel();
-    bool srcB_show_mode = (srcB_channel != 0U);
-    UI_InputMode_t srcB_mode = (srcB_channel == 1U) ? get_current_ch1_input_mode()
-                                                    : ((srcB_channel == 2U) ? get_current_ch2_input_mode() : UI_INPUT_MODE_DISABLED);
+    bool srcB_show_mode = snapshot.input_source_b_mode_visible;
+    UI_InputMode_t srcB_mode = snapshot.input_source_b_mode;
     update_sub_input_mode_badge(srcB_show_mode, srcB_mode, 72, 5, &prev_modeB_show, &prev_modeB, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
 
     if (sub_dirty)

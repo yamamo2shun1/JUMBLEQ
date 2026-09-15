@@ -541,3 +541,35 @@ void ui_routing_reset(void)
     s_routing.current_ch1_input_mode = UI_INPUT_MODE_DISABLED;
     s_routing.current_ch2_input_mode = UI_INPUT_MODE_DISABLED;
 }
+
+// OLED表示用: 同一時点のrouting状態から導出した表示値。
+// 文字列は既存の文字列リテラルを指す。scheduler停止区間専用。
+void ui_routing_capture_display_state(UI_RoutingDisplayState_t* state)
+{
+    if (state == NULL)
+    {
+        return;
+    }
+
+    state->input_source_a_text = get_current_input_srcA_str();
+    state->input_source_b_text = get_current_input_srcB_str();
+    state->input_type_a_text   = get_current_input_typeA_str();
+    state->input_type_b_text   = get_current_input_typeB_str();
+    state->thru_source_text    = get_current_input_srcP_str();
+    state->return_source_text  = get_current_return_src_str();
+    state->hp_source_text      = get_current_hp_out_src_str();
+    state->return_enabled      = get_current_return_enabled();
+    state->dvs_enabled         = get_current_ch1_dvs_enabled() || get_current_ch2_dvs_enabled();
+
+    const uint8_t src_a_channel = get_current_input_srcA_channel();
+    state->input_source_a_mode_visible = (src_a_channel != 0U);
+    state->input_source_a_mode = (src_a_channel == 1U) ? get_current_ch1_input_mode()
+                                                       : ((src_a_channel == 2U) ? get_current_ch2_input_mode()
+                                                                                : UI_INPUT_MODE_DISABLED);
+
+    const uint8_t src_b_channel = get_current_input_srcB_channel();
+    state->input_source_b_mode_visible = (src_b_channel != 0U);
+    state->input_source_b_mode = (src_b_channel == 1U) ? get_current_ch1_input_mode()
+                                                       : ((src_b_channel == 2U) ? get_current_ch2_input_mode()
+                                                                                : UI_INPUT_MODE_DISABLED);
+}
