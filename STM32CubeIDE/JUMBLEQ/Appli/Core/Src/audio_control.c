@@ -32,14 +32,27 @@ enum
 
 extern DMA_QListTypeDef List_HPDMA1_Channel0;
 
-static volatile bool is_sr_changed = false;
-static volatile uint32_t current_sample_rate = 48000U;
+// サンプルレートの要求状態(USB Taskが更新)と適用状態(Audio Taskが更新)。
+typedef struct
+{
+    volatile uint32_t requested_hz;   // 最後に受理した要求値。適用完了前でも更新される
+    volatile bool change_pending;     // Audio Taskが処理すべき変更要求がある
+    uint32_t applied_hz;              // 最後にADAU1466切替が成功した値
+    bool applied_hz_valid;            // applied_hzをearly-return判定に使えるか
+} audio_sample_rate_state_t;
+
+static audio_sample_rate_state_t s_sample_rate = {
+    .requested_hz     = 48000U,
+    .change_pending   = false,
+    .applied_hz       = 48000U,
+    .applied_hz_valid = true,
+};
 
 void audio_control_request_sample_rate(uint32_t sample_rate_hz)
 {
-    current_sample_rate = sample_rate_hz;
+    s_sample_rate.requested_hz = sample_rate_hz;
     __DMB();
-    is_sr_changed = true;
+    s_sample_rate.change_pending = true;
     audio_transport_notify_task();
 }
 
@@ -48,8 +61,8 @@ static bool audio_sample_rate_change_take_pending(void)
     const uint32_t primask = __get_PRIMASK();
     __disable_irq();
 
-    const bool pending = is_sr_changed;
-    is_sr_changed = false;
+    const bool pending = s_sample_rate.change_pending;
+    s_sample_rate.change_pending = false;
 
     __set_PRIMASK(primask);
     return pending;
@@ -112,14 +125,14 @@ void AUDIO_LoadAndApplyRoutingFromEEPROM(void)
 
 uint32_t get_current_sample_rate_hz(void)
 {
-    return current_sample_rate;
+    return s_sample_rate.requested_hz;
 }
 
 void reset_audio_buffer(void)
 {
     ui_control_reset_state();
 
-    timecode_synth_init(current_sample_rate);
+    timecode_synth_init(s_sample_rate.requested_hz);
 
     audio_transport_reset_buffers();
 }
@@ -164,7 +177,7 @@ void audio_task(void)
         audio_task_last_tick  = now;
 
 #if AUDIO_DIAG_LOG
-        audio_diagnostics_log_periodic(current_sample_rate,
+        audio_diagnostics_log_periodic(s_sample_rate.requested_hz,
                                        audio_task_frequency,
                                        audio_transport_is_output_streaming(),
                                        audio_transport_tx_used_words());
@@ -187,18 +200,16 @@ void audio_task(void)
         timecode_synth_set_channel_enabled(
             1u, get_current_ch2_input_mode() == UI_INPUT_MODE_SYNTH);
 
-        audio_transport_service(current_sample_rate);
+        audio_transport_service(s_sample_rate.requested_hz);
     }
 }
 
 void AUDIO_SAI_Reset_ForNewRate(void)
 {
-    static uint32_t applied_hz = 48000U;
-    static bool applied_hz_valid = true;
-    const uint32_t new_hz = current_sample_rate;
+    const uint32_t new_hz = s_sample_rate.requested_hz;
     bool rate_switch_succeeded = true;
 
-    if (applied_hz_valid && (new_hz == applied_hz))
+    if (s_sample_rate.applied_hz_valid && (new_hz == s_sample_rate.applied_hz))
     {
         return;
     }
@@ -248,16 +259,16 @@ void AUDIO_SAI_Reset_ForNewRate(void)
         SEGGER_RTT_printf(0,
                           "[SAI] reset for %lu Hz (prev=%lu)\n",
                           (unsigned long) new_hz,
-                          (unsigned long) applied_hz);
-        applied_hz = new_hz;
-        applied_hz_valid = true;
+                          (unsigned long) s_sample_rate.applied_hz);
+        s_sample_rate.applied_hz = new_hz;
+        s_sample_rate.applied_hz_valid = true;
     }
     else
     {
-        applied_hz_valid = false;
+        s_sample_rate.applied_hz_valid = false;
         SEGGER_RTT_printf(0,
                           "[SAI] rate switch not finalized: requested=%lu last_applied=%lu\n",
                           (unsigned long) new_hz,
-                          (unsigned long) applied_hz);
+                          (unsigned long) s_sample_rate.applied_hz);
     }
 }
