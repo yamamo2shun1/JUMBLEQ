@@ -8,6 +8,10 @@
 #define UI_CONTROL_INTERNAL_H_
 
 #include "main.h"
+#include "ui_control.h"
+
+// 非破壊のpersist検証。DSP/codecへ書き込まず、UI状態も変更しない。
+bool ui_control_validate_persist_state(const UI_ControlPersistState_t* state);
 
 void ui_control_reset_state(void);
 void ui_control_set_adc_complete(bool complete);

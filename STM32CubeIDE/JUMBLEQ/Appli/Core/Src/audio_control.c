@@ -3,9 +3,9 @@
  *
  * Audio subsystem facade and Audio Task arbitration.
  *
- * Owns the applied sample-rate state, the EEPROM routing application and the
- * top-level Audio Task that applies USB requests. The UAC2 control plane
- * lives in audio_usb_control.c, realtime data movement in audio_transport.c.
+ * Owns the applied sample-rate state and the top-level Audio Task that applies
+ * USB requests. The UAC2 control plane lives in audio_usb_control.c, realtime
+ * data movement in audio_transport.c, EEPROM settings in eeprom_config.c.
  */
 
 #include "audio_control.h"
@@ -13,6 +13,7 @@
 #include "audio_diagnostics_internal.h"
 #include "audio_transport_internal.h"
 #include "audio_usb_control_internal.h"
+#include "eeprom_config_internal.h"
 #include "ui_control_internal.h"
 #include "timecode_synth.h"
 
@@ -54,56 +55,13 @@ static bool audio_sample_rate_change_take_pending(void)
     return pending;
 }
 
-static void audio_config_to_ui_persist_state(const EEPROM_DeviceConfig_t* cfg,
-                                             UI_ControlPersistState_t* ui_state)
-{
-    ui_state->current_ch1_input_type = cfg->current_ch1_input_type;
-    ui_state->current_ch2_input_type = cfg->current_ch2_input_type;
-    ui_state->current_ch_fader_a_assign     = cfg->current_ch_fader_a_assign;
-    ui_state->current_ch_fader_b_assign     = cfg->current_ch_fader_b_assign;
-    ui_state->current_ch_fader_post_assign  = cfg->current_ch_fader_post_assign;
-    ui_state->current_return_assign  = cfg->current_return_assign;
-    ui_state->current_hp_out_source  = cfg->current_hp_out_source;
-    ui_state->current_ch1_input_mode = cfg->current_ch1_input_mode;
-    ui_state->current_ch2_input_mode = cfg->current_ch2_input_mode;
-    ui_state->ch_fader_dvs_delay_ms = cfg->ch_fader_dvs_delay_ms;
-    ui_state->sensor2_aux_fade_down_assign = cfg->sensor2_aux_fade_down_assign;
-    ui_state->sensor3_aux_fade_down_assign = cfg->sensor3_aux_fade_down_assign;
-    ui_state->ch_fader_reverse_a =
-        (cfg->ch_fader_reverse_flags & EEPROM_CFG_FLAG_CH_FADER_REVERSE_A) != 0U;
-    ui_state->ch_fader_reverse_b =
-        (cfg->ch_fader_reverse_flags & EEPROM_CFG_FLAG_CH_FADER_REVERSE_B) != 0U;
-    ui_state->mag_out_as_note =
-        (cfg->mag_output_mode_flags & EEPROM_CFG_FLAG_MAG_OUT_AS_NOTE) != 0U;
-    ui_state->current_ch_fader_curve_width_a = cfg->current_ch_fader_curve_width_a;
-    ui_state->current_ch_fader_curve_width_b = cfg->current_ch_fader_curve_width_b;
-}
-
-static bool audio_apply_routing_config(const EEPROM_DeviceConfig_t* cfg,
-                                       UI_ControlPersistState_t* ui_state)
-{
-    audio_config_to_ui_persist_state(cfg, ui_state);
-    if (!ui_control_apply_persist_state(ui_state))
-    {
-        return false;
-    }
-
-    timecode_synth_set_ratio_set(
-        (TimecodeOscillatorRatioSet_t) cfg->timecode_synth_ratio_set);
-    timecode_synth_set_warp_algorithm(
-        (TimecodeOscillatorWarpAlgorithm_t) cfg->timecode_synth_warp_algorithm);
-
-    return true;
-}
-
 void AUDIO_LoadAndApplyRoutingFromEEPROM(void)
 {
     EEPROM_DeviceConfig_t cfg;
-    UI_ControlPersistState_t ui_state;
 
     if (EEPROM_LoadConfig(&hi2c2, &cfg) == HAL_OK)
     {
-        if (audio_apply_routing_config(&cfg, &ui_state))
+        if (eeprom_config_apply(&cfg))
         {
             SEGGER_RTT_printf(0,
                               "EEPROM routing applied: CH1=%u CH2=%u CH_FADER_A=%u CH_FADER_B=%u CH_FADER_POST=%u RTN=%u HP=%u MODE1=%u MODE2=%u DVS_DELAY_MS=%u AUX2=%u AUX3=%u REVERSE_A=%u REVERSE_B=%u CURVE_WIDTH_A=%.4f CURVE_WIDTH_B=%.4f RATIO=%u WARP=%u\r\n",
@@ -119,8 +77,8 @@ void AUDIO_LoadAndApplyRoutingFromEEPROM(void)
                               (unsigned)cfg.ch_fader_dvs_delay_ms,
                               (unsigned)cfg.sensor2_aux_fade_down_assign,
                               (unsigned)cfg.sensor3_aux_fade_down_assign,
-                              (unsigned)ui_state.ch_fader_reverse_a,
-                              (unsigned)ui_state.ch_fader_reverse_b,
+                              (unsigned)eeprom_config_is_ch_fader_reverse_a_enabled(&cfg),
+                              (unsigned)eeprom_config_is_ch_fader_reverse_b_enabled(&cfg),
                               (double)cfg.current_ch_fader_curve_width_a,
                               (double)cfg.current_ch_fader_curve_width_b,
                               (unsigned)cfg.timecode_synth_ratio_set,
@@ -130,9 +88,13 @@ void AUDIO_LoadAndApplyRoutingFromEEPROM(void)
 
         SEGGER_RTT_printf(0, "EEPROM config invalid; restoring defaults\r\n");
     }
+    else
+    {
+        SEGGER_RTT_printf(0, "EEPROM config load failed; restoring defaults\r\n");
+    }
 
     EEPROM_ConfigSetDefaults(&cfg);
-    if (!audio_apply_routing_config(&cfg, &ui_state))
+    if (!eeprom_config_apply(&cfg))
     {
         SEGGER_RTT_printf(0, "EEPROM default routing apply failed\r\n");
         return;

@@ -6,6 +6,7 @@
 
 #include "ui_control.h"
 #include "ui_control_internal.h"
+#include "eeprom_config_internal.h"
 #include "ui_adc_control_internal.h"
 #include "ui_ch_fader_internal.h"
 #include "ui_midi_control_internal.h"
@@ -245,14 +246,14 @@ static void send_midi_config_dump(const EEPROM_DeviceConfig_t* cfg)
     ui_midi_control_send_program(midi_program_for_input_mode(INPUT_CH2, cfg->current_ch2_input_mode), MIDI_CH_15);
     ui_midi_control_send_program(midi_program_for_ch_fader_aux_assignment(2U, cfg->sensor2_aux_fade_down_assign), MIDI_CH_15);
     ui_midi_control_send_program(midi_program_for_ch_fader_aux_assignment(3U, cfg->sensor3_aux_fade_down_assign), MIDI_CH_15);
-    ui_midi_control_send_program((cfg->ch_fader_reverse_flags & EEPROM_CFG_FLAG_CH_FADER_REVERSE_A) != 0U ? CH_FADER_REVERSE_A_ON : CH_FADER_REVERSE_A_OFF, MIDI_CH_15);
-    ui_midi_control_send_program((cfg->ch_fader_reverse_flags & EEPROM_CFG_FLAG_CH_FADER_REVERSE_B) != 0U ? CH_FADER_REVERSE_B_ON : CH_FADER_REVERSE_B_OFF, MIDI_CH_15);
+    ui_midi_control_send_program(eeprom_config_is_ch_fader_reverse_a_enabled(cfg) ? CH_FADER_REVERSE_A_ON : CH_FADER_REVERSE_A_OFF, MIDI_CH_15);
+    ui_midi_control_send_program(eeprom_config_is_ch_fader_reverse_b_enabled(cfg) ? CH_FADER_REVERSE_B_ON : CH_FADER_REVERSE_B_OFF, MIDI_CH_15);
     ui_midi_control_send_program(midi_program_for_timecode_synth_ratio_set(cfg->timecode_synth_ratio_set), MIDI_CH_15);
     ui_midi_control_send_program(midi_program_for_timecode_synth_warp_algorithm(cfg->timecode_synth_warp_algorithm), MIDI_CH_15);
     ui_midi_control_send_cc(MIDI_CC_CH_FADER_CURVE_A, ui_ch_fader_curve_width_to_midi_cc(cfg->current_ch_fader_curve_width_a), MIDI_CH_15);
     ui_midi_control_send_cc(MIDI_CC_CH_FADER_CURVE_B, ui_ch_fader_curve_width_to_midi_cc(cfg->current_ch_fader_curve_width_b), MIDI_CH_15);
     ui_midi_control_send_cc(MIDI_CC_CH_FADER_DVS_DELAY, cfg->ch_fader_dvs_delay_ms, MIDI_CH_15);
-    if ((cfg->mag_output_mode_flags & EEPROM_CFG_FLAG_MAG_OUT_AS_NOTE) != 0U)
+    if (eeprom_config_is_mag_out_as_note(cfg))
     {
         ui_midi_control_send_program(MIDI_PC_MUX_OUTPUT_NOTE, MIDI_CH_15);
     }
@@ -430,7 +431,7 @@ static bool dispatch_midi_program_change(uint8_t channel, uint8_t program)
 
         EEPROM_ConfigCaptureCurrent(&cfg);
         send_midi_config_dump(&cfg);
-        SEGGER_RTT_printf(0, "Current config dumped by MIDI PC126: CH1=%u CH2=%u CH_FADER_A=%u CH_FADER_B=%u CH_FADER_POST=%u RTN=%u HP=%u MODE1=%u MODE2=%u MAG_AS_NOTE=%u AUX2=%u AUX3=%u REVERSE_A=%u REVERSE_B=%u CURVE_WIDTH_A=%.4f CURVE_WIDTH_B=%.4f\r\n", (unsigned) cfg.current_ch1_input_type, (unsigned) cfg.current_ch2_input_type, (unsigned) cfg.current_ch_fader_a_assign, (unsigned) cfg.current_ch_fader_b_assign, (unsigned) cfg.current_ch_fader_post_assign, (unsigned) cfg.current_return_assign, (unsigned) cfg.current_hp_out_source, (unsigned) cfg.current_ch1_input_mode, (unsigned) cfg.current_ch2_input_mode, (unsigned) ((cfg.mag_output_mode_flags & EEPROM_CFG_FLAG_MAG_OUT_AS_NOTE) != 0U), (unsigned) cfg.sensor2_aux_fade_down_assign, (unsigned) cfg.sensor3_aux_fade_down_assign, (unsigned) ((cfg.ch_fader_reverse_flags & EEPROM_CFG_FLAG_CH_FADER_REVERSE_A) != 0U), (unsigned) ((cfg.ch_fader_reverse_flags & EEPROM_CFG_FLAG_CH_FADER_REVERSE_B) != 0U), (double) cfg.current_ch_fader_curve_width_a, (double) cfg.current_ch_fader_curve_width_b);
+        SEGGER_RTT_printf(0, "Current config dumped by MIDI PC126: CH1=%u CH2=%u CH_FADER_A=%u CH_FADER_B=%u CH_FADER_POST=%u RTN=%u HP=%u MODE1=%u MODE2=%u MAG_AS_NOTE=%u AUX2=%u AUX3=%u REVERSE_A=%u REVERSE_B=%u CURVE_WIDTH_A=%.4f CURVE_WIDTH_B=%.4f\r\n", (unsigned) cfg.current_ch1_input_type, (unsigned) cfg.current_ch2_input_type, (unsigned) cfg.current_ch_fader_a_assign, (unsigned) cfg.current_ch_fader_b_assign, (unsigned) cfg.current_ch_fader_post_assign, (unsigned) cfg.current_return_assign, (unsigned) cfg.current_hp_out_source, (unsigned) cfg.current_ch1_input_mode, (unsigned) cfg.current_ch2_input_mode, (unsigned) eeprom_config_is_mag_out_as_note(&cfg), (unsigned) cfg.sensor2_aux_fade_down_assign, (unsigned) cfg.sensor3_aux_fade_down_assign, (unsigned) eeprom_config_is_ch_fader_reverse_a_enabled(&cfg), (unsigned) eeprom_config_is_ch_fader_reverse_b_enabled(&cfg), (double) cfg.current_ch_fader_curve_width_a, (double) cfg.current_ch_fader_curve_width_b);
 
         return true;
     }
@@ -443,7 +444,7 @@ static bool dispatch_midi_program_change(uint8_t channel, uint8_t program)
         if (EEPROM_SaveConfig(&hi2c2, &cfg) == HAL_OK)
         {
             led_notify_save_success();
-            SEGGER_RTT_printf(0, "EEPROM config saved by MIDI PC127: CH1=%u CH2=%u CH_FADER_A=%u CH_FADER_B=%u CH_FADER_POST=%u RTN=%u HP=%u MODE1=%u MODE2=%u AUX2=%u AUX3=%u REVERSE_A=%u REVERSE_B=%u CURVE_WIDTH_A=%.4f CURVE_WIDTH_B=%.4f\r\n", (unsigned) cfg.current_ch1_input_type, (unsigned) cfg.current_ch2_input_type, (unsigned) cfg.current_ch_fader_a_assign, (unsigned) cfg.current_ch_fader_b_assign, (unsigned) cfg.current_ch_fader_post_assign, (unsigned) cfg.current_return_assign, (unsigned) cfg.current_hp_out_source, (unsigned) cfg.current_ch1_input_mode, (unsigned) cfg.current_ch2_input_mode, (unsigned) cfg.sensor2_aux_fade_down_assign, (unsigned) cfg.sensor3_aux_fade_down_assign, (unsigned) ((cfg.ch_fader_reverse_flags & EEPROM_CFG_FLAG_CH_FADER_REVERSE_A) != 0U), (unsigned) ((cfg.ch_fader_reverse_flags & EEPROM_CFG_FLAG_CH_FADER_REVERSE_B) != 0U), (double) cfg.current_ch_fader_curve_width_a, (double) cfg.current_ch_fader_curve_width_b);
+            SEGGER_RTT_printf(0, "EEPROM config saved by MIDI PC127: CH1=%u CH2=%u CH_FADER_A=%u CH_FADER_B=%u CH_FADER_POST=%u RTN=%u HP=%u MODE1=%u MODE2=%u AUX2=%u AUX3=%u REVERSE_A=%u REVERSE_B=%u CURVE_WIDTH_A=%.4f CURVE_WIDTH_B=%.4f\r\n", (unsigned) cfg.current_ch1_input_type, (unsigned) cfg.current_ch2_input_type, (unsigned) cfg.current_ch_fader_a_assign, (unsigned) cfg.current_ch_fader_b_assign, (unsigned) cfg.current_ch_fader_post_assign, (unsigned) cfg.current_return_assign, (unsigned) cfg.current_hp_out_source, (unsigned) cfg.current_ch1_input_mode, (unsigned) cfg.current_ch2_input_mode, (unsigned) cfg.sensor2_aux_fade_down_assign, (unsigned) cfg.sensor3_aux_fade_down_assign, (unsigned) eeprom_config_is_ch_fader_reverse_a_enabled(&cfg), (unsigned) eeprom_config_is_ch_fader_reverse_b_enabled(&cfg), (double) cfg.current_ch_fader_curve_width_a, (double) cfg.current_ch_fader_curve_width_b);
         }
         else
         {
@@ -628,13 +629,8 @@ void ui_control_get_persist_state(UI_ControlPersistState_t* state)
     state->mag_out_as_note           = s_ui.mag_out_as_note;
 }
 
-bool ui_control_apply_persist_state(const UI_ControlPersistState_t* state)
+bool ui_control_validate_persist_state(const UI_ControlPersistState_t* state)
 {
-    uint8_t input_ch_a;
-    uint8_t input_ch_b;
-    uint8_t input_ch_post;
-    uint8_t input_ch_return;
-
     if (state == NULL)
     {
         return false;
@@ -642,6 +638,21 @@ bool ui_control_apply_persist_state(const UI_ControlPersistState_t* state)
 
     if (!ui_routing_validate_persist(state) ||
         !ui_ch_fader_validate_persist(state))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+bool ui_control_apply_persist_state(const UI_ControlPersistState_t* state)
+{
+    uint8_t input_ch_a;
+    uint8_t input_ch_b;
+    uint8_t input_ch_post;
+    uint8_t input_ch_return;
+
+    if (!ui_control_validate_persist_state(state))
     {
         return false;
     }
