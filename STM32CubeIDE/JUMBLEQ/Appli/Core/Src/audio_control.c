@@ -70,10 +70,60 @@ enum
 static volatile uint32_t tx_blink_interval_ms = BLINK_NOT_MOUNTED;
 static volatile uint32_t rx_blink_interval_ms = BLINK_NOT_MOUNTED;
 
-volatile uint32_t sai_tx_rng_buf_index = 0;
-volatile uint32_t sai_rx_rng_buf_index = 0;
-volatile uint32_t sai_transmit_index   = 0;
-volatile uint32_t sai_receive_index    = 0;
+typedef struct
+{
+    int32_t* data;
+    uint32_t capacity_words;
+    volatile uint32_t write_index;
+    volatile uint32_t read_index;
+} AudioRingBuffer_t;
+
+_Static_assert((SAI_RNG_BUF_SIZE & (SAI_RNG_BUF_SIZE - 1U)) == 0U,
+               "Audio ring buffer size must be a power of two");
+_Static_assert((SAI_RNG_BUF_SIZE % AUDIO_RING_FRAME_WORDS) == 0U,
+               "Audio ring buffer size must preserve frame alignment");
+
+static __attribute__((section("noncacheable_buffer"), aligned(32)))
+int32_t s_tx_ring_storage[SAI_RNG_BUF_SIZE] = {0};
+static __attribute__((section("noncacheable_buffer"), aligned(32)))
+int32_t s_rx_ring_storage[SAI_RNG_BUF_SIZE] = {0};
+
+static AudioRingBuffer_t s_tx_ring = {
+    .data           = s_tx_ring_storage,
+    .capacity_words = SAI_RNG_BUF_SIZE,
+};
+static AudioRingBuffer_t s_rx_ring = {
+    .data           = s_rx_ring_storage,
+    .capacity_words = SAI_RNG_BUF_SIZE,
+};
+
+static inline int32_t audio_ring_used_words(const AudioRingBuffer_t* ring)
+{
+    return (int32_t) (ring->write_index - ring->read_index);
+}
+
+static inline uint32_t audio_ring_offset(const AudioRingBuffer_t* ring,
+                                         uint32_t absolute_index)
+{
+    return absolute_index & (ring->capacity_words - 1U);
+}
+
+static inline void audio_ring_discard_all(AudioRingBuffer_t* ring)
+{
+    ring->read_index = ring->write_index;
+}
+
+static inline void audio_ring_reset_indices(AudioRingBuffer_t* ring,
+                                            uint32_t prefill_words)
+{
+    ring->read_index  = 0U;
+    ring->write_index = prefill_words;
+}
+
+static void audio_ring_clear_storage(AudioRingBuffer_t* ring)
+{
+    memset(ring->data, 0, ring->capacity_words * sizeof(ring->data[0]));
+}
 
 static volatile bool usb_tx_pending     = false;  // USB TX送信要求フラグ (ISR→Task通知用)
 static volatile bool usb_rx_pending     = false;  // USB RX受信通知フラグ (ISR→Task通知用)
@@ -186,7 +236,7 @@ static void audio_tx_diagnostics_reset(void)
 
 static inline int32_t audio_tx_used_words(void)
 {
-    return (int32_t) (sai_tx_rng_buf_index - sai_transmit_index);
+    return audio_ring_used_words(&s_tx_ring);
 }
 
 static inline void audio_tx_diagnostics_record_level(int32_t used)
@@ -443,9 +493,6 @@ static bool audio_sample_rate_change_take_pending(void)
 __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t usb_out_buf[CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ / 4] = {0};
 __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t usb_in_buf[CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ / 4] = {0};
 
-__attribute__((section("noncacheable_buffer"), aligned(32))) int32_t sai_tx_rng_buf[SAI_RNG_BUF_SIZE] = {0};
-__attribute__((section("noncacheable_buffer"), aligned(32))) int32_t sai_rx_rng_buf[SAI_RNG_BUF_SIZE] = {0};
-
 __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t stereo_out_buf[SAI_TX_BUF_SIZE] = {0};
 __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t stereo_in_buf[SAI_RX_BUF_SIZE]  = {0};
 
@@ -485,8 +532,7 @@ static void audio_stream_apply_out_state(bool enabled)
         s_streaming_out      = false;
         spk_data_size        = 0u;
         usb_rx_pending       = false;
-        sai_tx_rng_buf_index = 0u;
-        sai_transmit_index   = 0u;
+        audio_ring_reset_indices(&s_tx_ring, 0U);
         dma_audio_event_reset_locked(&s_tx_dma_event);
         __set_PRIMASK(primask);
 
@@ -520,8 +566,7 @@ static void audio_stream_apply_in_state(bool enabled)
     {
         s_streaming_in       = false;
         usb_tx_pending       = false;
-        sai_rx_rng_buf_index = 0u;
-        sai_receive_index    = 0u;
+        audio_ring_reset_indices(&s_rx_ring, 0U);
         dma_audio_event_reset_locked(&s_rx_dma_event);
     }
 
@@ -583,11 +628,8 @@ void reset_audio_buffer(void)
         usb_in_buf[i] = 0;
     }
 
-    for (uint16_t i = 0; i < SAI_RNG_BUF_SIZE; i++)
-    {
-        sai_tx_rng_buf[i] = 0;
-        sai_rx_rng_buf[i] = 0;
-    }
+    audio_ring_clear_storage(&s_tx_ring);
+    audio_ring_clear_storage(&s_rx_ring);
 
     for (uint16_t i = 0; i < SAI_TX_BUF_SIZE; i++)
     {
@@ -1337,9 +1379,8 @@ void start_sai(void)
     // 96kHzではデータレートが高いため、十分な量をプリフィルする
     // ========================================
     uint32_t prefill_size = SAI_TX_BUF_SIZE;
-    memset(sai_tx_rng_buf, 0, prefill_size * sizeof(int32_t));
-    sai_tx_rng_buf_index = prefill_size;
-    sai_transmit_index   = 0;
+    memset(s_tx_ring.data, 0, prefill_size * sizeof(s_tx_ring.data[0]));
+    audio_ring_reset_indices(&s_tx_ring, prefill_size);
     audio_tx_diagnostics_reset();
     dma_audio_event_reset(&s_rx_dma_event);
 
@@ -1373,16 +1414,14 @@ void start_sai(void)
 
 void copybuf_usb2ring(void)
 {
-    // SEGGER_RTT_printf(0, "st = %d, sb_index = %d -> ", sai_transmit_index, sai_tx_rng_buf_index);
-
-    int32_t used = (int32_t) (sai_tx_rng_buf_index - sai_transmit_index);
+    int32_t used = audio_ring_used_words(&s_tx_ring);
 
     if (used < 0)
     {
-        sai_transmit_index = sai_tx_rng_buf_index;
-        used               = 0;
+        audio_ring_discard_all(&s_tx_ring);
+        used = 0;
     }
-    int32_t free = (int32_t) (SAI_RNG_BUF_SIZE - 1) - used;
+    int32_t free = (int32_t) (s_tx_ring.capacity_words - 1U) - used;
     if (free <= 0)
     {
         return;
@@ -1402,11 +1441,9 @@ void copybuf_usb2ring(void)
 
     for (uint32_t i = 0; i < sai_words; i++)
     {
-        sai_tx_rng_buf[sai_tx_rng_buf_index & (SAI_RNG_BUF_SIZE - 1)] = usb_in_buf[i];
-        sai_tx_rng_buf_index++;
+        s_tx_ring.data[audio_ring_offset(&s_tx_ring, s_tx_ring.write_index)] = usb_in_buf[i];
+        s_tx_ring.write_index++;
     }
-
-    // SEGGER_RTT_printf(0, " %d\n", sai_tx_rng_buf_index);
 }
 
 static inline void fill_tx_half(uint32_t index0)
@@ -1424,7 +1461,7 @@ static inline void fill_tx_half(uint32_t index0)
         return;
     }
 
-    int32_t used = (int32_t) (sai_tx_rng_buf_index - sai_transmit_index);
+    int32_t used = audio_ring_used_words(&s_tx_ring);
     audio_tx_diagnostics_record_level(used);
 #if AUDIO_DIAG_LOG
     if (used >= 0)
@@ -1439,8 +1476,8 @@ static inline void fill_tx_half(uint32_t index0)
     if (used < 0)
     {
         // 同期ズレは破棄して合わせ直す
-        sai_transmit_index = sai_tx_rng_buf_index;
-        used               = 0;
+        audio_ring_discard_all(&s_tx_ring);
+        used = 0;
     }
 
     // データ不足時は可能な分だけ再生し、残りは末尾フレーム保持で埋める
@@ -1477,10 +1514,10 @@ static inline void fill_tx_half(uint32_t index0)
     }
 
     // usedが大きすぎる場合も異常（オーバーフロー等）
-    if (used > (int32_t) SAI_RNG_BUF_SIZE)
+    if (used > (int32_t) s_tx_ring.capacity_words)
     {
         // リセットして無音で埋める
-        sai_transmit_index = sai_tx_rng_buf_index;
+        audio_ring_discard_all(&s_tx_ring);
         memset(stereo_out_buf + index0, 0, n * sizeof(int32_t));
         timecode_synth_render_output(stereo_out_buf + index0,
                                      AUDIO_RING_FRAME_WORDS,
@@ -1549,14 +1586,17 @@ static inline void fill_tx_half(uint32_t index0)
         copy_words = n;
     }
 
-    const uint32_t index1 = (sai_transmit_index + source_skip_words) & (SAI_RNG_BUF_SIZE - 1);
-    uint32_t first        = SAI_RNG_BUF_SIZE - index1;
+    const uint32_t index1 =
+        audio_ring_offset(&s_tx_ring, s_tx_ring.read_index + source_skip_words);
+    uint32_t first = s_tx_ring.capacity_words - index1;
     if (first > copy_words)
         first = copy_words;
 
-    memcpy(stereo_out_buf + index0, sai_tx_rng_buf + index1, first * sizeof(int32_t));
+    memcpy(stereo_out_buf + index0, s_tx_ring.data + index1, first * sizeof(int32_t));
     if (first < copy_words)
-        memcpy(stereo_out_buf + index0 + first, sai_tx_rng_buf, (copy_words - first) * sizeof(int32_t));
+        memcpy(stereo_out_buf + index0 + first,
+               s_tx_ring.data,
+               (copy_words - first) * sizeof(int32_t));
 
     if (copy_words < n)
     {
@@ -1581,7 +1621,7 @@ static inline void fill_tx_half(uint32_t index0)
         }
     }
 
-    sai_transmit_index += consume_words;
+    s_tx_ring.read_index += consume_words;
     audio_tx_diagnostics_record_level(used - (int32_t) consume_words);
     if (diagnostic_event_flags != 0u)
     {
@@ -1657,21 +1697,21 @@ static inline void fill_rx_half(uint32_t index0)
                                  AUDIO_RING_FRAME_WORDS,
                                  (SAI_RX_BUF_SIZE / 2u) / AUDIO_RING_FRAME_WORDS);
 
-    int32_t used = (int32_t) (sai_rx_rng_buf_index - sai_receive_index);
+    int32_t used = audio_ring_used_words(&s_rx_ring);
     if (used < 0)
     {
-        sai_receive_index = sai_rx_rng_buf_index;
-        used              = 0;
+        audio_ring_discard_all(&s_rx_ring);
+        used = 0;
     }
 
     // usedが大きすぎる場合も異常（オーバーフロー等）
-    if (used > (int32_t) SAI_RNG_BUF_SIZE)
+    if (used > (int32_t) s_rx_ring.capacity_words)
     {
-        sai_receive_index = sai_rx_rng_buf_index;
-        used              = 0;
+        audio_ring_discard_all(&s_rx_ring);
+        used = 0;
     }
 
-    int32_t free = (int32_t) (SAI_RNG_BUF_SIZE - 1) - used;
+    int32_t free = (int32_t) (s_rx_ring.capacity_words - 1U) - used;
     if (free < (int32_t) n)
     {
         // 追いつけない時は古いデータを捨てるが、必ず4chフレーム境界で進める。
@@ -1682,19 +1722,19 @@ static inline void fill_rx_half(uint32_t index0)
         {
             drop_words = (used / frame_words) * frame_words;
         }
-        sai_receive_index += (uint32_t) drop_words;
+        s_rx_ring.read_index += (uint32_t) drop_words;
     }
 
-    uint32_t w     = sai_rx_rng_buf_index & (SAI_RNG_BUF_SIZE - 1);
-    uint32_t first = SAI_RNG_BUF_SIZE - w;
+    uint32_t w     = audio_ring_offset(&s_rx_ring, s_rx_ring.write_index);
+    uint32_t first = s_rx_ring.capacity_words - w;
     if (first > n)
         first = n;
 
-    memcpy(sai_rx_rng_buf + w, stereo_in_buf + index0, first * sizeof(int32_t));
+    memcpy(s_rx_ring.data + w, stereo_in_buf + index0, first * sizeof(int32_t));
     if (first < n)
-        memcpy(sai_rx_rng_buf, stereo_in_buf + index0 + first, (n - first) * sizeof(int32_t));
+        memcpy(s_rx_ring.data, stereo_in_buf + index0 + first, (n - first) * sizeof(int32_t));
 
-    sai_rx_rng_buf_index += n;
+    s_rx_ring.write_index += n;
 }
 
 static void copybuf_sai2ring(void)
@@ -1727,22 +1767,22 @@ static uint32_t audio_frames_per_usb_in_interval(void)
 static bool audio_usb_in_source_ready(void)
 {
     const uint32_t required_words = audio_frames_per_usb_in_interval() * AUDIO_RING_FRAME_WORDS;
-    const int32_t available_words = (int32_t) (sai_rx_rng_buf_index - sai_receive_index);
+    const int32_t available_words = audio_ring_used_words(&s_rx_ring);
 
     return available_words >= (int32_t) required_words;
 }
 
 static uint16_t audio_out_read_budget_bytes(void)
 {
-    int32_t used = (int32_t) (sai_tx_rng_buf_index - sai_transmit_index);
+    int32_t used = audio_ring_used_words(&s_tx_ring);
     audio_tx_diagnostics_record_level(used);
     if (used < 0)
     {
         used = 0;
     }
-    if (used > (int32_t) SAI_RNG_BUF_SIZE)
+    if (used > (int32_t) s_tx_ring.capacity_words)
     {
-        used = (int32_t) SAI_RNG_BUF_SIZE;
+        used = (int32_t) s_tx_ring.capacity_words;
     }
 
     // Keep the TX ring around target + one DMA half-buffer.
@@ -1796,10 +1836,10 @@ static void copybuf_ring2usb_and_send(void)
     const uint32_t frames    = audio_frames_per_usb_in_interval();  // 24 or 48 frames/0.5ms
     const uint32_t sai_words = frames * AUDIO_RING_FRAME_WORDS;  // 4ch(4word/frame)
 
-    int32_t used = (int32_t) (sai_rx_rng_buf_index - sai_receive_index);
+    int32_t used = audio_ring_used_words(&s_rx_ring);
     if (used < 0)
     {
-        sai_receive_index = sai_rx_rng_buf_index;
+        audio_ring_discard_all(&s_rx_ring);
         return;
     }
     if (used < (int32_t) sai_words)
@@ -1826,14 +1866,15 @@ static void copybuf_ring2usb_and_send(void)
 
     for (uint32_t f = 0; f < frames; f++)
     {
-        uint32_t r_L1          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 0) & (SAI_RNG_BUF_SIZE - 1);
-        uint32_t r_R1          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 1) & (SAI_RNG_BUF_SIZE - 1);
-        uint32_t r_L2          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 2) & (SAI_RNG_BUF_SIZE - 1);
-        uint32_t r_R2          = (sai_receive_index + f * AUDIO_RING_FRAME_WORDS + 3) & (SAI_RNG_BUF_SIZE - 1);
-        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 0] = send_ch1_to_usb ? sai_rx_rng_buf[r_L1] : 0;  // L1
-        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 1] = send_ch1_to_usb ? sai_rx_rng_buf[r_R1] : 0;  // R1
-        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 2] = send_ch2_to_usb ? sai_rx_rng_buf[r_L2] : 0;  // L2
-        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 3] = send_ch2_to_usb ? sai_rx_rng_buf[r_R2] : 0;  // R2
+        const uint32_t frame_index = s_rx_ring.read_index + f * AUDIO_RING_FRAME_WORDS;
+        uint32_t r_L1 = audio_ring_offset(&s_rx_ring, frame_index + 0U);
+        uint32_t r_R1 = audio_ring_offset(&s_rx_ring, frame_index + 1U);
+        uint32_t r_L2 = audio_ring_offset(&s_rx_ring, frame_index + 2U);
+        uint32_t r_R2 = audio_ring_offset(&s_rx_ring, frame_index + 3U);
+        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 0] = send_ch1_to_usb ? s_rx_ring.data[r_L1] : 0;  // L1
+        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 1] = send_ch1_to_usb ? s_rx_ring.data[r_R1] : 0;  // R1
+        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 2] = send_ch2_to_usb ? s_rx_ring.data[r_L2] : 0;  // L2
+        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 3] = send_ch2_to_usb ? s_rx_ring.data[r_R2] : 0;  // R2
     }
 
     // ISRコンテキストから呼ばれるので通常版を使用
@@ -1872,7 +1913,7 @@ static void copybuf_ring2usb_and_send(void)
         written_frames = frames;
     if (written_frames == 0)
         return;
-    sai_receive_index += written_frames * AUDIO_RING_FRAME_WORDS;  // SAIは4ch分
+    s_rx_ring.read_index += written_frames * AUDIO_RING_FRAME_WORDS;  // SAIは4ch分
 }
 
 // TinyUSB TX完了コールバック - USB ISRコンテキストで呼ばれる
@@ -2025,7 +2066,7 @@ void audio_task(void)
 #if AUDIO_DIAG_LOG
         if (s_streaming_out)
         {
-            int32_t tx_used_now  = (int32_t) (sai_tx_rng_buf_index - sai_transmit_index);
+            int32_t tx_used_now  = audio_ring_used_words(&s_tx_ring);
             uint32_t sigma_calls = sigma_spi_it_write_calls;
             uint32_t sigma_err   = sigma_spi_it_write_errors;
             uint32_t sigma_to    = sigma_spi_it_write_timeouts;
@@ -2254,10 +2295,8 @@ void AUDIO_SAI_Reset_ForNewRate(void)
 
     audio_transport_stop_sai_paths();
 
-    sai_tx_rng_buf_index = 0;
-    sai_rx_rng_buf_index = 0;
-    sai_transmit_index   = 0;
-    sai_receive_index    = 0;
+    audio_ring_reset_indices(&s_tx_ring, 0U);
+    audio_ring_reset_indices(&s_rx_ring, 0U);
     audio_tx_diagnostics_reset();
     dma_audio_event_reset(&s_rx_dma_event);
 
@@ -2266,8 +2305,8 @@ void AUDIO_SAI_Reset_ForNewRate(void)
 #endif
 
     /* Clear all audio buffers to avoid noise from stale data */
-    memset(sai_tx_rng_buf, 0, sizeof(sai_tx_rng_buf));
-    memset(sai_rx_rng_buf, 0, sizeof(sai_rx_rng_buf));
+    audio_ring_clear_storage(&s_tx_ring);
+    audio_ring_clear_storage(&s_rx_ring);
     memset(stereo_out_buf, 0, sizeof(stereo_out_buf));
     memset(stereo_in_buf, 0, sizeof(stereo_in_buf));
     memset(usb_in_buf, 0, sizeof(usb_in_buf));
@@ -2299,8 +2338,7 @@ void AUDIO_SAI_Reset_ForNewRate(void)
     /* Prefill TX ring buffer with silence (already zeroed above) */
     /* Set write index ahead to provide initial data for DMA */
     /* 96kHz needs larger prefill due to higher data rate */
-    sai_tx_rng_buf_index = SAI_TX_BUF_SIZE;
-    sai_transmit_index   = 0;
+    audio_ring_reset_indices(&s_tx_ring, SAI_TX_BUF_SIZE);
 
     /* Configure and link DMA for SAI2 TX */
     if (!audio_transport_start_tx_path())
