@@ -380,7 +380,7 @@ void set_dc_inputB(float ch_fader_position)
 
 void control_input_from_usb_gain(uint8_t ch, int16_t db)
 {
-    SEGGER_RTT_printf(0, "USB CH%d Gain: %.2f dB\n", ch, db);
+    SEGGER_RTT_printf(0, "USB CH%d Gain: %d dB\n", ch, db);
 
     const double gain = convert_dB2gain(db);
 
@@ -401,6 +401,32 @@ void control_input_from_usb_gain(uint8_t ch, int16_t db)
     default:
         break;
     }
+}
+
+void control_input_from_usb_mute(uint8_t ch, bool muted)
+{
+    uint16_t addr;
+
+    switch (ch)
+    {
+    case 1:
+        addr = MOD_MUTE_USB1_MUTE_ADDR;
+        break;
+    case 2:
+        addr = MOD_MUTE_USB2_MUTE_ADDR;
+        break;
+    case 3:
+        addr = MOD_MUTE_USB3_MUTE_ADDR;
+        break;
+    case 4:
+        addr = MOD_MUTE_USB4_MUTE_ADDR;
+        break;
+    default:
+        return;
+    }
+
+    SEGGER_RTT_printf(0, "USB CH%d Mute: %d\n", ch, muted ? 1 : 0);
+    write_q8_24(addr, muted ? 0.0 : 1.0);
 }
 
 void control_input_from_ch1_gain(const uint16_t adc_val)

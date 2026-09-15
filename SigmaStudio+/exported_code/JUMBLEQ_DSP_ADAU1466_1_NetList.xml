@@ -183,6 +183,10 @@
         <Link pin="Input1" dir="in" link="Link_479" id="Link_479" />
         <Link pin="Output" dir="out" link="Link_480" id="Link_480" />
       </Algorithm>
+      <Algorithm name="mute_usb1" friendlyname="Mute Signal" />
+      <Algorithm name="mute_usb2" friendlyname="Mute Signal" />
+      <Algorithm name="mute_usb3" friendlyname="Mute Signal" />
+      <Algorithm name="mute_usb4" friendlyname="Mute Signal" />
     </Schematic>
   </Core>
 </IC>

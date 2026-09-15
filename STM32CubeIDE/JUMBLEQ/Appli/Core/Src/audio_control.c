@@ -250,7 +250,23 @@ uint16_t spk_data_size;
 int8_t mute[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX + 1];     // +1 for master channel 0
 int16_t volume[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX + 1];  // +1 for master channel 0
 
-void control_input_from_usb_gain(uint8_t ch, int16_t db);
+static void audio20_feature_unit_apply_channel(uint8_t channel)
+{
+    const int32_t effective_volume_q8_8 = (int32_t) volume[0] + volume[channel];
+    const int16_t effective_volume_db   = (int16_t) (effective_volume_q8_8 / 256);
+    const bool effective_mute           = (mute[0] != 0) || (mute[channel] != 0);
+
+    control_input_from_usb_gain(channel, effective_volume_db);
+    control_input_from_usb_mute(channel, effective_mute);
+}
+
+static void audio20_feature_unit_apply_all_channels(void)
+{
+    for (uint8_t channel = 1U; channel <= CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX; channel++)
+    {
+        audio20_feature_unit_apply_channel(channel);
+    }
+}
 
 void reset_audio_buffer(void)
 {
@@ -611,6 +627,15 @@ static bool audio20_feature_unit_set_request(uint8_t rhport, tusb_control_reques
 
         TU_LOG1("Set channel %d Mute: %d\r\n", channel, mute[channel]);
 
+        if (channel == 0U)
+        {
+            audio20_feature_unit_apply_all_channels();
+        }
+        else
+        {
+            audio20_feature_unit_apply_channel(channel);
+        }
+
         return true;
     }
     else if (TU_U16_HIGH(request->wValue) == AUDIO20_FU_CTRL_VOLUME)
@@ -621,7 +646,14 @@ static bool audio20_feature_unit_set_request(uint8_t rhport, tusb_control_reques
 
         TU_LOG1("Set channel %d volume: %d dB\r\n", channel, volume[channel] / 256);
 
-        control_input_from_usb_gain(channel, volume[channel] / 256);
+        if (channel == 0U)
+        {
+            audio20_feature_unit_apply_all_channels();
+        }
+        else
+        {
+            audio20_feature_unit_apply_channel(channel);
+        }
 
         return true;
     }
