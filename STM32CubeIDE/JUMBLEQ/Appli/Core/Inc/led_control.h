@@ -8,7 +8,7 @@
 #ifndef INC_LED_CONTROL_H_
 #define INC_LED_CONTROL_H_
 
-#include "main.h"
+#include <stdint.h>
 
 void update_color_state(void);
 void reset_led_buffer(void);

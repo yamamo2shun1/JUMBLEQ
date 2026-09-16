@@ -5,12 +5,12 @@
  * quantization, pot-mag calibration and the DSP/MIDI output application.
  */
 
-#include "ui_control.h"
 #include "ui_pot_control_internal.h"
 
 #include "ui_midi_control_internal.h"
 #include "ui_routing_control_internal.h"
 #include "adau1466.h"
+#include "main.h"
 #include "timecode_synth.h"
 
 #include <math.h>
@@ -291,25 +291,6 @@ static void apply_pot_value(uint8_t channel, uint16_t value, bool synth_mode_act
         break;
     default:
         break;
-    }
-}
-
-void ui_pot_control_reapply_outputs(bool synth_mode_active, bool output_as_note, uint8_t return_assign)
-{
-    static const uint8_t s_pot_output_channels[] = {
-        POT_CH_CH1_IN,
-        POT_CH_CH2_IN,
-        POT_CH_CH1_OUT,
-        POT_CH_CH2_OUT,
-        POT_CH_DRY_WET,
-        POT_CH_RETURN_IN,
-        POT_CH_HP_OUT,
-    };
-
-    for (uint32_t i = 0; i < TU_ARRAY_SIZE(s_pot_output_channels); i++)
-    {
-        const uint8_t ch = s_pot_output_channels[i];
-        apply_pot_value(ch, s_pot.pot_val[ch], synth_mode_active, output_as_note, return_assign);
     }
 }
 
@@ -607,61 +588,6 @@ void ui_pot_control_reset(void)
 
     s_pot.pot_ch         = POT_CH_CC0;
     s_pot.pot_ch_counter = 0;
-}
-
-int16_t get_current_ch1_in_db(void)
-{
-    // Input display order follows the current physical POT assignment.
-    return convert_pot2dB_int(s_pot.pot_val[POT_CH_CH1_IN]);
-}
-
-int16_t get_current_ch2_in_db(void)
-{
-    return convert_pot2dB_int(s_pot.pot_val[POT_CH_CH2_IN]);
-}
-
-int16_t get_current_ch1_out_db(void)
-{
-    return convert_pot2dB_int(s_pot.pot_val[POT_CH_CH1_OUT]);
-}
-
-int16_t get_current_ch2_out_db(void)
-{
-    return convert_pot2dB_int(s_pot.pot_val[POT_CH_CH2_OUT]);
-}
-
-int16_t get_current_return_db(void)
-{
-    return convert_pot2dB_int(s_pot.pot_val[POT_CH_RETURN_IN]);
-}
-
-int16_t get_current_hp_out_db(void)
-{
-    return convert_pot2dB_int(s_pot.pot_val[POT_CH_HP_OUT]);
-}
-
-int16_t get_current_dry_wet(void)
-{
-    if (s_pot.pot_val[POT_CH_DRY_WET] <= POT_10BIT_MIN_DEADZONE)
-    {
-        return 0;
-    }
-    if (s_pot.pot_val[POT_CH_DRY_WET] >= POT_10BIT_DW_MAX_SNAP_START)
-    {
-        return 100;
-    }
-
-    int16_t pct = (int16_t) ((((double) (s_pot.pot_val[POT_CH_DRY_WET] - POT_10BIT_MIN_DEADZONE)) /
-                              ((double) (POT_10BIT_DW_MAX_SNAP_START - POT_10BIT_MIN_DEADZONE)) * 100.0) + 0.5);
-    if (pct < 0)
-    {
-        pct = 0;
-    }
-    if (pct > 100)
-    {
-        pct = 100;
-    }
-    return pct;
 }
 
 // OLED表示用: 6個のpot生値(ADC値)を軽量コピーする。scheduler停止区間専用。

@@ -11,6 +11,8 @@
 #include "ak4619.h"
 #include "adau1466.h"
 
+#include <stddef.h>
+
 typedef struct
 {
     uint8_t current_ch1_input_type;
@@ -293,7 +295,7 @@ bool ui_routing_is_synth_mode_active(void)
            (s_routing.current_ch2_input_mode == UI_INPUT_MODE_SYNTH);
 }
 
-char* get_current_input_typeA_str(void)
+static char* get_current_input_typeA_str(void)
 {
     switch (s_routing.current_ch_fader_a_assign)
     {
@@ -312,7 +314,7 @@ char* get_current_input_typeA_str(void)
     }
 }
 
-char* get_current_input_typeB_str(void)
+static char* get_current_input_typeB_str(void)
 {
     switch (s_routing.current_ch_fader_b_assign)
     {
@@ -331,7 +333,7 @@ char* get_current_input_typeB_str(void)
     }
 }
 
-char* get_current_input_srcA_str(void)
+static char* get_current_input_srcA_str(void)
 {
     switch (s_routing.current_ch_fader_a_assign)
     {
@@ -349,7 +351,7 @@ char* get_current_input_srcA_str(void)
     }
 }
 
-char* get_current_input_srcB_str(void)
+static char* get_current_input_srcB_str(void)
 {
     switch (s_routing.current_ch_fader_b_assign)
     {
@@ -367,7 +369,7 @@ char* get_current_input_srcB_str(void)
     }
 }
 
-char* get_current_input_srcP_str(void)
+static char* get_current_input_srcP_str(void)
 {
     switch (s_routing.current_ch_fader_post_assign)
     {
@@ -388,7 +390,7 @@ char* get_current_input_srcP_str(void)
     }
 }
 
-char* get_current_return_src_str(void)
+static char* get_current_return_src_str(void)
 {
     switch (s_routing.current_return_assign)
     {
@@ -403,7 +405,7 @@ char* get_current_return_src_str(void)
     }
 }
 
-char* get_current_hp_out_src_str(void)
+static char* get_current_hp_out_src_str(void)
 {
     switch (s_routing.current_hp_out_source)
     {
@@ -420,7 +422,7 @@ char* get_current_hp_out_src_str(void)
     }
 }
 
-uint8_t get_current_input_srcA_channel(void)
+static uint8_t get_current_input_srcA_channel(void)
 {
     switch (s_routing.current_ch_fader_a_assign)
     {
@@ -437,7 +439,7 @@ uint8_t get_current_input_srcA_channel(void)
     }
 }
 
-uint8_t get_current_input_srcB_channel(void)
+static uint8_t get_current_input_srcB_channel(void)
 {
     switch (s_routing.current_ch_fader_b_assign)
     {
@@ -454,12 +456,12 @@ uint8_t get_current_input_srcB_channel(void)
     }
 }
 
-bool get_current_ch1_dvs_enabled(void)
+static bool get_current_ch1_dvs_enabled(void)
 {
     return (s_routing.current_ch1_input_mode == UI_INPUT_MODE_DVS);
 }
 
-bool get_current_ch2_dvs_enabled(void)
+static bool get_current_ch2_dvs_enabled(void)
 {
     return (s_routing.current_ch2_input_mode == UI_INPUT_MODE_DVS);
 }
@@ -474,7 +476,7 @@ UI_InputMode_t get_current_ch2_input_mode(void)
     return (UI_InputMode_t) s_routing.current_ch2_input_mode;
 }
 
-bool get_current_return_enabled(void)
+static bool get_current_return_enabled(void)
 {
     return s_routing.current_return_assign != INPUT_SRC_NONE;
 }

@@ -8,8 +8,9 @@
  * through audio_diagnostics_log_periodic().
  */
 
-#include "audio_control.h"
 #include "audio_diagnostics_internal.h"
+
+#include "stm32h7rsxx_hal.h"
 
 #include "SigmaStudioFW.h"
 

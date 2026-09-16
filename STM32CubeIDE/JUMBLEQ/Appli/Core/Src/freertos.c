@@ -29,8 +29,11 @@
 #include <stdio.h>
 #include "tusb.h"
 #include "audio_control.h"
+#include "ak4619.h"
+#include "adau1466.h"
 #include "led_control.h"
 #include "oled_control.h"
+#include "ui_control.h"
 #include "adc.h"
 #include "SigmaStudioFW.h"
 /* USER CODE END Includes */

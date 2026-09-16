@@ -14,6 +14,9 @@
 #include "audio_usb_control_internal.h"
 #include "adau1466.h"
 
+#include "SEGGER_RTT.h"
+#include "tusb.h"
+
 #define N_SAMPLE_RATES TU_ARRAY_SIZE(sample_rates)
 
 enum

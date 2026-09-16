@@ -8,7 +8,7 @@
 #ifndef INC_AK4619_H_
 #define INC_AK4619_H_
 
-#include "main.h"
+#include <stdint.h>
 
 #define AK4619_MIC_GAIN_CH1   0U
 #define AK4619_MIC_GAIN_CH2   1U

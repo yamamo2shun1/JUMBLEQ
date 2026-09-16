@@ -34,6 +34,8 @@ typedef struct
     bool is_start_audio_control;
 } ui_control_state_t;
 
+static bool is_started_audio_control(void);
+
 static ui_control_state_t s_ui = {
     .mag_out_as_note        = false,
     .curve_edit_mode        = false,
@@ -52,10 +54,6 @@ static const uint8_t MIDI_PC_ARM_UF2_BOOTLOADER  = 124U;
 static const uint8_t MIDI_PC_CANCEL_UF2_BOOTLOADER = 125U;
 static const uint8_t MIDI_PC_REQUEST_EEPROM_DUMP = 126U;
 static const uint8_t MIDI_PC_SAVE_EEPROM         = 127U;
-bool ui_control_is_curve_edit_mode_enabled(void)
-{
-    return s_ui.curve_edit_mode;
-}
 
 static uint8_t midi_program_for_input_type(uint8_t input_ch, uint8_t input_type)
 {
@@ -266,14 +264,7 @@ static void send_midi_config_dump(const EEPROM_DeviceConfig_t* cfg)
     }
 }
 
-void ui_control_reapply_pot_outputs(void)
-{
-    ui_pot_control_reapply_outputs(ui_routing_is_synth_mode_active(),
-                                   s_ui.mag_out_as_note,
-                                   ui_routing_get_return_assign());
-}
-
-void ui_control_reapply_ch_fader_outputs(void)
+static void ui_control_reapply_ch_fader_outputs(void)
 {
     ui_ch_fader_reapply_outputs();
 }
@@ -615,7 +606,7 @@ void start_audio_control(void)
     __DMB();
 }
 
-bool is_started_audio_control(void)
+static bool is_started_audio_control(void)
 {
     return s_ui.is_start_audio_control;
 }

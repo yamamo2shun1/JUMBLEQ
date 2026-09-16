@@ -5,7 +5,9 @@
 extern "C" {
 #endif
 
-#include "main.h"
+#include <stdint.h>
+#include "stm32h7rsxx.h"
+#include "stm32h7rsxx_hal_i2c.h"
 
 #define EEPROM_I2C_ADDR_7BIT          (0x50U)
 #define EEPROM_I2C_ADDR_8BIT          (EEPROM_I2C_ADDR_7BIT << 1)

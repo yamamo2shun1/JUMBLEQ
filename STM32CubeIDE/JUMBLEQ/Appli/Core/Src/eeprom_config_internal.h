@@ -7,9 +7,10 @@
 #ifndef EEPROM_CONFIG_INTERNAL_H_
 #define EEPROM_CONFIG_INTERNAL_H_
 
-#include "main.h"
+#include <stdbool.h>
+
 #include "eeprom.h"
-#include "ui_control.h"
+#include "ui_persist_internal.h"
 
 // EEPROM設定全体のsemantic validation。DSP/codec/UI/Timecodeへ書き込まない。
 bool eeprom_config_validate(const EEPROM_DeviceConfig_t* cfg);

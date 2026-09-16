@@ -7,7 +7,8 @@
 #ifndef UI_UF2_CONTROL_INTERNAL_H_
 #define UI_UF2_CONTROL_INTERNAL_H_
 
-#include "main.h"
+#include <stdint.h>
+
 #include "ui_control.h"
 
 // UF2移行要求をarmする。program_changeはRTTログ用のPC番号。

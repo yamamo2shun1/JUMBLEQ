@@ -7,8 +7,17 @@
 #ifndef UI_CH_FADER_INTERNAL_H_
 #define UI_CH_FADER_INTERNAL_H_
 
-#include "main.h"
-#include "ui_control.h"
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "ui_persist_internal.h"
+
+// LED/OLED/facade向けgetter（定義はui_ch_fader.c）。
+uint8_t get_current_ch_fader_a_position(void);
+uint8_t get_current_ch_fader_b_position(void);
+uint8_t ui_control_get_ch_fader_dvs_delay_ms(void);
+bool ui_control_is_ch_fader_reverse_a_enabled(void);
+bool ui_control_is_ch_fader_reverse_b_enabled(void);
 
 // ADC完了時のch_fader処理（磁気calibration/gesture/curve/DSP/MIDI出力）。
 void ui_ch_fader_process(const uint32_t* adc_samples, bool output_as_note);

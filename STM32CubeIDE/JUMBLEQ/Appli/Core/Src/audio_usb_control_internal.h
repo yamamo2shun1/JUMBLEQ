@@ -9,9 +9,14 @@
 #ifndef AUDIO_USB_CONTROL_INTERNAL_H_
 #define AUDIO_USB_CONTROL_INTERNAL_H_
 
-#include "main.h"
+#include <stdbool.h>
+#include <stdint.h>
 
 void audio_usb_control_set_tx_stream_blink(bool streaming);
 void audio_usb_control_set_rx_stream_blink(bool streaming);
+
+// LED blink interval getters (consumed by led_control.c).
+uint32_t get_tx_blink_interval_ms(void);
+uint32_t get_rx_blink_interval_ms(void);
 
 #endif /* AUDIO_USB_CONTROL_INTERNAL_H_ */

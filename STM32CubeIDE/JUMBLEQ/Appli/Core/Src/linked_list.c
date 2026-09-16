@@ -22,7 +22,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "audio_control.h"
+#include "audio_transport_internal.h"
+#include "ui_adc_control_internal.h"
 /* USER CODE END Includes */
 
 DMA_NodeTypeDef Node_GPDMA1_Channel2 __attribute__((section("noncacheable_buffer")));
@@ -44,10 +45,7 @@ DMA_QListTypeDef List_HPDMA1_Channel0;
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-extern int32_t stereo_out_buf[];  // RX バッファ（main.c）
-extern int32_t stereo_in_buf[];   // TX バッファ（main.c）
 
-extern uint32_t adc_val[];
 /* USER CODE END PM */
 
 /**

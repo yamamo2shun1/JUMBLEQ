@@ -8,8 +8,8 @@
 #ifndef INC_ADAU1466_H_
 #define INC_ADAU1466_H_
 
-#include "main.h"
 #include <stdbool.h>
+#include <stdint.h>
 
 enum
 {
