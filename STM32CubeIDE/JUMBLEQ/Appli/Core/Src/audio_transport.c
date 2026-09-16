@@ -53,6 +53,11 @@ enum
 #define SAI_ERROR_STATUS_MASK \
     (SAI_xSR_OVRUDR | SAI_xSR_WCKCFG | SAI_xSR_CNRDY | SAI_xSR_AFSDET | SAI_xSR_LFSDET)
 
+// 有効化するSAIエラー割り込み。SRフラグのマスクと対応させ、HAL_SAI_ErrorCallback
+// （＝復旧要求publish）へ到達させる。
+#define SAI_ERROR_INTERRUPT_MASK \
+    (SAI_IT_OVRUDR | SAI_IT_WCKCFG | SAI_IT_CNRDY | SAI_IT_AFSDET | SAI_IT_LFSDET)
+
 extern DMA_QListTypeDef List_GPDMA1_Channel2;
 extern DMA_QListTypeDef List_GPDMA1_Channel3;
 
@@ -136,6 +141,9 @@ typedef struct
     uint32_t latest_event;
     uint32_t latest_cycle;
     uint32_t dropped_events;
+    // 復旧・レート変更で経路を再構築した世代。古い世代の遅延イベントを
+    // 通常搬送へ混入させないために使用する。
+    uint32_t latest_generation;
 } DmaAudioEventState_t;
 
 typedef struct
@@ -143,10 +151,12 @@ typedef struct
     uint32_t event;
     uint32_t cycle;
     uint32_t dropped_events;
+    uint32_t generation;
 } DmaAudioEventSnapshot_t;
 
 static volatile DmaAudioEventState_t s_tx_dma_event = {0};
 static volatile DmaAudioEventState_t s_rx_dma_event = {0};
+static volatile uint32_t s_dma_event_generation = 0u;
 
 static inline uint32_t dma_audio_event_publish_from_isr(volatile DmaAudioEventState_t* state,
                                                         uint32_t event)
@@ -156,6 +166,7 @@ static inline uint32_t dma_audio_event_publish_from_isr(volatile DmaAudioEventSt
 
     state->latest_event = event;
     state->latest_cycle = DWT->CYCCNT;
+    state->latest_generation = s_dma_event_generation;
     __DMB();
     state->produced_sequence++;
 
@@ -180,6 +191,7 @@ static bool dma_audio_event_take_latest(volatile DmaAudioEventState_t* state,
     snapshot->event          = state->latest_event;
     snapshot->cycle          = state->latest_cycle;
     snapshot->dropped_events = pending_count - 1u;
+    snapshot->generation     = state->latest_generation;
 
     state->consumed_sequence = produced_sequence;
     state->latest_event      = DMA_AUDIO_EVENT_NONE;
@@ -237,6 +249,86 @@ static inline void audio_transport_notify_from_isr(void)
     portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
 
+// ==============================
+// DMA/SAIエラー復旧要求 (ISR publish / Audio Task take+ack)
+// ==============================
+
+typedef struct
+{
+    volatile uint32_t published_sequence;
+    uint32_t acknowledged_sequence;
+    uint32_t cause_mask;
+    uint32_t dma_error_code;
+    uint32_t sai_error_code;
+    uint32_t sai_status_flags;
+} RecoveryRequestState_t;
+
+static volatile RecoveryRequestState_t s_recovery_request = {0};
+
+// ISR context. 診断・要求の記録とTask通知だけを行い、停止・再初期化はしない。
+static void recovery_request_publish_from_isr(uint32_t cause_bit,
+                                              uint32_t dma_error_code,
+                                              uint32_t sai_error_code,
+                                              uint32_t sai_status_flags)
+{
+    s_recovery_request.cause_mask |= cause_bit;
+    if (dma_error_code != 0u)
+    {
+        s_recovery_request.dma_error_code = dma_error_code;
+    }
+    if (sai_error_code != 0u)
+    {
+        s_recovery_request.sai_error_code = sai_error_code;
+    }
+    if (sai_status_flags != 0u)
+    {
+        s_recovery_request.sai_status_flags |= sai_status_flags;
+    }
+    __DMB();
+    s_recovery_request.published_sequence++;
+    audio_transport_notify_from_isr();
+}
+
+bool audio_transport_take_recovery_request(AudioRecoveryRequest_t* request)
+{
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    const uint32_t published = s_recovery_request.published_sequence;
+    const bool pending = (published != s_recovery_request.acknowledged_sequence);
+    if (pending)
+    {
+        request->sequence         = published;
+        request->cause_mask       = s_recovery_request.cause_mask;
+        request->dma_error_code   = s_recovery_request.dma_error_code;
+        request->sai_error_code   = s_recovery_request.sai_error_code;
+        request->sai_status_flags = s_recovery_request.sai_status_flags;
+
+        // 今回のpayloadをin-flightとして切り離し、以後のエラーを新しいpayloadへ
+        // 集約する。ack後に古い原因が残り、後発要求へ混ざることを防ぐ。
+        s_recovery_request.cause_mask       = 0u;
+        s_recovery_request.dma_error_code   = 0u;
+        s_recovery_request.sai_error_code   = 0u;
+        s_recovery_request.sai_status_flags = 0u;
+    }
+
+    __set_PRIMASK(primask);
+    return pending;
+}
+
+void audio_transport_ack_recovery_request(uint32_t sequence)
+{
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    if ((int32_t) (sequence - s_recovery_request.acknowledged_sequence) > 0)
+    {
+        s_recovery_request.acknowledged_sequence = sequence;
+    }
+
+    __set_PRIMASK(primask);
+}
+
 static volatile bool s_streaming_out = false;
 static volatile bool s_streaming_in  = false;
 static volatile uint32_t s_stream_requested_mask     = 0u;
@@ -256,7 +348,7 @@ __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t stereo_in_b
 uint16_t spk_data_size;
 
 static void fill_tx_half(uint32_t index0);
-static void fill_rx_half(uint32_t index0);
+static void fill_rx_half(uint32_t index0, bool streaming);
 static uint32_t audio_frames_per_usb_in_interval(uint32_t sample_rate_hz);
 static bool audio_usb_in_source_ready(uint32_t sample_rate_hz);
 static void copybuf_ring2usb_and_send(uint32_t sample_rate_hz);
@@ -322,30 +414,108 @@ static void dma_sai1_rx_cplt(DMA_HandleTypeDef* hdma)
 
 static void dma_sai_error(DMA_HandleTypeDef* hdma)
 {
-    SEGGER_RTT_printf(0, "DMA ERR! code=%08X\n", hdma->ErrorCode);
-    const bool tx_streaming = s_streaming_out && (hdma == &handle_GPDMA1_Channel2);
-    audio_diagnostics_record_dma_error(hdma->ErrorCode, tx_streaming,
-                                       tx_streaming ? audio_tx_used_words() : 0);
+    if (hdma == &handle_GPDMA1_Channel2)
+    {
+        const bool streaming = s_streaming_out;
+        audio_diagnostics_record_dma_error(hdma->ErrorCode, true, streaming,
+                                           streaming ? audio_tx_used_words() : 0);
+        recovery_request_publish_from_isr(AUDIO_RECOVERY_CAUSE_TX_DMA, hdma->ErrorCode, 0u, 0u);
+    }
+    else if (hdma == &handle_GPDMA1_Channel3)
+    {
+        audio_diagnostics_record_dma_error(hdma->ErrorCode, false, false, 0);
+        recovery_request_publish_from_isr(AUDIO_RECOVERY_CAUSE_RX_DMA, hdma->ErrorCode, 0u, 0u);
+    }
+    else
+    {
+        // 未知のハンドルは診断へ残すが、誤った経路情報で復旧しない。
+        audio_diagnostics_record_unknown_dma_error(hdma->ErrorCode);
+    }
 }
 
+// SAIエラー割り込みのISR処理。フラグの保存・クリア、対象割り込みのマスク、診断記録、
+// 復旧要求のpublishのみを行い、HAL標準ハンドラの停止待ち（SAI_DMAAbort→SAI_Disable）へ
+// 渡さない。停止・再初期化はAudio Taskの復旧処理へ集約する。
+// 処理した場合trueを返し、呼出側はHAL_SAI_IRQHandlerをスキップする。
+bool audio_transport_sai_error_isr(SAI_HandleTypeDef* hsai)
+{
+    const uint32_t pending = hsai->Instance->SR & SAI_ERROR_STATUS_MASK;
+    if (pending == 0u)
+    {
+        return false;
+    }
+
+    const bool tx_handle = (hsai == &hsai_BlockA2);
+    const bool rx_handle = (hsai == &hsai_BlockA1);
+    if (!tx_handle && !rx_handle)
+    {
+        return false;
+    }
+
+    // 保存したフラグをクリアし、再入を防ぐため対象割り込みをマスクする。
+    hsai->Instance->CLRFR = pending;
+    hsai->Instance->IMR &= ~SAI_ERROR_INTERRUPT_MASK;
+
+    uint32_t error = 0u;
+    if ((pending & SAI_xSR_OVRUDR) != 0u)
+    {
+        error |= (hsai->State == HAL_SAI_STATE_BUSY_RX) ? HAL_SAI_ERROR_OVR : HAL_SAI_ERROR_UDR;
+    }
+    if ((pending & SAI_xSR_WCKCFG) != 0u)
+    {
+        error |= HAL_SAI_ERROR_WCKCFG;
+    }
+    if ((pending & SAI_xSR_CNRDY) != 0u)
+    {
+        error |= HAL_SAI_ERROR_CNREADY;
+    }
+    if ((pending & SAI_xSR_AFSDET) != 0u)
+    {
+        error |= HAL_SAI_ERROR_AFSDET;
+    }
+    if ((pending & SAI_xSR_LFSDET) != 0u)
+    {
+        error |= HAL_SAI_ERROR_LFSDET;
+    }
+
+    if (tx_handle)
+    {
+        const bool streaming = s_streaming_out;
+        audio_diagnostics_record_sai_tx_error(error, pending, streaming,
+                                              streaming ? audio_tx_used_words() : 0);
+        recovery_request_publish_from_isr(AUDIO_RECOVERY_CAUSE_TX_SAI, 0u, error, pending);
+    }
+    else
+    {
+        audio_diagnostics_record_sai_rx_error(error, pending);
+        recovery_request_publish_from_isr(AUDIO_RECOVERY_CAUSE_RX_SAI, 0u, error, pending);
+    }
+
+    return true;
+}
+
+// HAL標準ハンドラ経由のフォールバック。通常はaudio_transport_sai_error_isr()が
+// 先に処理してHAL_SAI_IRQHandlerへ渡さないため、ここには到達しない。
 void HAL_SAI_ErrorCallback(SAI_HandleTypeDef* hsai)
 {
     const uint32_t sr = hsai->Instance->SR;
     if (hsai == &hsai_BlockA2)
     {
         const bool streaming = s_streaming_out;
-        audio_diagnostics_record_sai_tx_error(HAL_SAI_GetError(hsai),
+        const uint32_t error = HAL_SAI_GetError(hsai);
+        audio_diagnostics_record_sai_tx_error(error,
                                               sr & SAI_ERROR_STATUS_MASK,
                                               streaming,
                                               streaming ? audio_tx_used_words() : 0);
+        recovery_request_publish_from_isr(AUDIO_RECOVERY_CAUSE_TX_SAI, 0u, error,
+                                          sr & SAI_ERROR_STATUS_MASK);
     }
     else if (hsai == &hsai_BlockA1)
     {
-#if AUDIO_DIAG_LOG
-        audio_diagnostics_record_sai_rx_error(HAL_SAI_GetError(hsai), sr & SAI_ERROR_STATUS_MASK);
-#else
-        (void) sr;
-#endif
+        const uint32_t error = HAL_SAI_GetError(hsai);
+        audio_diagnostics_record_sai_rx_error(error, sr & SAI_ERROR_STATUS_MASK);
+        recovery_request_publish_from_isr(AUDIO_RECOVERY_CAUSE_RX_SAI, 0u, error,
+                                          sr & SAI_ERROR_STATUS_MASK);
     }
 }
 
@@ -372,6 +542,12 @@ static bool audio_transport_start_tx_path(void)
         return false;
     }
 
+    // 手動DMA開始方式に合わせてHAL状態をBUSY_TXへ設定する。HAL IRQ handlerの
+    // エラー分類（OVRUDR時のUDR/OVR判定）がこのStateを参照する。
+    hsai_BlockA2.State = HAL_SAI_STATE_BUSY_TX;
+    // SAIエラー割り込みを有効化してHAL_SAI_ErrorCallback（復旧要求）へ到達させる。
+    __HAL_SAI_ENABLE_IT(&hsai_BlockA2, SAI_ERROR_INTERRUPT_MASK);
+
     hsai_BlockA2.Instance->CR1 |= SAI_xCR1_DMAEN;
     __HAL_SAI_ENABLE(&hsai_BlockA2);
     return true;
@@ -396,30 +572,45 @@ static bool audio_transport_start_rx_path(void)
         return false;
     }
 
+    // 手動DMA開始方式に合わせてHAL状態をBUSY_RXへ設定する。HAL IRQ handlerの
+    // エラー分類（OVRUDR時のUDR/OVR判定）がこのStateを参照する。
+    hsai_BlockA1.State = HAL_SAI_STATE_BUSY_RX;
+    // SAIエラー割り込みを有効化してHAL_SAI_ErrorCallback（復旧要求）へ到達させる。
+    __HAL_SAI_ENABLE_IT(&hsai_BlockA1, SAI_ERROR_INTERRUPT_MASK);
+
     hsai_BlockA1.Instance->CR1 |= SAI_xCR1_DMAEN;
     __HAL_SAI_ENABLE(&hsai_BlockA1);
     return true;
 }
 
-static void audio_transport_stop_sai_paths(void)
+// SAI停止。HAL_SAI_Abortで停止完了確認・DMA abort・IMR/フラグ初期化・FIFO flushを
+// 行い、StateをREADYへ戻す（次のHAL_SAI_Initが生成MspInitをスキップできる状態）。
+// deinit_sai=trueはさらにSAIをDeInitする（レート変更用）。復旧はfalseでMSPを維持する。
+// 戻り値は停止完了確認の成否。falseでもDMAは明示的にabortする。
+static bool audio_transport_stop_sai_paths(bool deinit_sai)
 {
-    const uint32_t primask = __get_PRIMASK();
-    __disable_irq();
+    bool stopped = true;
 
-    hsai_BlockA2.Instance->CR1 &= ~SAI_xCR1_DMAEN;
-    hsai_BlockA1.Instance->CR1 &= ~SAI_xCR1_DMAEN;
-    __HAL_SAI_DISABLE(&hsai_BlockA2);
-    __HAL_SAI_DISABLE(&hsai_BlockA1);
-    __DSB();
-
-    __set_PRIMASK(primask);
+    if (HAL_SAI_Abort(&hsai_BlockA2) != HAL_OK)
+    {
+        stopped = false;
+    }
+    if (HAL_SAI_Abort(&hsai_BlockA1) != HAL_OK)
+    {
+        stopped = false;
+    }
 
     (void) HAL_DMA_Abort(&handle_GPDMA1_Channel2);
     (void) HAL_DMA_Abort(&handle_GPDMA1_Channel3);
     __DSB();
 
-    (void) HAL_SAI_DeInit(&hsai_BlockA2);
-    (void) HAL_SAI_DeInit(&hsai_BlockA1);
+    if (deinit_sai)
+    {
+        (void) HAL_SAI_DeInit(&hsai_BlockA2);
+        (void) HAL_SAI_DeInit(&hsai_BlockA1);
+    }
+
+    return stopped;
 }
 
 static bool audio_transport_init_dma_channel(DMA_HandleTypeDef* hdma,
@@ -516,14 +707,26 @@ void audio_transport_start(void)
     }
 }
 
-void audio_transport_reset_for_sample_rate(uint32_t sample_rate_hz)
+// 復旧・レート変更共通。SAI/GPDMA停止 → DMAイベント/リングindexリセット →
+// DMA/リング/USBバッファ消去。timecode設定には触れない。Audio Task context only。
+// deinit_sai=trueはSAIをDeInitする（レート変更用）。復旧はfalseにしてSAIのMSP資源と
+// 設定を維持し、HAL_SAI_MspInit（Error_Handlerを含む）を再実行させない。
+// g_audio_tx_diagnosticsは原因調査のため保持する（明示リセットは呼出側で行う）。
+// 戻り値はSAI停止完了確認の成否。バッファ消去は常に行う。
+bool audio_transport_stop_and_clear_paths(bool deinit_sai)
 {
-    audio_transport_stop_sai_paths();
+    const bool stopped = audio_transport_stop_sai_paths(deinit_sai);
 
     audio_ring_reset_indices(&s_tx_ring, 0U);
     audio_ring_reset_indices(&s_rx_ring, 0U);
-    audio_transport_reset_tx_diagnostics();
-    dma_audio_event_reset(&s_rx_dma_event);
+
+    // 停止中に遅延して届くイベントを通常搬送へ混入させないよう世代を進める。
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    dma_audio_event_reset_locked(&s_tx_dma_event);
+    dma_audio_event_reset_locked(&s_rx_dma_event);
+    s_dma_event_generation++;
+    __set_PRIMASK(primask);
 
 #if AUDIO_DIAG_LOG
     audio_diagnostics_reset_session();
@@ -536,6 +739,18 @@ void audio_transport_reset_for_sample_rate(uint32_t sample_rate_hz)
     memset(stereo_in_buf, 0, sizeof(stereo_in_buf));
     memset(usb_playback_buf, 0, sizeof(usb_playback_buf));
     memset(usb_capture_buf, 0, sizeof(usb_capture_buf));
+    __DSB();
+
+    return stopped;
+}
+
+void audio_transport_reset_for_sample_rate(uint32_t sample_rate_hz)
+{
+    (void) audio_transport_stop_and_clear_paths(true);
+
+    // レート変更はstream開始と同様、TX診断を明示的にリセットする。
+    audio_transport_reset_tx_diagnostics();
+
     timecode_synth_reset_for_sample_rate(sample_rate_hz);
 
     // alt settingが維持されたままレートだけ変わる場合に備え、新レートのIN FIFO目標も適用する。
@@ -544,17 +759,38 @@ void audio_transport_reset_for_sample_rate(uint32_t sample_rate_hz)
     __DSB();
 }
 
-void audio_transport_restart_after_rate_change(void)
+// DMA channel再構築とTXリングprefill・TX開始。失敗時は両経路を停止してfalse。
+// init_sai=trueはレート変更用で、CubeMX生成のMX_SAIx_Init()でSAIを再構築する。
+// init_sai=falseは復旧用で、READY状態からのHAL_SAI_Init（MspInitをスキップ）により
+// MSP資源を維持したままSAI設定とErrorCodeを再初期化して再始動する。
+bool audio_transport_rebuild_and_start_tx(bool init_sai)
 {
     /* Re-init DMA channels (linked-list mode) */
     if (!audio_transport_reinit_dma_channels())
     {
-        Error_Handler();
+        (void) audio_transport_stop_sai_paths(init_sai);
+        return false;
     }
 
-    /* Reconfigure peripherals (SAI) */
-    MX_SAI1_Init();
-    MX_SAI2_Init();
+    if (init_sai)
+    {
+        /* Reconfigure peripherals (SAI). 失敗時は既存どおりfatal。 */
+        MX_SAI1_Init();
+        MX_SAI2_Init();
+    }
+    else
+    {
+        /* 復旧: 停止時にStateがREADYへ戻っているためMspInitは再実行されない。 */
+        if ((HAL_SAI_Init(&hsai_BlockA1) != HAL_OK) || (HAL_SAI_Init(&hsai_BlockA2) != HAL_OK))
+        {
+            (void) audio_transport_stop_sai_paths(false);
+            return false;
+        }
+
+        // HAL_SAI_Initで設定が入り直すためDMAリンクを再実行する。
+        __HAL_LINKDMA(&hsai_BlockA1, hdmarx, handle_GPDMA1_Channel3);
+        __HAL_LINKDMA(&hsai_BlockA2, hdmatx, handle_GPDMA1_Channel2);
+    }
 
     /* Prefill TX ring buffer with silence (already zeroed above) */
     /* Set write index ahead to provide initial data for DMA */
@@ -564,14 +800,39 @@ void audio_transport_restart_after_rate_change(void)
     /* Configure and link DMA for SAI2 TX */
     if (!audio_transport_start_tx_path())
     {
+        (void) audio_transport_stop_sai_paths(init_sai);
+        return false;
+    }
+
+    return true;
+}
+
+// TX同期待ち後のRX開始。失敗時は両経路を停止（MSP維持）してfalse。
+bool audio_transport_start_rx_after_tx_sync(void)
+{
+    /* Configure and link DMA for SAI1 RX */
+    if (!audio_transport_start_rx_path())
+    {
+        (void) audio_transport_stop_sai_paths(false);
+        return false;
+    }
+
+    // 復旧後もalt settingが維持される場合があるため、IN FIFO目標を再適用する。
+    audio_transport_apply_usb_in_fifo_target(get_current_sample_rate_hz());
+    return true;
+}
+
+void audio_transport_restart_after_rate_change(void)
+{
+    if (!audio_transport_rebuild_and_start_tx(true))
+    {
         Error_Handler();
     }
 
     /* Wait for SAI TX to synchronize with external clock before starting RX */
     osDelay(10);
 
-    /* Configure and link DMA for SAI1 RX */
-    if (!audio_transport_start_rx_path())
+    if (!audio_transport_start_rx_after_tx_sync())
     {
         Error_Handler();
     }
@@ -937,7 +1198,20 @@ static void fill_tx_half(uint32_t index0)
                                  (SAI_TX_BUF_SIZE / 2u) / AUDIO_RING_FRAME_WORDS);
 }
 
-static void copybuf_ring2sai(void)
+// DMA half期間（4ch frame単位）をSystemCoreClockサイクルへ換算する。
+// 96kHzで約0.333ms、48kHzで約0.667ms。sample_rate_hzが不正なら期限なし。
+static uint32_t audio_dma_half_deadline_cycles(uint32_t half_words, uint32_t sample_rate_hz)
+{
+    if ((sample_rate_hz == 0u) || (SystemCoreClock == 0u))
+    {
+        return UINT32_MAX;
+    }
+
+    const uint32_t half_frames = half_words / AUDIO_RING_FRAME_WORDS;
+    return (uint32_t) (((uint64_t) half_frames * SystemCoreClock) / sample_rate_hz);
+}
+
+static void copybuf_ring2sai(uint32_t sample_rate_hz)
 {
     DmaAudioEventSnapshot_t event;
     if (!dma_audio_event_take_latest(&s_tx_dma_event, &event))
@@ -945,10 +1219,19 @@ static void copybuf_ring2sai(void)
         return;
     }
 
+    if (event.generation != s_dma_event_generation)
+    {
+        // 復旧・レート変更前の遅延イベントは通常搬送へ混入させない。
+        return;
+    }
+
     if (s_streaming_out)
     {
-        const uint32_t now_cycles = DWT->CYCCNT;
-        audio_diagnostics_record_tx_dma_service(event.event, now_cycles - event.cycle);
+        const uint32_t service_cycles = DWT->CYCCNT - event.cycle;
+        const uint32_t deadline_cycles =
+            audio_dma_half_deadline_cycles(SAI_TX_BUF_SIZE / 2u, sample_rate_hz);
+        audio_diagnostics_record_tx_dma_service(event.event, service_cycles,
+                                                service_cycles > deadline_cycles);
 
         if (event.dropped_events != 0u)
         {
@@ -972,7 +1255,7 @@ static void copybuf_ring2sai(void)
 // ==============================
 // SAI(RX) -> Ring -> USB(IN) path
 // ==============================
-static void fill_rx_half(uint32_t index0)
+static void fill_rx_half(uint32_t index0, bool streaming)
 {
     const uint32_t n = (SAI_RX_BUF_SIZE / 2);  // 半分のword数
 
@@ -990,6 +1273,7 @@ static void fill_rx_half(uint32_t index0)
     if (used < 0)
     {
         audio_ring_discard_all(&s_rx_ring);
+        audio_diagnostics_record_rx_ring_discard(0u, true);
         used = 0;
     }
 
@@ -997,6 +1281,7 @@ static void fill_rx_half(uint32_t index0)
     if (used > (int32_t) s_rx_ring.capacity_words)
     {
         audio_ring_discard_all(&s_rx_ring);
+        audio_diagnostics_record_rx_ring_discard(0u, true);
         used = 0;
     }
 
@@ -1011,7 +1296,15 @@ static void fill_rx_half(uint32_t index0)
         {
             drop_words = (used / frame_words) * frame_words;
         }
-        s_rx_ring.read_index += (uint32_t) drop_words;
+        if (drop_words > 0)
+        {
+            s_rx_ring.read_index += (uint32_t) drop_words;
+            if (streaming)
+            {
+                // USB IN停止中は排出されないため、正常動作としての破棄は記録しない。
+                audio_diagnostics_record_rx_ring_discard((uint32_t) drop_words, false);
+            }
+        }
     }
 
     uint32_t w     = audio_ring_offset(&s_rx_ring, s_rx_ring.write_index);
@@ -1026,7 +1319,7 @@ static void fill_rx_half(uint32_t index0)
     s_rx_ring.write_index += n;
 }
 
-static void copybuf_sai2ring(void)
+static void copybuf_sai2ring(uint32_t sample_rate_hz)
 {
     DmaAudioEventSnapshot_t event;
     if (!dma_audio_event_take_latest(&s_rx_dma_event, &event))
@@ -1034,14 +1327,34 @@ static void copybuf_sai2ring(void)
         return;
     }
 
+    if (event.generation != s_dma_event_generation)
+    {
+        // 復旧・レート変更前の遅延イベントは通常搬送へ混入させない。
+        return;
+    }
+
+    if (s_streaming_in)
+    {
+        const uint32_t service_cycles = DWT->CYCCNT - event.cycle;
+        const uint32_t deadline_cycles =
+            audio_dma_half_deadline_cycles(SAI_RX_BUF_SIZE / 2u, sample_rate_hz);
+        audio_diagnostics_record_rx_dma_service(event.event, service_cycles,
+                                                service_cycles > deadline_cycles);
+
+        if (event.dropped_events != 0u)
+        {
+            audio_diagnostics_record_rx_events_dropped(event.event, event.dropped_events);
+        }
+    }
+
     // TXと同様に、最新コールバックが示す現在安全なhalfだけを取り込む。
     if (event.event == DMA_AUDIO_EVENT_HALF)
     {
-        fill_rx_half(0);
+        fill_rx_half(0, s_streaming_in);
     }
     else if (event.event == DMA_AUDIO_EVENT_COMPLETE)
     {
-        fill_rx_half(SAI_RX_BUF_SIZE / 2);
+        fill_rx_half(SAI_RX_BUF_SIZE / 2, s_streaming_in);
     }
 }
 
@@ -1335,6 +1648,13 @@ void audio_transport_service(uint32_t sample_rate_hz)
     }
 #endif
 
+    // DMA halfをTinyUSB FIFO操作より先に処理する。
+    // USB -> SAI (TX側の安全なhalfを書き換える)
+    copybuf_ring2sai(sample_rate_hz);
+
+    // SAI -> USB (RX側の安全なhalfをリングへ退避する)
+    copybuf_sai2ring(sample_rate_hz);
+
     // USB OUTは受信通知とFIFO残量に追従して即時に吸い出す。
     if (usb_rx_event || tud_audio_n_available(AUDIO_FUNC_ID) > 0U)
     {
@@ -1368,10 +1688,6 @@ void audio_transport_service(uint32_t sample_rate_hz)
     {
         copybuf_usb2ring();
     }
-    copybuf_ring2sai();
-
-    // SAI -> USB
-    copybuf_sai2ring();
 
     // USB INはエンドポイントの1転送間隔分（現在0.5ms）が揃ったら次の塊を積む。
     // SAI RX DMA通知でも補充することで、IN FIFOが空になった場合の停止を防ぐ。

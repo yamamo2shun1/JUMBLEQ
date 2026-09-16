@@ -61,9 +61,73 @@ typedef struct
     uint32_t last_dma_error_code;
     uint32_t last_sai_error_code;
     uint32_t last_sai_status_flags;
+    uint32_t half_deadline_overruns;
+    uint32_t cplt_deadline_overruns;
 } AudioTxDiagnostics_t;
 
 extern volatile AudioTxDiagnostics_t g_audio_tx_diagnostics;
+
+// RX DMA搬送の永続診断。stream/rate変更や復旧のバッファ消去ではリセットせず、
+// AUDIO_DIAG_LOG=0でもデバッガから参照できる。
+typedef struct
+{
+    uint32_t rx_half_callbacks;
+    uint32_t rx_cplt_callbacks;
+    uint32_t rx_half_rewrite_events;
+    uint32_t rx_cplt_rewrite_events;
+    uint32_t rx_both_pending_events;
+    uint32_t rx_dma_events_dropped;
+    uint32_t rx_both_pending_last_callback;
+    uint32_t rx_half_service_cycles_max;
+    uint32_t rx_cplt_service_cycles_max;
+    uint32_t rx_half_deadline_overruns;
+    uint32_t rx_cplt_deadline_overruns;
+    uint32_t rx_ring_discard_events;
+    uint32_t rx_ring_discard_words;
+    uint32_t rx_ring_full_discards;
+    uint32_t rx_last_discard_words;
+    uint32_t rx_last_discard_tick_ms;
+    uint32_t dma_error_events;
+    uint32_t sai_error_events;
+    uint32_t last_dma_error_code;
+    uint32_t last_sai_error_code;
+    uint32_t last_sai_status_flags;
+} AudioRxDiagnostics_t;
+
+extern volatile AudioRxDiagnostics_t g_audio_rx_diagnostics;
+
+// 復旧要求・試行・結果の永続診断。復旧時のバッファ消去では消去しない。
+typedef struct
+{
+    uint32_t request_count;
+    uint32_t attempt_count;
+    uint32_t success_count;
+    uint32_t failure_count;
+    uint32_t consecutive_failures;
+    uint32_t latched;
+    uint32_t last_cause_mask;
+    uint32_t last_request_dma_error_code;
+    uint32_t last_request_sai_error_code;
+    uint32_t last_request_sai_status_flags;
+    uint32_t last_failed_stage;
+    uint32_t last_request_tick_ms;
+    uint32_t last_attempt_tick_ms;
+    uint32_t last_success_tick_ms;
+    uint32_t last_failure_tick_ms;
+    uint32_t unknown_dma_error_events;
+    uint32_t last_unknown_dma_error_code;
+} AudioRecoveryDiagnostics_t;
+
+extern volatile AudioRecoveryDiagnostics_t g_audio_recovery_diagnostics;
+
+// 復旧失敗時の段階。どの処理で失敗したかを診断値へ残す。
+enum
+{
+    AUDIO_RECOVERY_STAGE_NONE     = 0u,
+    AUDIO_RECOVERY_STAGE_PREPARE  = 1u,
+    AUDIO_RECOVERY_STAGE_TX_START = 2u,
+    AUDIO_RECOVERY_STAGE_RX_START = 3u,
+};
 
 // DMA callback kinds. The values must match the transport's internal
 // DMA event encoding; audio_transport.c asserts this at compile time.
@@ -96,13 +160,35 @@ void audio_diagnostics_record_tx_dma_callback(uint32_t callback_event,
 void audio_diagnostics_record_rx_dma_callback(uint32_t callback_event,
                                               uint32_t overwritten_event);
 void audio_diagnostics_record_tx_dma_service(uint32_t callback_event,
-                                             uint32_t service_cycles);
+                                             uint32_t service_cycles,
+                                             bool deadline_overrun);
+void audio_diagnostics_record_rx_dma_service(uint32_t callback_event,
+                                             uint32_t service_cycles,
+                                             bool deadline_overrun);
 void audio_diagnostics_record_tx_events_dropped(uint32_t last_event,
                                                 uint32_t dropped_events,
                                                 int32_t used);
+void audio_diagnostics_record_rx_events_dropped(uint32_t last_event,
+                                                uint32_t dropped_events);
+// RXリング破棄。full_discardは負値・capacity超過による異常水位の全破棄を表す。
+void audio_diagnostics_record_rx_ring_discard(uint32_t dropped_words, bool full_discard);
 void audio_diagnostics_record_dma_error(uint32_t error_code,
-                                        bool tx_streaming,
+                                        bool tx_route,
+                                        bool streaming,
                                         int32_t used);
+// TX/RXへ対応付けられないDMAハンドルのエラー。復旧要求には使用しない。
+void audio_diagnostics_record_unknown_dma_error(uint32_t error_code);
+
+// 復旧要求・試行・結果。復旧のバッファ消去では消去しない。
+void audio_diagnostics_record_recovery_request(uint32_t cause_mask,
+                                               uint32_t dma_error_code,
+                                               uint32_t sai_error_code,
+                                               uint32_t sai_status_flags);
+void audio_diagnostics_record_recovery_attempt(void);
+void audio_diagnostics_record_recovery_success(void);
+void audio_diagnostics_record_recovery_failure(uint32_t failed_stage);
+// latched=falseでは連続失敗数もクリアする。
+void audio_diagnostics_set_recovery_latched(bool latched);
 
 // SAI error
 void audio_diagnostics_record_sai_tx_error(uint32_t error_code,

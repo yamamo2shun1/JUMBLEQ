@@ -22,6 +22,7 @@
 #include "stm32h7rsxx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "audio_transport_internal.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -451,7 +452,11 @@ void HPDMA1_Channel0_IRQHandler(void)
 void SAI1_A_IRQHandler(void)
 {
   /* USER CODE BEGIN SAI1_A_IRQn 0 */
-
+  // SAIエラーはISR内で停止待ちをせず、復旧要求のみ発行してAudio Taskへ集約する。
+  if (audio_transport_sai_error_isr(&hsai_BlockA1))
+  {
+    return;
+  }
   /* USER CODE END SAI1_A_IRQn 0 */
   HAL_SAI_IRQHandler(&hsai_BlockA1);
   /* USER CODE BEGIN SAI1_A_IRQn 1 */
@@ -465,7 +470,11 @@ void SAI1_A_IRQHandler(void)
 void SAI2_A_IRQHandler(void)
 {
   /* USER CODE BEGIN SAI2_A_IRQn 0 */
-
+  // SAIエラーはISR内で停止待ちをせず、復旧要求のみ発行してAudio Taskへ集約する。
+  if (audio_transport_sai_error_isr(&hsai_BlockA2))
+  {
+    return;
+  }
   /* USER CODE END SAI2_A_IRQn 0 */
   HAL_SAI_IRQHandler(&hsai_BlockA2);
   /* USER CODE BEGIN SAI2_A_IRQn 1 */
