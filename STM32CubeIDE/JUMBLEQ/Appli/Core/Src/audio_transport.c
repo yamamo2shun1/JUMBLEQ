@@ -20,18 +20,35 @@
 #include "FreeRTOS.h"
 #include "cmsis_os2.h"
 #include "task.h"
+#include "SEGGER_RTT.h"
 
 enum
 {
     AUDIO_USB_FRAME_CHANNELS = 4u,
     AUDIO_RING_FRAME_WORDS   = 4u,
     AUDIO_USB_HS_MICROFRAMES_PER_SECOND = 8000u,
+    AUDIO_USB_FRAME_BYTES = AUDIO_USB_FRAME_CHANNELS * sizeof(int32_t),
+    AUDIO_USB_OUT_TARGET_MICROFRAMES = 4u,  // 0.5 ms (HS OUT転送 0.125 ms x 4)
+    AUDIO_USB_IN_TARGET_INTERVALS    = 2u,  // 1.0 ms (EP IN interval 0.5 ms x 2)
     DMA_AUDIO_EVENT_NONE       = 0u,
     DMA_AUDIO_EVENT_HALF       = 1u,
     DMA_AUDIO_EVENT_COMPLETE   = 2u,
     AUDIO_STREAM_OUT_BIT       = (1u << 0),
     AUDIO_STREAM_IN_BIT        = (1u << 1),
 };
+
+// 最大サンプルレート時のFIFO目標byte数。実行時helperと同じ切り上げ計算で、
+// 設定矛盾（目標 + 最大packetがFIFO容量を超える）をビルド時に検出する。
+#define AUDIO_USB_OUT_TARGET_BYTES_MAX \
+    (((((uint32_t) CFG_TUD_AUDIO_FUNC_1_MAX_SAMPLE_RATE * AUDIO_USB_OUT_TARGET_MICROFRAMES) + \
+       (AUDIO_USB_HS_MICROFRAMES_PER_SECOND - 1u)) / \
+      AUDIO_USB_HS_MICROFRAMES_PER_SECOND) * \
+     (uint32_t) AUDIO_USB_FRAME_BYTES)
+#define AUDIO_USB_IN_TARGET_BYTES_MAX \
+    (((((uint32_t) CFG_TUD_AUDIO_FUNC_1_MAX_SAMPLE_RATE * CFG_TUD_AUDIO_FUNC_1_EP_IN_INTERVAL_UFRAMES) + \
+       (AUDIO_USB_HS_MICROFRAMES_PER_SECOND - 1u)) / \
+      AUDIO_USB_HS_MICROFRAMES_PER_SECOND) * \
+     AUDIO_USB_IN_TARGET_INTERVALS * (uint32_t) AUDIO_USB_FRAME_BYTES)
 
 #define SAI_ERROR_STATUS_MASK \
     (SAI_xSR_OVRUDR | SAI_xSR_WCKCFG | SAI_xSR_CNRDY | SAI_xSR_AFSDET | SAI_xSR_LFSDET)
@@ -57,6 +74,15 @@ _Static_assert((uint32_t) DMA_AUDIO_EVENT_HALF == (uint32_t) AUDIO_DIAG_DMA_EVEN
                "DMA event encoding must match the diagnostics API");
 _Static_assert((uint32_t) DMA_AUDIO_EVENT_COMPLETE == (uint32_t) AUDIO_DIAG_DMA_EVENT_COMPLETE,
                "DMA event encoding must match the diagnostics API");
+_Static_assert(AUDIO_USB_FRAME_BYTES == AUDIO_RING_FRAME_WORDS * sizeof(int32_t),
+               "USB and ring buffer frame sizes must match");
+// FIFO目標は最大packetを追加で格納できる余白を残し、uint16_tに収まること。
+_Static_assert(AUDIO_USB_OUT_TARGET_BYTES_MAX + CFG_TUD_AUDIO_FUNC_1_EP_OUT_SZ_MAX <=
+                   CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ,
+               "USB OUT FIFO target must leave room for one maximum packet");
+_Static_assert(AUDIO_USB_IN_TARGET_BYTES_MAX + CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ_MAX <=
+                   CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ,
+               "USB IN FIFO target must leave room for one maximum packet");
 
 static __attribute__((section("noncacheable_buffer"), aligned(32)))
 int32_t s_tx_ring_storage[SAI_RNG_BUF_SIZE] = {0};
@@ -234,6 +260,7 @@ static void fill_rx_half(uint32_t index0);
 static uint32_t audio_frames_per_usb_in_interval(uint32_t sample_rate_hz);
 static bool audio_usb_in_source_ready(uint32_t sample_rate_hz);
 static void copybuf_ring2usb_and_send(uint32_t sample_rate_hz);
+static void audio_transport_apply_usb_in_fifo_target(uint32_t sample_rate_hz);
 
 static inline int32_t audio_tx_used_words(void)
 {
@@ -510,6 +537,10 @@ void audio_transport_reset_for_sample_rate(uint32_t sample_rate_hz)
     memset(usb_in_buf, 0, sizeof(usb_in_buf));
     memset(usb_out_buf, 0, sizeof(usb_out_buf));
     timecode_synth_reset_for_sample_rate(sample_rate_hz);
+
+    // alt settingが維持されたままレートだけ変わる場合に備え、新レートのIN FIFO目標も適用する。
+    audio_transport_apply_usb_in_fifo_target(sample_rate_hz);
+
     __DSB();
 }
 
@@ -554,6 +585,10 @@ void audio_transport_request_stream(AudioTransportStream_t stream, bool enabled)
     const uint32_t primask = __get_PRIMASK();
     __disable_irq();
 
+#if AUDIO_DIAG_LOG
+    const uint32_t previous_mask = s_stream_requested_mask;
+#endif
+
     if (enabled)
     {
         s_stream_requested_mask |= stream_bit;
@@ -564,8 +599,23 @@ void audio_transport_request_stream(AudioTransportStream_t stream, bool enabled)
     }
     __DMB();
     s_stream_request_sequence++;
+#if AUDIO_DIAG_LOG
+    const uint32_t requested_mask = s_stream_requested_mask;
+    const uint32_t request_sequence = s_stream_request_sequence;
+#endif
 
     __set_PRIMASK(primask);
+
+#if AUDIO_DIAG_LOG
+    SEGGER_RTT_printf(0,
+                      "[AUD][STREAM-REQ] tick=%lu stream=%s enabled=%u mask=0x%02lx->0x%02lx sequence=%lu\r\n",
+                      (unsigned long) HAL_GetTick(),
+                      (stream == AUDIO_TRANSPORT_STREAM_OUT) ? "OUT" : "IN",
+                      enabled ? 1u : 0u,
+                      (unsigned long) previous_mask,
+                      (unsigned long) requested_mask,
+                      (unsigned long) request_sequence);
+#endif
     audio_transport_notify_task();
 }
 
@@ -625,36 +675,41 @@ static void audio_stream_apply_out_state(bool enabled)
 
 static void audio_stream_apply_in_state(bool enabled)
 {
-    if (enabled == s_streaming_in)
+    if (enabled != s_streaming_in)
     {
-        return;
-    }
+        const uint32_t primask = __get_PRIMASK();
+        __disable_irq();
 
-    const uint32_t primask = __get_PRIMASK();
-    __disable_irq();
+        if (enabled)
+        {
+            usb_tx_pending = true;
+            dma_audio_event_reset_locked(&s_rx_dma_event);
+            s_streaming_in = true;
+        }
+        else
+        {
+            s_streaming_in       = false;
+            usb_tx_pending       = false;
+            audio_ring_reset_indices(&s_rx_ring, 0U);
+            dma_audio_event_reset_locked(&s_rx_dma_event);
+        }
 
-    if (enabled)
-    {
-        usb_tx_pending = true;
-        dma_audio_event_reset_locked(&s_rx_dma_event);
-        s_streaming_in = true;
-    }
-    else
-    {
-        s_streaming_in       = false;
-        usb_tx_pending       = false;
-        audio_ring_reset_indices(&s_rx_ring, 0U);
-        dma_audio_event_reset_locked(&s_rx_dma_event);
-    }
-
-    __set_PRIMASK(primask);
+        __set_PRIMASK(primask);
 
 #if AUDIO_DIAG_LOG
+        if (enabled)
+        {
+            audio_diagnostics_record_usb_in_notify();
+        }
+#endif
+    }
+
     if (enabled)
     {
-        audio_diagnostics_record_usb_in_notify();
+        // TinyUSBはSET_INTERFACEのたびにIN FIFO thresholdをFIFO半分へ戻すため、
+        // 有効要求を適用するたびに現在レートの目標で上書きする。
+        audio_transport_apply_usb_in_fifo_target(get_current_sample_rate_hz());
     }
-#endif
 }
 
 bool audio_transport_apply_requested_stream_state(void)
@@ -665,8 +720,23 @@ bool audio_transport_apply_requested_stream_state(void)
         return false;
     }
 
+#if AUDIO_DIAG_LOG
+    const bool previous_out = s_streaming_out;
+    const bool previous_in  = s_streaming_in;
+#endif
     audio_stream_apply_out_state((requested_mask & AUDIO_STREAM_OUT_BIT) != 0u);
     audio_stream_apply_in_state((requested_mask & AUDIO_STREAM_IN_BIT) != 0u);
+
+#if AUDIO_DIAG_LOG
+    SEGGER_RTT_printf(0,
+                      "[AUD][STREAM-APPLY] tick=%lu mask=0x%02lx out=%u->%u in=%u->%u\r\n",
+                      (unsigned long) HAL_GetTick(),
+                      (unsigned long) requested_mask,
+                      previous_out ? 1u : 0u,
+                      s_streaming_out ? 1u : 0u,
+                      previous_in ? 1u : 0u,
+                      s_streaming_in ? 1u : 0u);
+#endif
     return true;
 }
 
@@ -979,8 +1049,72 @@ static void copybuf_sai2ring(void)
 static uint32_t audio_frames_per_usb_in_interval(uint32_t sample_rate_hz)
 {
     // 現在対応している48/96kHzはいずれも整数フレームになる。
-    return (sample_rate_hz * CFG_TUD_AUDIO_FUNC_1_EP_IN_INTERVAL_UFRAMES) /
-           AUDIO_USB_HS_MICROFRAMES_PER_SECOND;
+    return (uint32_t) (((uint64_t) sample_rate_hz * CFG_TUD_AUDIO_FUNC_1_EP_IN_INTERVAL_UFRAMES) /
+                       AUDIO_USB_HS_MICROFRAMES_PER_SECOND);
+}
+
+// 目標byte数を、1 frame以上・FIFO容量内で最大packet分の余白を残す上限・
+// frame境界・uint16_t範囲へクランプする。
+static uint16_t audio_usb_fifo_target_bytes_clamp(uint64_t target_bytes,
+                                                  uint32_t fifo_capacity_bytes,
+                                                  uint32_t max_packet_bytes)
+{
+    uint32_t max_target_bytes = (fifo_capacity_bytes > max_packet_bytes) ?
+                                    (fifo_capacity_bytes - max_packet_bytes) :
+                                    0u;
+    if (max_target_bytes > UINT16_MAX)
+    {
+        max_target_bytes = UINT16_MAX;
+    }
+    max_target_bytes = (max_target_bytes / AUDIO_USB_FRAME_BYTES) * AUDIO_USB_FRAME_BYTES;
+
+    if (target_bytes > max_target_bytes)
+    {
+        target_bytes = max_target_bytes;
+    }
+    if (target_bytes < AUDIO_USB_FRAME_BYTES)
+    {
+        target_bytes = AUDIO_USB_FRAME_BYTES;
+    }
+
+    return (uint16_t) target_bytes;
+}
+
+// USB OUT feedbackの目標FIFO水位。High-Speed microframe 4回分 = 0.5 ms相当。
+uint16_t audio_transport_usb_out_fifo_target_bytes(uint32_t sample_rate_hz)
+{
+    const uint64_t target_frames =
+        (((uint64_t) sample_rate_hz * AUDIO_USB_OUT_TARGET_MICROFRAMES) +
+         (AUDIO_USB_HS_MICROFRAMES_PER_SECOND - 1u)) /
+        AUDIO_USB_HS_MICROFRAMES_PER_SECOND;
+
+    return audio_usb_fifo_target_bytes_clamp(target_frames * AUDIO_USB_FRAME_BYTES,
+                                             CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ,
+                                             CFG_TUD_AUDIO_FUNC_1_EP_OUT_SZ_MAX);
+}
+
+// USB IN flow controlの目標FIFO水位。EP IN interval 2回分 = 1.0 ms相当。
+static uint16_t audio_transport_usb_in_fifo_target_bytes(uint32_t sample_rate_hz)
+{
+    const uint64_t target_frames =
+        (uint64_t) audio_frames_per_usb_in_interval(sample_rate_hz) *
+        AUDIO_USB_IN_TARGET_INTERVALS;
+
+    return audio_usb_fifo_target_bytes_clamp(target_frames * AUDIO_USB_FRAME_BYTES,
+                                             CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ,
+                                             CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ_MAX);
+}
+
+// TinyUSBのIN FIFO目標を現在レートの1.0 ms相当へ適用する。Audio Task contextのみ。
+static void audio_transport_apply_usb_in_fifo_target(uint32_t sample_rate_hz)
+{
+    if (!tud_inited())
+    {
+        return;
+    }
+
+    tud_audio_n_set_ep_in_fifo_threshold(AUDIO_FUNC_ID,
+                                         audio_transport_usb_in_fifo_target_bytes(sample_rate_hz));
 }
 
 static bool audio_usb_in_source_ready(uint32_t sample_rate_hz)

@@ -10,11 +10,16 @@
 
 #include "audio_control.h"
 #include "audio_control_internal.h"
+#include "audio_diagnostics_internal.h"
 #include "audio_transport_internal.h"
 #include "audio_usb_control_internal.h"
 #include "adau1466.h"
+#include "main.h"
 
 #include "SEGGER_RTT.h"
+#if AUDIO_DIAG_LOG
+#include "device/dcd.h"
+#endif
 #include "tusb.h"
 
 #define N_SAMPLE_RATES TU_ARRAY_SIZE(sample_rates)
@@ -72,6 +77,11 @@ uint32_t get_rx_blink_interval_ms(void)
 // Invoked when device is mounted
 void tud_mount_cb(void)
 {
+#if AUDIO_DIAG_LOG
+    SEGGER_RTT_printf(0,
+                      "[AUD][USB-EVENT] tick=%lu event=mount\r\n",
+                      (unsigned long) HAL_GetTick());
+#endif
     tx_blink_interval_ms = BLINK_MOUNTED;
     rx_blink_interval_ms = BLINK_MOUNTED;
 }
@@ -79,6 +89,11 @@ void tud_mount_cb(void)
 // Invoked when device is unmounted
 void tud_umount_cb(void)
 {
+#if AUDIO_DIAG_LOG
+    SEGGER_RTT_printf(0,
+                      "[AUD][USB-EVENT] tick=%lu event=unmount\r\n",
+                      (unsigned long) HAL_GetTick());
+#endif
     tx_blink_interval_ms = BLINK_NOT_MOUNTED;
     rx_blink_interval_ms = BLINK_NOT_MOUNTED;
     audio_transport_request_stream(AUDIO_TRANSPORT_STREAM_OUT, false);
@@ -90,7 +105,14 @@ void tud_umount_cb(void)
 // Within 7ms, device must draw an average of current less than 2.5 mA from bus
 void tud_suspend_cb(bool remote_wakeup_en)
 {
+#if AUDIO_DIAG_LOG
+    SEGGER_RTT_printf(0,
+                      "[AUD][USB-EVENT] tick=%lu event=suspend remote_wakeup=%u\r\n",
+                      (unsigned long) HAL_GetTick(),
+                      remote_wakeup_en ? 1u : 0u);
+#else
     (void) remote_wakeup_en;
+#endif
     tx_blink_interval_ms = BLINK_SUSPENDED;
     rx_blink_interval_ms = BLINK_SUSPENDED;
 }
@@ -98,9 +120,31 @@ void tud_suspend_cb(bool remote_wakeup_en)
 // Invoked when usb bus is resumed
 void tud_resume_cb(void)
 {
+#if AUDIO_DIAG_LOG
+    SEGGER_RTT_printf(0,
+                      "[AUD][USB-EVENT] tick=%lu event=resume mounted=%u\r\n",
+                      (unsigned long) HAL_GetTick(),
+                      tud_mounted() ? 1u : 0u);
+#endif
     tx_blink_interval_ms = tud_mounted() ? BLINK_MOUNTED : BLINK_NOT_MOUNTED;
     rx_blink_interval_ms = tud_mounted() ? BLINK_MOUNTED : BLINK_NOT_MOUNTED;
 }
+
+// TinyUSB has no task-context bus-reset callback. This hook runs when the DCD
+// event is queued; only rare reset events are printed to avoid ISR log load.
+#if AUDIO_DIAG_LOG
+void tud_event_hook_cb(uint8_t rhport, uint32_t eventid, bool in_isr)
+{
+    if (eventid == DCD_EVENT_BUS_RESET)
+    {
+        SEGGER_RTT_printf(0,
+                          "[AUD][USB-EVENT] tick=%lu event=bus-reset rhport=%u in_isr=%u\r\n",
+                          (unsigned long) HAL_GetTick(),
+                          (unsigned int) rhport,
+                          in_isr ? 1u : 0u);
+    }
+}
+#endif
 
 //--------------------------------------------------------------------+
 // Audio Callback Functions
@@ -208,16 +252,18 @@ static bool audio20_clock_set_request(uint8_t rhport, tusb_control_request_t con
         if (!supported)
         {
             SEGGER_RTT_printf(0,
-                              "[USB] unsupported sample-rate request: %lu Hz\n",
-                              (unsigned long) requested_sample_rate);
+                              "[USB] unsupported sample-rate request: %lu Hz tick=%lu\n",
+                              (unsigned long) requested_sample_rate,
+                              (unsigned long) HAL_GetTick());
             return false;
         }
 
         audio_control_request_sample_rate(requested_sample_rate);
 
         SEGGER_RTT_printf(0,
-                          "[USB] sample-rate request: %lu Hz\n",
-                          (unsigned long) requested_sample_rate);
+                          "[USB] sample-rate request: %lu Hz tick=%lu\n",
+                          (unsigned long) requested_sample_rate,
+                          (unsigned long) HAL_GetTick());
         TU_LOG1("Clock set current freq: %" PRIu32 "\r\n", requested_sample_rate);
 
         return true;
@@ -401,6 +447,16 @@ bool tud_audio_set_itf_close_ep_cb(uint8_t rhport, tusb_control_request_t const*
     uint8_t const itf = tu_u16_low(tu_le16toh(p_request->wIndex));
     uint8_t const alt = tu_u16_low(tu_le16toh(p_request->wValue));
 
+#if AUDIO_DIAG_LOG
+    SEGGER_RTT_printf(0,
+                      "[AUD][USB-ITF] tick=%lu phase=close itf=%u alt=%u out_itf=%u in_itf=%u\r\n",
+                      (unsigned long) HAL_GetTick(),
+                      (unsigned int) itf,
+                      (unsigned int) alt,
+                      (itf == ITF_NUM_AUDIO_STREAMING_STEREO_OUT) ? 1u : 0u,
+                      (itf == ITF_NUM_AUDIO_STREAMING_STEREO_IN) ? 1u : 0u);
+#endif
+
     if (ITF_NUM_AUDIO_STREAMING_STEREO_OUT == itf && alt == 0)
     {
         audio_transport_request_stream(AUDIO_TRANSPORT_STREAM_OUT, false);
@@ -419,6 +475,16 @@ bool tud_audio_set_itf_cb(uint8_t rhport, tusb_control_request_t const* p_reques
     (void) rhport;
     uint8_t const itf = tu_u16_low(tu_le16toh(p_request->wIndex));
     uint8_t const alt = tu_u16_low(tu_le16toh(p_request->wValue));
+
+#if AUDIO_DIAG_LOG
+    SEGGER_RTT_printf(0,
+                      "[AUD][USB-ITF] tick=%lu phase=set itf=%u alt=%u out_itf=%u in_itf=%u\r\n",
+                      (unsigned long) HAL_GetTick(),
+                      (unsigned int) itf,
+                      (unsigned int) alt,
+                      (itf == ITF_NUM_AUDIO_STREAMING_STEREO_OUT) ? 1u : 0u,
+                      (itf == ITF_NUM_AUDIO_STREAMING_STEREO_IN) ? 1u : 0u);
+#endif
 
     TU_LOG2("Set interface %d alt %d\r\n", itf, alt);
     if (ITF_NUM_AUDIO_STREAMING_STEREO_OUT == itf && alt != 0)
@@ -445,10 +511,14 @@ void tud_audio_feedback_params_cb(uint8_t func_id, uint8_t alt_itf, audio_feedba
 
     // Use TinyUSB's FIFO-count based feedback so host OUT packet rate follows
     // this device's effective consume rate and suppresses long-term drift.
-    feedback_param->method      = AUDIO_FEEDBACK_METHOD_FIFO_COUNT;
-    feedback_param->sample_freq = get_current_sample_rate_hz();
+    // sample_freqと目標水位が同じレートから計算されるよう、localへ一度だけ取得する。
+    const uint32_t sample_rate_hz = get_current_sample_rate_hz();
 
-    // Keep FIFO around the middle to balance jitter tolerance and latency.
-    feedback_param->fifo_count.fifo_threshold = (uint16_t) (CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ / 2U);
+    feedback_param->method      = AUDIO_FEEDBACK_METHOD_FIFO_COUNT;
+    feedback_param->sample_freq = sample_rate_hz;
+
+    // 0.5 ms相当の滞留時間を目標にし、ジッタ耐性とレイテンシーを両立する。
+    feedback_param->fifo_count.fifo_threshold =
+        audio_transport_usb_out_fifo_target_bytes(sample_rate_hz);
 }
 #endif

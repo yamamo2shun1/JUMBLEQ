@@ -82,4 +82,9 @@ bool audio_transport_is_output_streaming(void);
 bool audio_transport_is_input_streaming(void);
 int32_t audio_transport_tx_used_words(void);
 
+// USB OUT feedback用の目標FIFO水位(byte単位)。現在のサンプルレートから
+// 0.5 ms相当を計算し、16 byte frame境界・FIFO容量・最大packet余白・uint16_t
+// 範囲へクランプして返す。副作用なし。UAC2 feedback callbackから呼べる。
+uint16_t audio_transport_usb_out_fifo_target_bytes(uint32_t sample_rate_hz);
+
 #endif /* AUDIO_TRANSPORT_INTERNAL_H_ */
