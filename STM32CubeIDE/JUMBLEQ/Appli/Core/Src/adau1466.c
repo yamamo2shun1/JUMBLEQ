@@ -7,6 +7,10 @@
 
 #include "adau1466.h"
 
+#include <math.h>
+
+#include "main.h"
+
 #include "SigmaStudioFW.h"
 #include "JUMBLEQ_DSP_ADAU146xSchematic_1.h"
 #include "JUMBLEQ_DSP_ADAU146xSchematic_1_Defines.h"

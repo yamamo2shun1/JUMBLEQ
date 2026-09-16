@@ -9,7 +9,22 @@
 #ifndef AUDIO_TRANSPORT_INTERNAL_H_
 #define AUDIO_TRANSPORT_INTERNAL_H_
 
-#include "main.h"
+#include <stdbool.h>
+#include <stdint.h>
+
+// バッファサイズ設定 - 小さいほど低レイテンシーだがアンダーラン/オーバーランのリスク増
+// 96kHz再生の安定性を優先し、TX/RING は余裕を持たせる。
+// 48kHz時のレイテンシー目安: SAI_RNG_BUF_SIZE / sample_rate * 1000 [ms]
+#define SAI_RNG_BUF_SIZE 8192  // リングバッファ（2のべき乗必須）
+#define SAI_TX_BUF_SIZE  256  // 4ch DMAバッファ (USB->SAI)
+#define SAI_RX_BUF_SIZE  256  // 4ch DMAバッファ (SAI->USB)
+// DMA halfを消費した後のTXリング目標水位（word単位）。
+// 消費前の判定基準は、この値にDMA half-buffer分を加えた水位になる。
+#define SAI_TX_TARGET_LEVEL_WORDS 96
+
+// DMA転送先storage。linked_list.cがaddressを参照する。
+extern int32_t stereo_out_buf[SAI_TX_BUF_SIZE];
+extern int32_t stereo_in_buf[SAI_RX_BUF_SIZE];
 
 typedef enum
 {

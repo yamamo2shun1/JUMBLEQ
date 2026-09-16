@@ -8,7 +8,8 @@
 #ifndef UI_MIDI_CONTROL_INTERNAL_H_
 #define UI_MIDI_CONTROL_INTERNAL_H_
 
-#include "main.h"
+#include <stdbool.h>
+#include <stdint.h>
 
 // Note edge scan constants shared by the pot-mag and ch_fader note outputs.
 #define MIDI_NOTE_ON_THRESHOLD      4U

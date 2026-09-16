@@ -15,6 +15,7 @@
 #include "audio_usb_control_internal.h"
 #include "eeprom_config_internal.h"
 #include "ui_control_internal.h"
+#include "ui_routing_control_internal.h"
 #include "timecode_synth.h"
 
 #include "adc.h"
@@ -47,6 +48,8 @@ static audio_sample_rate_state_t s_sample_rate = {
     .applied_hz       = 48000U,
     .applied_hz_valid = true,
 };
+
+static void AUDIO_SAI_Reset_ForNewRate(void);
 
 void audio_control_request_sample_rate(uint32_t sample_rate_hz)
 {
@@ -204,7 +207,7 @@ void audio_task(void)
     }
 }
 
-void AUDIO_SAI_Reset_ForNewRate(void)
+static void AUDIO_SAI_Reset_ForNewRate(void)
 {
     const uint32_t new_hz = s_sample_rate.requested_hz;
     bool rate_switch_succeeded = true;

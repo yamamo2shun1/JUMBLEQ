@@ -8,6 +8,8 @@
 #include "ui_control.h"
 #include "ui_uf2_control_internal.h"
 
+#include "main.h"
+
 #include <string.h>
 
 static const uint32_t UF2_ARM_WINDOW_MS      = 10000U;
@@ -31,34 +33,6 @@ typedef struct
 static uf2_bootloader_control_t s_uf2 = {
     .state = UI_UF2_TRANSITION_IDLE,
 };
-
-UI_Uf2TransitionState_t ui_control_get_uf2_transition_state(void)
-{
-    const UI_Uf2TransitionState_t state = s_uf2.state;
-    __DMB();
-    return state;
-}
-
-uint8_t ui_control_get_uf2_seconds_remaining(void)
-{
-    const UI_Uf2TransitionState_t state = s_uf2.state;
-    __DMB();
-    if ((state != UI_UF2_TRANSITION_WAIT_RELEASE) &&
-        (state != UI_UF2_TRANSITION_WAIT_HOLD) &&
-        (state != UI_UF2_TRANSITION_HOLDING))
-    {
-        return 0U;
-    }
-
-    const uint32_t elapsed_ms = HAL_GetTick() - s_uf2.arm_started_ms;
-    if (elapsed_ms >= UF2_ARM_WINDOW_MS)
-    {
-        return 0U;
-    }
-
-    const uint32_t remaining_ms = UF2_ARM_WINDOW_MS - elapsed_ms;
-    return (uint8_t) ((remaining_ms + 999U) / 1000U);
-}
 
 void ui_control_notify_uf2_displays_cleared(void)
 {

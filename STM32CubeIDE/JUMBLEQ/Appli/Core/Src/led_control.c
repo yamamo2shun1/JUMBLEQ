@@ -9,7 +9,8 @@
 
 #include "tim.h"
 
-#include "audio_control.h"
+#include "audio_usb_control_internal.h"
+#include "ui_ch_fader_internal.h"
 
 #include "SigmaStudioFW.h"
 #include "JUMBLEQ_DSP_ADAU146xSchematic_1_PARAM.h"

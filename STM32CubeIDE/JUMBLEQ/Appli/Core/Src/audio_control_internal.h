@@ -7,7 +7,7 @@
 #ifndef AUDIO_CONTROL_INTERNAL_H_
 #define AUDIO_CONTROL_INTERNAL_H_
 
-#include "main.h"
+#include <stdint.h>
 
 // UAC2 clock SET_CUR entry point. The USB control module validates the
 // requested rate against its supported list and hands the request over here.

@@ -13,6 +13,9 @@
 #include "ui_routing_control_internal.h"
 #include "adau1466.h"
 
+#include "stm32h7rsxx_hal.h"
+#include "tusb.h"
+
 #include <math.h>
 #include <string.h>
 
@@ -513,16 +516,6 @@ uint8_t get_current_ch_fader_b_position(void)
     return s_ch_fader.position_b;
 }
 
-uint8_t get_current_ch_fader_sensor2_cc_value(void)
-{
-    return ch_fader_to_cc(s_ch_fader.raw[2]);
-}
-
-uint8_t get_current_ch_fader_sensor3_cc_value(void)
-{
-    return ch_fader_to_cc(s_ch_fader.raw[3]);
-}
-
 uint8_t ui_control_get_ch_fader_dvs_delay_ms(void)
 {
     return s_ch_fader_dvs_delay_ms;
@@ -536,16 +529,6 @@ bool ui_control_is_ch_fader_reverse_a_enabled(void)
 bool ui_control_is_ch_fader_reverse_b_enabled(void)
 {
     return s_ch_fader_reverse_b;
-}
-
-uint8_t ui_control_get_ch_fader_curve_a_cc(void)
-{
-    return ui_ch_fader_curve_width_to_midi_cc(s_ch_fader_curve_width_a);
-}
-
-uint8_t ui_control_get_ch_fader_curve_b_cc(void)
-{
-    return ui_ch_fader_curve_width_to_midi_cc(s_ch_fader_curve_width_b);
 }
 
 static void apply_ch_fader_dvs_delay(uint8_t delay_ms)

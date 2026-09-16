@@ -8,7 +8,12 @@
 #ifndef UI_ADC_CONTROL_INTERNAL_H_
 #define UI_ADC_CONTROL_INTERNAL_H_
 
-#include "main.h"
+#include <stdbool.h>
+#include <stdint.h>
+
+// ADC DMA contract。linked_list.cがDMA destinationとして参照する。
+#define ADC_NUM 8
+extern uint32_t adc_val[ADC_NUM];
 
 // 完了flagは処理前にclearせず、pot/ch_fader/MIDI処理後にclearする。
 bool ui_adc_control_is_complete(void);

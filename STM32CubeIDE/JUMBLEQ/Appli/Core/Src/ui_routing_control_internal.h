@@ -8,8 +8,11 @@
 #ifndef UI_ROUTING_CONTROL_INTERNAL_H_
 #define UI_ROUTING_CONTROL_INTERNAL_H_
 
-#include "main.h"
+#include <stdbool.h>
+#include <stdint.h>
+
 #include "ui_control.h"
+#include "ui_persist_internal.h"
 
 enum
 {
@@ -27,6 +30,10 @@ uint8_t ui_routing_get_ch_fader_assign(uint8_t pair_idx);  // 0:A, 1:B
 uint8_t ui_routing_get_input_mode(uint8_t input_ch);
 uint8_t ui_routing_get_return_assign(void);
 bool ui_routing_is_synth_mode_active(void);
+
+// Audio Task向けInput Mode getter（定義はui_routing_control.c）。
+UI_InputMode_t get_current_ch1_input_mode(void);
+UI_InputMode_t get_current_ch2_input_mode(void);
 
 // persist: 適用前に全項目検証する。
 bool ui_routing_validate_persist(const UI_ControlPersistState_t* state);
