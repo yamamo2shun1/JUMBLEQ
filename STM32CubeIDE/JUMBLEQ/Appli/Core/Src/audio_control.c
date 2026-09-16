@@ -25,6 +25,7 @@
 #include "eeprom.h"
 
 #include "adau1466.h"
+#include "SEGGER_RTT.h"
 
 enum
 {
@@ -53,6 +54,20 @@ static void AUDIO_SAI_Reset_ForNewRate(void);
 
 void audio_control_request_sample_rate(uint32_t sample_rate_hz)
 {
+#if AUDIO_DIAG_LOG
+    const uint32_t previous_requested_hz = s_sample_rate.requested_hz;
+    const bool same_as_applied = s_sample_rate.applied_hz_valid &&
+                                 (sample_rate_hz == s_sample_rate.applied_hz);
+    SEGGER_RTT_printf(0,
+                      "[AUD][RATE-REQ] tick=%lu requested=%lu previous_requested=%lu applied=%lu applied_valid=%u same_as_applied=%u\r\n",
+                      (unsigned long) HAL_GetTick(),
+                      (unsigned long) sample_rate_hz,
+                      (unsigned long) previous_requested_hz,
+                      (unsigned long) s_sample_rate.applied_hz,
+                      s_sample_rate.applied_hz_valid ? 1u : 0u,
+                      same_as_applied ? 1u : 0u);
+#endif
+
     s_sample_rate.requested_hz = sample_rate_hz;
     __DMB();
     s_sample_rate.change_pending = true;
@@ -214,8 +229,24 @@ static void AUDIO_SAI_Reset_ForNewRate(void)
 
     if (s_sample_rate.applied_hz_valid && (new_hz == s_sample_rate.applied_hz))
     {
+#if AUDIO_DIAG_LOG
+        SEGGER_RTT_printf(0,
+                          "[AUD][RATE-APPLY] tick=%lu action=no-op requested=%lu applied=%lu\r\n",
+                          (unsigned long) HAL_GetTick(),
+                          (unsigned long) new_hz,
+                          (unsigned long) s_sample_rate.applied_hz);
+#endif
         return;
     }
+
+#if AUDIO_DIAG_LOG
+    SEGGER_RTT_printf(0,
+                      "[AUD][RATE-APPLY] tick=%lu action=switch-begin requested=%lu applied=%lu applied_valid=%u\r\n",
+                      (unsigned long) HAL_GetTick(),
+                      (unsigned long) new_hz,
+                      (unsigned long) s_sample_rate.applied_hz,
+                      s_sample_rate.applied_hz_valid ? 1u : 0u);
+#endif
 
     /* Stop ADC DMA to prevent concurrent DSP parameter writes during the path switch. */
     (void) HAL_ADC_Stop(&hadc1);
@@ -260,9 +291,10 @@ static void AUDIO_SAI_Reset_ForNewRate(void)
     if (rate_switch_succeeded)
     {
         SEGGER_RTT_printf(0,
-                          "[SAI] reset for %lu Hz (prev=%lu)\n",
+                          "[SAI] reset for %lu Hz (prev=%lu) tick=%lu\n",
                           (unsigned long) new_hz,
-                          (unsigned long) s_sample_rate.applied_hz);
+                          (unsigned long) s_sample_rate.applied_hz,
+                          (unsigned long) HAL_GetTick());
         s_sample_rate.applied_hz = new_hz;
         s_sample_rate.applied_hz_valid = true;
     }

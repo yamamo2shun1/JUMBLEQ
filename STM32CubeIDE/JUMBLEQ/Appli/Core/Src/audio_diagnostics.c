@@ -10,6 +10,7 @@
 
 #include "audio_diagnostics_internal.h"
 
+#include "SEGGER_RTT.h"
 #include "stm32h7rsxx_hal.h"
 
 #include "SigmaStudioFW.h"
