@@ -30,9 +30,32 @@
 enum
 {
     AUDIO_TASK_STATS_PERIOD_MS = 1000u,
+    // DMA復旧: TX開始からRX開始までの同期待ち（既存レート変更と同じ10ms）
+    AUDIO_RECOVERY_TX_SYNC_DELAY_MS = 10u,
+    // 連続失敗時の再試行間隔
+    AUDIO_RECOVERY_BACKOFF_MS = 100u,
+    // この回数だけ連続失敗したらFAILEDへラッチし、両経路停止・無音を維持する
+    AUDIO_RECOVERY_MAX_CONSECUTIVE_FAILURES = 3u,
 };
 
 extern DMA_QListTypeDef List_HPDMA1_Channel0;
+
+// DMA/SAIエラーからの復旧状態。ISR共有状態とは分離し、状態遷移はAudio Taskだけが行う。
+typedef enum
+{
+    AUDIO_RECOVERY_STATE_IDLE = 0,
+    AUDIO_RECOVERY_STATE_PREPARE,
+    AUDIO_RECOVERY_STATE_WAIT_TX_SYNC,
+    AUDIO_RECOVERY_STATE_BACKOFF,
+    AUDIO_RECOVERY_STATE_FAILED,
+} audio_recovery_state_t;
+
+static audio_recovery_state_t s_recovery_state = AUDIO_RECOVERY_STATE_IDLE;
+static uint32_t s_recovery_request_sequence = 0u;
+static bool s_recovery_request_in_flight = false;
+static uint32_t s_recovery_wait_start_tick = 0u;
+static uint32_t s_recovery_backoff_start_tick = 0u;
+static uint32_t s_recovery_consecutive_failures = 0u;
 
 // サンプルレートの要求状態(USB Taskが更新)と適用状態(Audio Taskが更新)。
 typedef struct
@@ -50,7 +73,10 @@ static audio_sample_rate_state_t s_sample_rate = {
     .applied_hz_valid = true,
 };
 
-static void AUDIO_SAI_Reset_ForNewRate(void);
+static bool AUDIO_SAI_Reset_ForNewRate(void);
+static void audio_recovery_process(void);
+static void audio_recovery_release_latch(void);
+static void audio_recovery_reset_after_rate_change(void);
 
 void audio_control_request_sample_rate(uint32_t sample_rate_hz)
 {
@@ -169,6 +195,150 @@ void start_sai(void)
 static volatile uint32_t audio_task_call_count = 0;
 static volatile uint32_t audio_task_last_tick  = 0;
 static volatile uint32_t audio_task_frequency  = 0;  // 呼び出し回数/秒
+// 復旧ラッチを解除して再試行可能にする。stream再開要求から呼ぶ。
+static void audio_recovery_release_latch(void)
+{
+    if (s_recovery_state == AUDIO_RECOVERY_STATE_FAILED)
+    {
+        s_recovery_consecutive_failures = 0u;
+        audio_diagnostics_set_recovery_latched(false);
+
+        if (s_recovery_request_in_flight)
+        {
+            // 保持中のin-flight要求をそのまま再試行する。takeし直すと同じ
+            // sequenceを空のpayloadで再記録してしまう。
+            s_recovery_state = AUDIO_RECOVERY_STATE_PREPARE;
+        }
+        else
+        {
+            s_recovery_state = AUDIO_RECOVERY_STATE_IDLE;
+        }
+    }
+}
+
+// レート変更がSAI/GPDMAを再構築・再始動した後に状態機械を通常へ戻す。
+static void audio_recovery_reset_after_rate_change(void)
+{
+    s_recovery_state = AUDIO_RECOVERY_STATE_IDLE;
+    // レート変更がpending要求をtake+ackして再構築済みのためin-flightは解消する。
+    s_recovery_request_in_flight = false;
+    s_recovery_consecutive_failures = 0u;
+    audio_diagnostics_set_recovery_latched(false);
+}
+
+static void audio_recovery_on_failure(uint32_t failed_stage)
+{
+    audio_diagnostics_record_recovery_failure(failed_stage);
+    s_recovery_consecutive_failures++;
+
+    if (s_recovery_consecutive_failures >= AUDIO_RECOVERY_MAX_CONSECUTIVE_FAILURES)
+    {
+        // transport側プリミティブが両経路を停止済み。無音のままラッチする。
+        audio_diagnostics_set_recovery_latched(true);
+        s_recovery_state = AUDIO_RECOVERY_STATE_FAILED;
+        SEGGER_RTT_printf(0,
+                          "[AUD] DMA recovery failed at stage %lu; latched after %lu failures\n",
+                          (unsigned long) failed_stage,
+                          (unsigned long) s_recovery_consecutive_failures);
+    }
+    else
+    {
+        s_recovery_backoff_start_tick = HAL_GetTick();
+        s_recovery_state = AUDIO_RECOVERY_STATE_BACKOFF;
+    }
+}
+
+// PREPARE: 停止・初期化・DMA/SAI再構築・TX開始を実行して次の状態へ進む。
+// 復旧はSAIのMSP資源と設定を維持し、生成MspInit（fatal要因）を通らない。
+static void audio_recovery_begin_attempt(void)
+{
+    s_recovery_state = AUDIO_RECOVERY_STATE_PREPARE;
+
+    const bool stopped = audio_transport_stop_and_clear_paths(false);
+    audio_diagnostics_record_recovery_attempt();
+
+    if (!stopped)
+    {
+        // 停止完了を確認できない場合は再構築せず、backoff後に再試行する。
+        audio_recovery_on_failure(AUDIO_RECOVERY_STAGE_PREPARE);
+        return;
+    }
+
+    if (audio_transport_rebuild_and_start_tx(false))
+    {
+        s_recovery_wait_start_tick = HAL_GetTick();
+        s_recovery_state = AUDIO_RECOVERY_STATE_WAIT_TX_SYNC;
+    }
+    else
+    {
+        audio_recovery_on_failure(AUDIO_RECOVERY_STAGE_TX_START);
+    }
+}
+
+// Audio Taskの復旧状態機械。要求の受理、10ms同期待ち、backoff、ラッチを進める。
+static void audio_recovery_process(void)
+{
+    switch (s_recovery_state)
+    {
+        case AUDIO_RECOVERY_STATE_IDLE:
+        {
+            AudioRecoveryRequest_t request;
+            if (!audio_transport_take_recovery_request(&request))
+            {
+                break;
+            }
+
+            s_recovery_request_sequence = request.sequence;
+            s_recovery_request_in_flight = true;
+            audio_diagnostics_record_recovery_request(request.cause_mask,
+                                                      request.dma_error_code,
+                                                      request.sai_error_code,
+                                                      request.sai_status_flags);
+            SEGGER_RTT_printf(0,
+                              "[AUD] DMA recovery requested: cause=0x%02lX dma=0x%08lX sai=0x%08lX sr=0x%08lX\n",
+                              (unsigned long) request.cause_mask,
+                              (unsigned long) request.dma_error_code,
+                              (unsigned long) request.sai_error_code,
+                              (unsigned long) request.sai_status_flags);
+            s_recovery_state = AUDIO_RECOVERY_STATE_PREPARE;
+        }
+            /* fall through */
+        case AUDIO_RECOVERY_STATE_PREPARE:
+            audio_recovery_begin_attempt();
+            break;
+
+        case AUDIO_RECOVERY_STATE_WAIT_TX_SYNC:
+            if (HAL_GetTick() - s_recovery_wait_start_tick >= AUDIO_RECOVERY_TX_SYNC_DELAY_MS)
+            {
+                if (audio_transport_start_rx_after_tx_sync())
+                {
+                    audio_transport_ack_recovery_request(s_recovery_request_sequence);
+                    s_recovery_request_in_flight = false;
+                    audio_diagnostics_record_recovery_success();
+                    s_recovery_consecutive_failures = 0u;
+                    s_recovery_state = AUDIO_RECOVERY_STATE_IDLE;
+                    SEGGER_RTT_printf(0, "[AUD] DMA recovery completed\n");
+                }
+                else
+                {
+                    audio_recovery_on_failure(AUDIO_RECOVERY_STAGE_RX_START);
+                }
+            }
+            break;
+
+        case AUDIO_RECOVERY_STATE_BACKOFF:
+            if (HAL_GetTick() - s_recovery_backoff_start_tick >= AUDIO_RECOVERY_BACKOFF_MS)
+            {
+                audio_recovery_begin_attempt();
+            }
+            break;
+
+        case AUDIO_RECOVERY_STATE_FAILED:
+        default:
+            break;
+    }
+}
+
 void audio_task(void)
 {
     // USBスタック初期化前にtud_* APIへ入らないようにする。
@@ -183,9 +353,47 @@ void audio_task(void)
     {
         audio_usb_control_set_tx_stream_blink(audio_transport_is_output_streaming());
         audio_usb_control_set_rx_stream_blink(audio_transport_is_input_streaming());
+
+        if (audio_transport_is_output_streaming() || audio_transport_is_input_streaming())
+        {
+            // stream再開要求を契機に復旧ラッチを解除して再試行できるようにする。
+            audio_recovery_release_latch();
+        }
     }
 
-    // 呼び出し頻度計測
+    // サンプルレート変更とDMA復旧は同じ呼出しで並行実行しない。
+    if (audio_sample_rate_change_take_pending())
+    {
+        // A new SET_CUR received during the switch remains pending for the next call.
+#if RESET_FROM_FW
+        if (AUDIO_SAI_Reset_ForNewRate())
+        {
+            // レート変更がSAI/GPDMAを再構築・再始動した。
+            audio_recovery_reset_after_rate_change();
+        }
+        else
+        {
+            // 同一レート要求で再構築しなかった場合も、ラッチ解除の契機とする。
+            audio_recovery_release_latch();
+        }
+#endif
+    }
+    else
+    {
+        audio_recovery_process();
+
+        // DMA half処理をTinyUSB FIFO操作より先に行う。
+        audio_transport_service(s_sample_rate.requested_hz);
+
+        // timecodeの非緊急更新はDMA搬送後に行う。
+        timecode_synth_update();
+        timecode_synth_set_channel_enabled(
+            0u, get_current_ch1_input_mode() == UI_INPUT_MODE_SYNTH);
+        timecode_synth_set_channel_enabled(
+            1u, get_current_ch2_input_mode() == UI_INPUT_MODE_SYNTH);
+    }
+
+    // 呼び出し頻度計測と周期診断は最も低い優先度で行う。
     audio_task_call_count++;
     uint32_t now = HAL_GetTick();
     if (now - audio_task_last_tick >= AUDIO_TASK_STATS_PERIOD_MS)
@@ -202,27 +410,9 @@ void audio_task(void)
         audio_diagnostics_reset_interval();
 #endif
     }
-
-    if (audio_sample_rate_change_take_pending())
-    {
-        // A new SET_CUR received during the switch remains pending for the next call.
-#if RESET_FROM_FW
-        AUDIO_SAI_Reset_ForNewRate();
-#endif
-    }
-    else
-    {
-        timecode_synth_update();
-        timecode_synth_set_channel_enabled(
-            0u, get_current_ch1_input_mode() == UI_INPUT_MODE_SYNTH);
-        timecode_synth_set_channel_enabled(
-            1u, get_current_ch2_input_mode() == UI_INPUT_MODE_SYNTH);
-
-        audio_transport_service(s_sample_rate.requested_hz);
-    }
 }
 
-static void AUDIO_SAI_Reset_ForNewRate(void)
+static bool AUDIO_SAI_Reset_ForNewRate(void)
 {
     const uint32_t new_hz = s_sample_rate.requested_hz;
     bool rate_switch_succeeded = true;
@@ -236,8 +426,13 @@ static void AUDIO_SAI_Reset_ForNewRate(void)
                           (unsigned long) new_hz,
                           (unsigned long) s_sample_rate.applied_hz);
 #endif
-        return;
+        return false;
     }
+
+    // この開始前までに受理済みだった復旧要求は、SAI/GPDMA再構築で完了扱いにする。
+    // 再構築中・再構築後に届いた新しい要求はsequence比較でpendingのまま残る。
+    AudioRecoveryRequest_t pending_recovery;
+    const bool has_pending_recovery = audio_transport_take_recovery_request(&pending_recovery);
 
 #if AUDIO_DIAG_LOG
     SEGGER_RTT_printf(0,
@@ -268,6 +463,12 @@ static void AUDIO_SAI_Reset_ForNewRate(void)
 #endif
 
     audio_transport_restart_after_rate_change();
+
+    if (has_pending_recovery)
+    {
+        // 開始前に受理済みだった復旧要求は再構築で完了扱いにする。
+        audio_transport_ack_recovery_request(pending_recovery.sequence);
+    }
 
     /* Restart ADC DMA after sample rate change is complete */
     if (MX_List_HPDMA1_Channel0_Config() != HAL_OK)
@@ -306,4 +507,6 @@ static void AUDIO_SAI_Reset_ForNewRate(void)
                           (unsigned long) new_hz,
                           (unsigned long) s_sample_rate.applied_hz);
     }
+
+    return true;
 }

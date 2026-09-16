@@ -27,6 +27,9 @@ volatile AudioTxDiagnostics_t g_audio_tx_diagnostics = {
     .tx_used_min_words = UINT32_MAX,
 };
 
+volatile AudioRxDiagnostics_t g_audio_rx_diagnostics = {0};
+volatile AudioRecoveryDiagnostics_t g_audio_recovery_diagnostics = {0};
+
 #if AUDIO_DIAG_LOG
 static volatile uint32_t dbg_tx_used_min            = DBG_MIN_U32_INIT;
 static volatile uint32_t dbg_tx_used_max            = 0u;
@@ -309,7 +312,23 @@ void audio_diagnostics_record_tx_dma_callback(uint32_t callback_event,
 void audio_diagnostics_record_rx_dma_callback(uint32_t callback_event,
                                               uint32_t overwritten_event)
 {
-    (void) callback_event;
+    if (callback_event == AUDIO_DIAG_DMA_EVENT_HALF)
+    {
+        g_audio_rx_diagnostics.rx_half_callbacks++;
+    }
+    else
+    {
+        g_audio_rx_diagnostics.rx_cplt_callbacks++;
+    }
+
+    if (overwritten_event == AUDIO_DIAG_DMA_EVENT_HALF)
+    {
+        g_audio_rx_diagnostics.rx_half_rewrite_events++;
+    }
+    else if (overwritten_event == AUDIO_DIAG_DMA_EVENT_COMPLETE)
+    {
+        g_audio_rx_diagnostics.rx_cplt_rewrite_events++;
+    }
 
 #if AUDIO_DIAG_LOG
     if (overwritten_event == AUDIO_DIAG_DMA_EVENT_HALF)
@@ -320,13 +339,12 @@ void audio_diagnostics_record_rx_dma_callback(uint32_t callback_event,
     {
         dbg_rx_cplt_rewrite_events++;
     }
-#else
-    (void) overwritten_event;
 #endif
 }
 
 void audio_diagnostics_record_tx_dma_service(uint32_t callback_event,
-                                             uint32_t service_cycles)
+                                             uint32_t service_cycles,
+                                             bool deadline_overrun)
 {
     if (callback_event == AUDIO_DIAG_DMA_EVENT_HALF)
     {
@@ -334,12 +352,48 @@ void audio_diagnostics_record_tx_dma_service(uint32_t callback_event,
         {
             g_audio_tx_diagnostics.half_service_cycles_max = service_cycles;
         }
+        if (deadline_overrun)
+        {
+            g_audio_tx_diagnostics.half_deadline_overruns++;
+        }
     }
     else if (callback_event == AUDIO_DIAG_DMA_EVENT_COMPLETE)
     {
         if (service_cycles > g_audio_tx_diagnostics.cplt_service_cycles_max)
         {
             g_audio_tx_diagnostics.cplt_service_cycles_max = service_cycles;
+        }
+        if (deadline_overrun)
+        {
+            g_audio_tx_diagnostics.cplt_deadline_overruns++;
+        }
+    }
+}
+
+void audio_diagnostics_record_rx_dma_service(uint32_t callback_event,
+                                             uint32_t service_cycles,
+                                             bool deadline_overrun)
+{
+    if (callback_event == AUDIO_DIAG_DMA_EVENT_HALF)
+    {
+        if (service_cycles > g_audio_rx_diagnostics.rx_half_service_cycles_max)
+        {
+            g_audio_rx_diagnostics.rx_half_service_cycles_max = service_cycles;
+        }
+        if (deadline_overrun)
+        {
+            g_audio_rx_diagnostics.rx_half_deadline_overruns++;
+        }
+    }
+    else if (callback_event == AUDIO_DIAG_DMA_EVENT_COMPLETE)
+    {
+        if (service_cycles > g_audio_rx_diagnostics.rx_cplt_service_cycles_max)
+        {
+            g_audio_rx_diagnostics.rx_cplt_service_cycles_max = service_cycles;
+        }
+        if (deadline_overrun)
+        {
+            g_audio_rx_diagnostics.rx_cplt_deadline_overruns++;
         }
     }
 }
@@ -354,19 +408,55 @@ void audio_diagnostics_record_tx_events_dropped(uint32_t last_event,
     audio_diagnostics_record_tx_event(true, AUDIO_TX_DIAG_EVENT_BOTH_PENDING, used);
 }
 
+void audio_diagnostics_record_rx_events_dropped(uint32_t last_event,
+                                                uint32_t dropped_events)
+{
+    g_audio_rx_diagnostics.rx_both_pending_events++;
+    g_audio_rx_diagnostics.rx_dma_events_dropped += dropped_events;
+    g_audio_rx_diagnostics.rx_both_pending_last_callback = last_event;
+}
+
+void audio_diagnostics_record_rx_ring_discard(uint32_t dropped_words, bool full_discard)
+{
+    if (full_discard)
+    {
+        g_audio_rx_diagnostics.rx_ring_full_discards++;
+        g_audio_rx_diagnostics.rx_last_discard_words = 0u;
+    }
+    else
+    {
+        g_audio_rx_diagnostics.rx_ring_discard_events++;
+        g_audio_rx_diagnostics.rx_ring_discard_words += dropped_words;
+        g_audio_rx_diagnostics.rx_last_discard_words = dropped_words;
+    }
+    g_audio_rx_diagnostics.rx_last_discard_tick_ms = HAL_GetTick();
+}
+
 void audio_diagnostics_record_dma_error(uint32_t error_code,
-                                        bool tx_streaming,
+                                        bool tx_route,
+                                        bool streaming,
                                         int32_t used)
 {
-    if (tx_streaming)
+    if (tx_route)
     {
         g_audio_tx_diagnostics.dma_error_events++;
         g_audio_tx_diagnostics.last_dma_error_code = error_code;
-        audio_diagnostics_record_tx_event(true, AUDIO_TX_DIAG_EVENT_DMA_ERROR, used);
+        audio_diagnostics_record_tx_event(streaming, AUDIO_TX_DIAG_EVENT_DMA_ERROR, used);
+    }
+    else
+    {
+        g_audio_rx_diagnostics.dma_error_events++;
+        g_audio_rx_diagnostics.last_dma_error_code = error_code;
     }
 #if AUDIO_DIAG_LOG
     dbg_dma_err_events++;
 #endif
+}
+
+void audio_diagnostics_record_unknown_dma_error(uint32_t error_code)
+{
+    g_audio_recovery_diagnostics.unknown_dma_error_events++;
+    g_audio_recovery_diagnostics.last_unknown_dma_error_code = error_code;
 }
 
 void audio_diagnostics_record_sai_tx_error(uint32_t error_code,
@@ -374,13 +464,10 @@ void audio_diagnostics_record_sai_tx_error(uint32_t error_code,
                                            bool streaming,
                                            int32_t used)
 {
-    if (streaming)
-    {
-        g_audio_tx_diagnostics.sai_error_events++;
-        g_audio_tx_diagnostics.last_sai_error_code   = error_code;
-        g_audio_tx_diagnostics.last_sai_status_flags = status_flags;
-        audio_diagnostics_record_tx_event(true, AUDIO_TX_DIAG_EVENT_SAI_ERROR, used);
-    }
+    g_audio_tx_diagnostics.sai_error_events++;
+    g_audio_tx_diagnostics.last_sai_error_code   = error_code;
+    g_audio_tx_diagnostics.last_sai_status_flags = status_flags;
+    audio_diagnostics_record_tx_event(streaming, AUDIO_TX_DIAG_EVENT_SAI_ERROR, used);
 #if AUDIO_DIAG_LOG
     dbg_sai_tx_err_events++;
     dbg_sai_tx_last_err = error_code;
@@ -391,14 +478,57 @@ void audio_diagnostics_record_sai_tx_error(uint32_t error_code,
 void audio_diagnostics_record_sai_rx_error(uint32_t error_code,
                                            uint32_t status_flags)
 {
+    g_audio_rx_diagnostics.sai_error_events++;
+    g_audio_rx_diagnostics.last_sai_error_code   = error_code;
+    g_audio_rx_diagnostics.last_sai_status_flags = status_flags;
 #if AUDIO_DIAG_LOG
     dbg_sai_rx_err_events++;
     dbg_sai_rx_last_err = error_code;
     dbg_sai_rx_sr_flags |= status_flags;
-#else
-    (void) error_code;
-    (void) status_flags;
 #endif
+}
+
+void audio_diagnostics_record_recovery_request(uint32_t cause_mask,
+                                               uint32_t dma_error_code,
+                                               uint32_t sai_error_code,
+                                               uint32_t sai_status_flags)
+{
+    g_audio_recovery_diagnostics.request_count++;
+    g_audio_recovery_diagnostics.last_cause_mask               = cause_mask;
+    g_audio_recovery_diagnostics.last_request_dma_error_code   = dma_error_code;
+    g_audio_recovery_diagnostics.last_request_sai_error_code   = sai_error_code;
+    g_audio_recovery_diagnostics.last_request_sai_status_flags = sai_status_flags;
+    g_audio_recovery_diagnostics.last_request_tick_ms          = HAL_GetTick();
+}
+
+void audio_diagnostics_record_recovery_attempt(void)
+{
+    g_audio_recovery_diagnostics.attempt_count++;
+    g_audio_recovery_diagnostics.last_attempt_tick_ms = HAL_GetTick();
+}
+
+void audio_diagnostics_record_recovery_success(void)
+{
+    g_audio_recovery_diagnostics.success_count++;
+    g_audio_recovery_diagnostics.consecutive_failures = 0u;
+    g_audio_recovery_diagnostics.last_success_tick_ms = HAL_GetTick();
+}
+
+void audio_diagnostics_record_recovery_failure(uint32_t failed_stage)
+{
+    g_audio_recovery_diagnostics.failure_count++;
+    g_audio_recovery_diagnostics.consecutive_failures++;
+    g_audio_recovery_diagnostics.last_failed_stage = failed_stage;
+    g_audio_recovery_diagnostics.last_failure_tick_ms = HAL_GetTick();
+}
+
+void audio_diagnostics_set_recovery_latched(bool latched)
+{
+    g_audio_recovery_diagnostics.latched = latched ? 1u : 0u;
+    if (!latched)
+    {
+        g_audio_recovery_diagnostics.consecutive_failures = 0u;
+    }
 }
 
 #if AUDIO_DIAG_LOG
@@ -621,6 +751,36 @@ void audio_diagnostics_log_periodic(uint32_t sample_rate_hz,
                       (unsigned long) dbg_sai_rx_last_err,
                       (unsigned long) dbg_sai_tx_sr_flags,
                       (unsigned long) dbg_sai_rx_sr_flags);
+    SEGGER_RTT_printf(0,
+                      "[AUD][RX-DIAG] half/cplt=%lu/%lu rewrite=%lu/%lu drop_events=%lu dropped=%lu\r\n",
+                      (unsigned long) g_audio_rx_diagnostics.rx_half_callbacks,
+                      (unsigned long) g_audio_rx_diagnostics.rx_cplt_callbacks,
+                      (unsigned long) g_audio_rx_diagnostics.rx_half_rewrite_events,
+                      (unsigned long) g_audio_rx_diagnostics.rx_cplt_rewrite_events,
+                      (unsigned long) g_audio_rx_diagnostics.rx_both_pending_events,
+                      (unsigned long) g_audio_rx_diagnostics.rx_dma_events_dropped);
+    SEGGER_RTT_printf(0,
+                      "[AUD][DEADLINE] tx_half/cplt=%lu/%lu rx_half/cplt=%lu/%lu\r\n",
+                      (unsigned long) g_audio_tx_diagnostics.half_deadline_overruns,
+                      (unsigned long) g_audio_tx_diagnostics.cplt_deadline_overruns,
+                      (unsigned long) g_audio_rx_diagnostics.rx_half_deadline_overruns,
+                      (unsigned long) g_audio_rx_diagnostics.rx_cplt_deadline_overruns);
+    SEGGER_RTT_printf(0,
+                      "[AUD][RX-RING] discard=%lu words=%lu full=%lu last=%lu\r\n",
+                      (unsigned long) g_audio_rx_diagnostics.rx_ring_discard_events,
+                      (unsigned long) g_audio_rx_diagnostics.rx_ring_discard_words,
+                      (unsigned long) g_audio_rx_diagnostics.rx_ring_full_discards,
+                      (unsigned long) g_audio_rx_diagnostics.rx_last_discard_words);
+    SEGGER_RTT_printf(0,
+                      "[AUD][RECOVERY] req=%lu attempt=%lu ok=%lu fail=%lu consec=%lu latched=%lu cause=0x%02lX stage=%lu\r\n",
+                      (unsigned long) g_audio_recovery_diagnostics.request_count,
+                      (unsigned long) g_audio_recovery_diagnostics.attempt_count,
+                      (unsigned long) g_audio_recovery_diagnostics.success_count,
+                      (unsigned long) g_audio_recovery_diagnostics.failure_count,
+                      (unsigned long) g_audio_recovery_diagnostics.consecutive_failures,
+                      (unsigned long) g_audio_recovery_diagnostics.latched,
+                      (unsigned long) g_audio_recovery_diagnostics.last_cause_mask,
+                      (unsigned long) g_audio_recovery_diagnostics.last_failed_stage);
     SEGGER_RTT_printf(0,
                       "[AUD][SPI] calls=%lu errors=%lu timeouts=%lu mutex_timeouts=%lu\r\n",
                       (unsigned long) (sigma_calls - dbg_sigma_calls_prev),
