@@ -246,8 +246,8 @@ static uint32_t s_stream_applied_request_sequence    = 0u;
 static volatile bool usb_tx_pending = false;  // USB TX送信要求フラグ (ISR→Task通知用)
 static volatile bool usb_rx_pending = false;  // USB RX受信通知フラグ (ISR→Task通知用)
 
-__attribute__((section("noncacheable_buffer"), aligned(32))) int32_t usb_out_buf[CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ / 4] = {0};
-__attribute__((section("noncacheable_buffer"), aligned(32))) int32_t usb_in_buf[CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ / 4] = {0};
+__attribute__((section("noncacheable_buffer"), aligned(32))) int32_t usb_capture_buf[CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ / 4] = {0};
+__attribute__((section("noncacheable_buffer"), aligned(32))) int32_t usb_playback_buf[CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ / 4] = {0};
 
 __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t stereo_out_buf[SAI_TX_BUF_SIZE] = {0};
 __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t stereo_in_buf[SAI_RX_BUF_SIZE]  = {0};
@@ -453,12 +453,12 @@ void audio_transport_reset_buffers(void)
 {
     for (uint16_t i = 0; i < CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ / 4; i++)
     {
-        usb_out_buf[i] = 0;
+        usb_capture_buf[i] = 0;
     }
 
     for (uint16_t i = 0; i < CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ / 4; i++)
     {
-        usb_in_buf[i] = 0;
+        usb_playback_buf[i] = 0;
     }
 
     audio_ring_clear_storage(&s_tx_ring);
@@ -534,8 +534,8 @@ void audio_transport_reset_for_sample_rate(uint32_t sample_rate_hz)
     audio_ring_clear_storage(&s_rx_ring);
     memset(stereo_out_buf, 0, sizeof(stereo_out_buf));
     memset(stereo_in_buf, 0, sizeof(stereo_in_buf));
-    memset(usb_in_buf, 0, sizeof(usb_in_buf));
-    memset(usb_out_buf, 0, sizeof(usb_out_buf));
+    memset(usb_playback_buf, 0, sizeof(usb_playback_buf));
+    memset(usb_capture_buf, 0, sizeof(usb_capture_buf));
     timecode_synth_reset_for_sample_rate(sample_rate_hz);
 
     // alt settingが維持されたままレートだけ変わる場合に備え、新レートのIN FIFO目標も適用する。
@@ -780,7 +780,7 @@ static void copybuf_usb2ring(void)
 
     for (uint32_t i = 0; i < sai_words; i++)
     {
-        s_tx_ring.data[audio_ring_offset(&s_tx_ring, s_tx_ring.write_index)] = usb_in_buf[i];
+        s_tx_ring.data[audio_ring_offset(&s_tx_ring, s_tx_ring.write_index)] = usb_playback_buf[i];
         s_tx_ring.write_index++;
     }
 }
@@ -1148,9 +1148,9 @@ static uint16_t audio_out_read_budget_bytes(void)
     budget_words = (budget_words / (int32_t) AUDIO_RING_FRAME_WORDS) * (int32_t) AUDIO_RING_FRAME_WORDS;
 
     uint32_t bytes = (uint32_t) budget_words * sizeof(int32_t);
-    if (bytes > sizeof(usb_in_buf))
+    if (bytes > sizeof(usb_playback_buf))
     {
-        bytes = sizeof(usb_in_buf);
+        bytes = sizeof(usb_playback_buf);
     }
     return (uint16_t) bytes;
 }
@@ -1202,8 +1202,8 @@ static void copybuf_ring2usb_and_send(uint32_t sample_rate_hz)
     // 24bit in 32bit slot: SAI(2ch) -> USB(4ch) 変換
     const uint32_t usb_bytes = frames * AUDIO_USB_FRAME_CHANNELS * sizeof(int32_t);  // 4ch分
 
-    // 安全: usb_out_buf が足りない想定なら絶対に書かない
-    if (usb_bytes > sizeof(usb_out_buf))
+    // 安全: usb_capture_buf が足りない想定なら絶対に書かない
+    if (usb_bytes > sizeof(usb_capture_buf))
         return;
 
     const bool send_ch1_to_usb = !timecode_synth_is_channel_enabled(0u);
@@ -1216,14 +1216,14 @@ static void copybuf_ring2usb_and_send(uint32_t sample_rate_hz)
         uint32_t r_R1 = audio_ring_offset(&s_rx_ring, frame_index + 1U);
         uint32_t r_L2 = audio_ring_offset(&s_rx_ring, frame_index + 2U);
         uint32_t r_R2 = audio_ring_offset(&s_rx_ring, frame_index + 3U);
-        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 0] = send_ch1_to_usb ? s_rx_ring.data[r_L1] : 0;  // L1
-        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 1] = send_ch1_to_usb ? s_rx_ring.data[r_R1] : 0;  // R1
-        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 2] = send_ch2_to_usb ? s_rx_ring.data[r_L2] : 0;  // L2
-        usb_out_buf[f * AUDIO_USB_FRAME_CHANNELS + 3] = send_ch2_to_usb ? s_rx_ring.data[r_R2] : 0;  // R2
+        usb_capture_buf[f * AUDIO_USB_FRAME_CHANNELS + 0] = send_ch1_to_usb ? s_rx_ring.data[r_L1] : 0;  // L1
+        usb_capture_buf[f * AUDIO_USB_FRAME_CHANNELS + 1] = send_ch1_to_usb ? s_rx_ring.data[r_R1] : 0;  // R1
+        usb_capture_buf[f * AUDIO_USB_FRAME_CHANNELS + 2] = send_ch2_to_usb ? s_rx_ring.data[r_L2] : 0;  // L2
+        usb_capture_buf[f * AUDIO_USB_FRAME_CHANNELS + 3] = send_ch2_to_usb ? s_rx_ring.data[r_R2] : 0;  // R2
     }
 
     // ISRコンテキストから呼ばれるので通常版を使用
-    uint16_t written = tud_audio_n_write(AUDIO_FUNC_ID, usb_out_buf, (uint16_t) usb_bytes);
+    uint16_t written = tud_audio_n_write(AUDIO_FUNC_ID, usb_capture_buf, (uint16_t) usb_bytes);
 
 #if AUDIO_DIAG_LOG
     audio_diagnostics_record_usb_in_write(written, (uint16_t) usb_bytes);
@@ -1341,14 +1341,14 @@ void audio_transport_service(uint32_t sample_rate_hz)
         uint16_t budget = audio_out_read_budget_bytes();
         uint16_t avail = tud_audio_n_available(AUDIO_FUNC_ID);
         uint16_t to_read = (avail < budget) ? avail : budget;
-        if (to_read > sizeof(usb_in_buf))
+        if (to_read > sizeof(usb_playback_buf))
         {
-            to_read = (uint16_t) sizeof(usb_in_buf);
+            to_read = (uint16_t) sizeof(usb_playback_buf);
         }
 
         if (to_read > 0U)
         {
-            spk_data_size = tud_audio_n_read(AUDIO_FUNC_ID, usb_in_buf, to_read);
+            spk_data_size = tud_audio_n_read(AUDIO_FUNC_ID, usb_playback_buf, to_read);
         }
         else
         {
