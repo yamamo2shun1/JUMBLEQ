@@ -12,6 +12,7 @@
 #include "main.h"
 
 #include "SigmaStudioFW.h"
+#include "sigma_spi.h"
 #include "JUMBLEQ_DSP_ADAU146xSchematic_1.h"
 #include "JUMBLEQ_DSP_ADAU146xSchematic_1_Defines.h"
 #include "JUMBLEQ_DSP_ADAU146xSchematic_1_PARAM.h"
@@ -277,10 +278,17 @@ static bool adau1466_hp_source_to_mux_index(uint8_t source, uint8_t* mux_index)
     }
 }
 
-static void adau1466_write_reg_u16(uint16_t addr, uint8_t value)
+static bool adau1466_write_reg_u16(uint16_t addr, uint8_t value)
 {
     uint8_t data[2] = {0x00, value};
-    SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1, addr, 2, data);
+
+    if (sigma_spi_write_block(DEVICE_ADDR_ADAU146XSCHEMATIC_1, addr, 2, data) != SIGMA_SPI_RESULT_OK)
+    {
+        SEGGER_RTT_printf(0, "[ADAU1466] register write failed: addr=%u\n", (unsigned) addr);
+        return false;
+    }
+
+    return true;
 }
 
 static bool adau1466_wait_pll_lock(uint32_t timeout_ms)
@@ -290,7 +298,13 @@ static bool adau1466_wait_pll_lock(uint32_t timeout_ms)
 
     while ((HAL_GetTick() - start_tick) < timeout_ms)
     {
-        SIGMA_READ_REGISTER(DEVICE_ADDR_ADAU146XSCHEMATIC_1, ADAU1466_REG_PLL_LOCK, 2, pll_lock);
+        if (sigma_spi_read_register(DEVICE_ADDR_ADAU146XSCHEMATIC_1, ADAU1466_REG_PLL_LOCK, 2, pll_lock) !=
+            SIGMA_SPI_RESULT_OK)
+        {
+            // 読出し失敗を「PLL未lock」や過去の受信値と混同しない。
+            SEGGER_RTT_printf(0, "[ADAU1466] PLL lock read failed\n");
+            return false;
+        }
         if ((pll_lock[1] & 0x01U) != 0U)
         {
             return true;
@@ -386,10 +400,37 @@ static bool adau1466_safeload_write_words(uint16_t addr, uint8_t mem_page, const
         safeload_ctrl[11] = word_count;
     }
 
-    SIGMA_SAFELOAD_WRITE_DATA(
+    // data準備→control/commit書込み→DSP frame待ちを一つの排他単位にする。
+    const sigma_spi_result_t begin = sigma_spi_safeload_begin();
+    if (begin != SIGMA_SPI_RESULT_OK)
+    {
+        SEGGER_RTT_printf(0, "[ADAU1466] safeload lock failed: %u\n", (unsigned) begin);
+        return false;
+    }
+
+    sigma_spi_result_t result = sigma_spi_safeload_write_locked(
         DEVICE_ADDR_ADAU146XSCHEMATIC_1, MOD_SAFELOAD_DATA_SAFELOAD0_ADDR, (uint16_t) (word_count * 4U), (uint8_t*) data);
-    SIGMA_SAFELOAD_WRITE_DATA(DEVICE_ADDR_ADAU146XSCHEMATIC_1, MOD_SAFELOAD_ADDR_SAFELOAD_ADDR, sizeof(safeload_ctrl), safeload_ctrl);
+
+    if (result == SIGMA_SPI_RESULT_OK)
+    {
+        result = sigma_spi_safeload_write_locked(
+            DEVICE_ADDR_ADAU146XSCHEMATIC_1, MOD_SAFELOAD_ADDR_SAFELOAD_ADDR, sizeof(safeload_ctrl), safeload_ctrl);
+    }
+
+    if (result != SIGMA_SPI_RESULT_OK)
+    {
+        // data書込み失敗時はcontrol/commitを送らない。control失敗時も成功を返さない。
+        sigma_spi_safeload_end();
+        SEGGER_RTT_printf(0,
+                          "[ADAU1466] safeload write failed: addr=%u result=%u\n",
+                          (unsigned) addr,
+                          (unsigned) result);
+        return false;
+    }
+
+    // 後続Safeloadがscratch領域へ割り込まないよう、既存のframe待ちも排他内で行う。
     adau1466_wait_safeload_frame();
+    sigma_spi_safeload_end();
 
     return true;
 }
@@ -598,17 +639,27 @@ bool AUDIO_Update_ADAU1466_SampleRate(uint32_t hz)
         {
             return false;
         }
-        SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1,
-                                   ADAU1466_REG_SOUT_SOURCE0,
-                                   sizeof(sout_data),
-                                   sout_data);
-        adau1466_write_reg_u16(ADAU1466_REG_CLK_GEN2_M, cfg.clk_gen2_m);
+        if (sigma_spi_write_block(DEVICE_ADDR_ADAU146XSCHEMATIC_1,
+                                  ADAU1466_REG_SOUT_SOURCE0,
+                                  sizeof(sout_data),
+                                  sout_data) != SIGMA_SPI_RESULT_OK)
+        {
+            SEGGER_RTT_printf(0, "[ADAU1466] SOUT source write failed\n");
+            return false;
+        }
+        if (!adau1466_write_reg_u16(ADAU1466_REG_CLK_GEN2_M, cfg.clk_gen2_m))
+        {
+            return false;
+        }
     }
     else
     {
         // Bring the USB-side serial port to 96 kHz before selecting the direct
         // paths. The DSP core and AK4619 clocks remain at 96 kHz throughout.
-        adau1466_write_reg_u16(ADAU1466_REG_CLK_GEN2_M, cfg.clk_gen2_m);
+        if (!adau1466_write_reg_u16(ADAU1466_REG_CLK_GEN2_M, cfg.clk_gen2_m))
+        {
+            return false;
+        }
         osDelay(ADAU1466_CLOCK_SETTLE_MS);
         if (!adau1466_safeload_write_words(MOD_USB_RATE_SELECT_INDEX4_ADDR,
                                            MOD_USB_RATE_SELECT_INDEX4_MEM_PAGE,
@@ -617,10 +668,14 @@ bool AUDIO_Update_ADAU1466_SampleRate(uint32_t hz)
         {
             return false;
         }
-        SIGMA_WRITE_REGISTER_BLOCK(DEVICE_ADDR_ADAU146XSCHEMATIC_1,
-                                   ADAU1466_REG_SOUT_SOURCE0,
-                                   sizeof(sout_data),
-                                   sout_data);
+        if (sigma_spi_write_block(DEVICE_ADDR_ADAU146XSCHEMATIC_1,
+                                  ADAU1466_REG_SOUT_SOURCE0,
+                                  sizeof(sout_data),
+                                  sout_data) != SIGMA_SPI_RESULT_OK)
+        {
+            SEGGER_RTT_printf(0, "[ADAU1466] SOUT source write failed\n");
+            return false;
+        }
     }
 
     osDelay(ADAU1466_CLOCK_SETTLE_MS);
