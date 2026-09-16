@@ -30,6 +30,26 @@ enum
     AUDIO_USB_FRAME_BYTES = AUDIO_USB_FRAME_CHANNELS * sizeof(int32_t),
     AUDIO_USB_OUT_TARGET_MICROFRAMES = 4u,  // 0.5 ms (HS OUT転送 0.125 ms x 4)
     AUDIO_USB_IN_TARGET_INTERVALS    = 2u,  // 1.0 ms (EP IN interval 0.5 ms x 2)
+    // USB再生(OUT)primingの目標水位（消費前、word単位）。通常の消費前目標と同じ基準。
+    // 224 word = 56 frame = 48kHzで約1.167ms、96kHzで約0.583ms。
+    AUDIO_TX_PRIME_LEVEL_WORDS = SAI_TX_TARGET_LEVEL_WORDS + (SAI_TX_BUF_SIZE / 2),
+    // ドリフト補正の開始／解除閾値（消費前水位、word単位）。
+    // 開始は目標±2 frame、解除は±1 frame。USB OUTパケットは48kHzで約13 frame相当が
+    // 0.125msごとに届き、水位は通常±1フレーム強揺れるため、開始だけでは補正せず、
+    // 逸脱の継続時間と補正間隔の条件を満たした場合だけ補正する。
+    AUDIO_TX_DRIFT_UP_START_WORDS     = AUDIO_TX_PRIME_LEVEL_WORDS + 8,
+    AUDIO_TX_DRIFT_UP_RELEASE_WORDS   = AUDIO_TX_PRIME_LEVEL_WORDS + 4,
+    AUDIO_TX_DRIFT_DOWN_START_WORDS   = AUDIO_TX_PRIME_LEVEL_WORDS - 8,
+    AUDIO_TX_DRIFT_DOWN_RELEASE_WORDS = AUDIO_TX_PRIME_LEVEL_WORDS - 4,
+    // 逸脱がこの時間継続した場合だけ補正する。通常パケット周期（0.125ms）の
+    // 揺れは継続しないため、48/96kHzで共通の時間基準として20msとする。
+    AUDIO_TX_DRIFT_HOLD_MS = 20u,
+    // 補正の最小間隔。最大10 frame/s（1 frame補正）に相当し、20ms毎の判断でも
+    // 補正が連続しないようにする。実測で不足する場合はこの値で調整する。
+    AUDIO_TX_DRIFT_MIN_INTERVAL_MS = 100u,
+    // 補正時のクロスフェード長（frame）。1 frameの位相移動を8 frameへ分散し、
+    // 4chで同じ位置・同じ係数を使う。DMA half（32 frame）より十分短くする。
+    AUDIO_TX_DRIFT_BLEND_FRAMES = 8u,
     DMA_AUDIO_EVENT_NONE       = 0u,
     DMA_AUDIO_EVENT_HALF       = 1u,
     DMA_AUDIO_EVENT_COMPLETE   = 2u,
@@ -81,6 +101,15 @@ _Static_assert((uint32_t) DMA_AUDIO_EVENT_COMPLETE == (uint32_t) AUDIO_DIAG_DMA_
                "DMA event encoding must match the diagnostics API");
 _Static_assert(AUDIO_USB_FRAME_BYTES == AUDIO_RING_FRAME_WORDS * sizeof(int32_t),
                "USB and ring buffer frame sizes must match");
+_Static_assert((AUDIO_TX_PRIME_LEVEL_WORDS % AUDIO_RING_FRAME_WORDS) == 0u,
+               "USB playback priming level must preserve frame alignment");
+_Static_assert((AUDIO_TX_PRIME_LEVEL_WORDS * (uint32_t) sizeof(int32_t)) <=
+                   CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ,
+               "USB playback priming level must fit one USB read buffer");
+_Static_assert(AUDIO_TX_PRIME_LEVEL_WORDS < SAI_RNG_BUF_SIZE,
+               "USB playback priming level must fit the TX ring");
+_Static_assert(AUDIO_TX_DRIFT_BLEND_FRAMES < ((SAI_TX_BUF_SIZE / 2u) / AUDIO_RING_FRAME_WORDS),
+               "drift blend must be shorter than one DMA half");
 // FIFO目標は最大packetを追加で格納できる余白を残し、uint16_tに収まること。
 _Static_assert(AUDIO_USB_OUT_TARGET_BYTES_MAX + CFG_TUD_AUDIO_FUNC_1_EP_OUT_SZ_MAX <=
                    CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ,
@@ -112,6 +141,18 @@ static inline uint32_t audio_ring_offset(const AudioRingBuffer_t* ring,
                                          uint32_t absolute_index)
 {
     return absolute_index & (ring->capacity_words - 1U);
+}
+
+// リング折り返しを考慮して1 frame（4 word）を読み出す。
+// absolute_word_indexはframe境界（4の倍数）を指すこと。
+static inline void audio_ring_load_frame(const AudioRingBuffer_t* ring,
+                                         uint32_t absolute_word_index,
+                                         int32_t* frame)
+{
+    for (uint32_t i = 0; i < AUDIO_RING_FRAME_WORDS; i++)
+    {
+        frame[i] = ring->data[audio_ring_offset(ring, absolute_word_index + i)];
+    }
 }
 
 static inline void audio_ring_discard_all(AudioRingBuffer_t* ring)
@@ -337,6 +378,34 @@ static uint32_t s_stream_applied_request_sequence    = 0u;
 
 static volatile bool usb_tx_pending = false;  // USB TX送信要求フラグ (ISR→Task通知用)
 static volatile bool usb_rx_pending = false;  // USB RX受信通知フラグ (ISR→Task通知用)
+
+// USB再生(OUT)のprimingとドリフト補正の状態。Audio Taskだけが更新する。
+// primedは「USB実データがpriming水位へ到達した」ことだけを示し、無音や停止前の残存データでは成立しない。
+static bool s_tx_primed = false;
+static uint32_t s_tx_usb_fill_words = 0u;
+static int8_t s_tx_drift_direction = 0;  // +1: 上側（水位過多）, -1: 下側（不足傾向）, 0: 逸脱なし
+static bool s_tx_drift_since_valid = false;
+static uint32_t s_tx_drift_since_tick = 0u;
+static bool s_tx_drift_suppressed_recorded = false;
+static bool s_tx_last_correction_valid = false;
+static uint32_t s_tx_last_correction_tick = 0u;
+
+// OUT再生開始境界。primingと補正履歴を初期化する。Audio Task context only。
+static void audio_tx_playback_state_reset(void)
+{
+    // 開始境界より前の残存データ（停止前のUSB音声や無音データ）を再生対象から除外し、
+    // 次のUSB実データがリング先頭から再生されるようにする。
+    audio_ring_discard_all(&s_tx_ring);
+
+    s_tx_primed = false;
+    s_tx_usb_fill_words = 0u;
+    s_tx_drift_direction = 0;
+    s_tx_drift_since_valid = false;
+    s_tx_drift_since_tick = 0u;
+    s_tx_drift_suppressed_recorded = false;
+    s_tx_last_correction_valid = false;
+    s_tx_last_correction_tick = 0u;
+}
 
 __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t usb_capture_buf[CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ / 4] = {0};
 __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t usb_playback_buf[CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ / 4] = {0};
@@ -665,21 +734,22 @@ void audio_transport_reset_buffers(void)
         stereo_in_buf[i] = 0;
     }
 
+    audio_tx_playback_state_reset();
+
     __DSB();
 }
 
 void audio_transport_start(void)
 {
     // ========================================
-    // リングバッファをプリフィル（無音で初期化）
-    // SAI DMAが開始直後にHalf割り込みを発生させた時、
-    // リングバッファにデータがないとアンダーランになるため、
-    // 無音データを事前に投入しておく
-    // 96kHzではデータレートが高いため、十分な量をプリフィルする
+    // リングバッファは空のまま開始する
+    // SAI DMAが開始直後にHalf割り込みを発生させても、USB再生priming中の
+    // fill_tx_half()がDMA halfへ無音を書き込むためアンダーランにならない。
+    // 無音prefillをリングへ入れると、priming完了時にUSB音声の前に
+    // prefill分の無音が残って再生されるため、リングは空にしておく。
     // ========================================
-    uint32_t prefill_size = SAI_TX_BUF_SIZE;
-    memset(s_tx_ring.data, 0, prefill_size * sizeof(s_tx_ring.data[0]));
-    audio_ring_reset_indices(&s_tx_ring, prefill_size);
+    memset(s_tx_ring.data, 0, sizeof(s_tx_ring_storage));
+    audio_ring_reset_indices(&s_tx_ring, 0U);
     audio_transport_reset_tx_diagnostics();
     dma_audio_event_reset(&s_rx_dma_event);
 
@@ -720,6 +790,9 @@ bool audio_transport_stop_and_clear_paths(bool deinit_sai)
     audio_ring_reset_indices(&s_tx_ring, 0U);
     audio_ring_reset_indices(&s_rx_ring, 0U);
 
+    // レート変更・復旧でも再生開始境界をやり直す（OUT有効のまま再構築する場合を含む）。
+    audio_tx_playback_state_reset();
+
     // 停止中に遅延して届くイベントを通常搬送へ混入させないよう世代を進める。
     const uint32_t primask = __get_PRIMASK();
     __disable_irq();
@@ -759,7 +832,7 @@ void audio_transport_reset_for_sample_rate(uint32_t sample_rate_hz)
     __DSB();
 }
 
-// DMA channel再構築とTXリングprefill・TX開始。失敗時は両経路を停止してfalse。
+// DMA channel再構築とTX開始。失敗時は両経路を停止してfalse。
 // init_sai=trueはレート変更用で、CubeMX生成のMX_SAIx_Init()でSAIを再構築する。
 // init_sai=falseは復旧用で、READY状態からのHAL_SAI_Init（MspInitをスキップ）により
 // MSP資源を維持したままSAI設定とErrorCodeを再初期化して再始動する。
@@ -792,10 +865,9 @@ bool audio_transport_rebuild_and_start_tx(bool init_sai)
         __HAL_LINKDMA(&hsai_BlockA2, hdmatx, handle_GPDMA1_Channel2);
     }
 
-    /* Prefill TX ring buffer with silence (already zeroed above) */
-    /* Set write index ahead to provide initial data for DMA */
-    /* 96kHz needs larger prefill due to higher data rate */
-    audio_ring_reset_indices(&s_tx_ring, SAI_TX_BUF_SIZE);
+    /* TX ringは空のまま再始動する。priming完了まではfill_tx_half()が無音を書き、
+     * prefillを入れるとUSB音声の前に無音が残って再生されるため。 */
+    audio_ring_reset_indices(&s_tx_ring, 0U);
 
     /* Configure and link DMA for SAI2 TX */
     if (!audio_transport_start_tx_path())
@@ -909,6 +981,7 @@ static void audio_stream_apply_out_state(bool enabled)
     if (enabled)
     {
         audio_transport_reset_tx_diagnostics();
+        audio_tx_playback_state_reset();
 
         const uint32_t primask = __get_PRIMASK();
         __disable_irq();
@@ -927,6 +1000,8 @@ static void audio_stream_apply_out_state(bool enabled)
         audio_ring_reset_indices(&s_tx_ring, 0U);
         dma_audio_event_reset_locked(&s_tx_dma_event);
         __set_PRIMASK(primask);
+
+        audio_tx_playback_state_reset();
     }
 
 #if AUDIO_DIAG_LOG
@@ -1044,14 +1119,128 @@ static void copybuf_usb2ring(void)
         s_tx_ring.data[audio_ring_offset(&s_tx_ring, s_tx_ring.write_index)] = usb_playback_buf[i];
         s_tx_ring.write_index++;
     }
+
+    // primingは「リングにある実データ」ではなく、USBから補充した語数で判定する。
+    // 無音や停止前の残存データをpriming完了の根拠にしないため。
+    if (!s_tx_primed)
+    {
+        s_tx_usb_fill_words += sai_words;
+        if (s_tx_usb_fill_words > AUDIO_TX_PRIME_LEVEL_WORDS)
+        {
+            s_tx_usb_fill_words = AUDIO_TX_PRIME_LEVEL_WORDS;
+        }
+    }
+}
+
+// ドリフト補正の継続履歴（逸脱方向と計時）だけを解除する。
+// primed状態と実施済み補正の最終時刻は維持する。Audio Task context only。
+static void audio_tx_drift_history_clear(void)
+{
+    s_tx_drift_direction = 0;
+    s_tx_drift_since_valid = false;
+    s_tx_drift_suppressed_recorded = false;
+}
+
+// 消費前水位からドリフト補正の方向を決める。開始／解除閾値のヒステリシス、
+// 逸脱の継続時間、補正の最小間隔を満たした場合だけ補正方向を返す。
+// 実際に補正を実施した側がaudio_tx_drift_commit()を呼び、頻度制限の時刻を更新する。
+// Audio Task context only。
+static int8_t audio_tx_drift_update(int32_t used, uint32_t now_ms)
+{
+    if (!s_streaming_out || !s_tx_primed || (used < 0) ||
+        (used > (int32_t) s_tx_ring.capacity_words))
+    {
+        return 0;
+    }
+
+    // 実underrun相当（halfを満たない水位）では補正できず、保持／無音で回復を待つ。
+    // 未実施の補正で頻度制限を開始しないよう、逸脱の継続履歴をここで解除する。
+    if (used < (int32_t) (SAI_TX_BUF_SIZE / 2))
+    {
+        audio_tx_drift_history_clear();
+        return 0;
+    }
+
+    // ヒステリシス: 逸脱中は解除閾値へ戻るまで同じ方向を維持する。
+    if (s_tx_drift_direction > 0)
+    {
+        if (used <= (int32_t) AUDIO_TX_DRIFT_UP_RELEASE_WORDS)
+        {
+            s_tx_drift_direction = 0;
+            s_tx_drift_since_valid = false;
+            s_tx_drift_suppressed_recorded = false;
+        }
+    }
+    else if (s_tx_drift_direction < 0)
+    {
+        if (used >= (int32_t) AUDIO_TX_DRIFT_DOWN_RELEASE_WORDS)
+        {
+            s_tx_drift_direction = 0;
+            s_tx_drift_since_valid = false;
+            s_tx_drift_suppressed_recorded = false;
+        }
+    }
+    else if (used >= (int32_t) AUDIO_TX_DRIFT_UP_START_WORDS)
+    {
+        // 方向反転時は前方向の継続履歴を引き継がず、ここから計時する。
+        s_tx_drift_direction = 1;
+        s_tx_drift_since_valid = true;
+        s_tx_drift_since_tick = now_ms;
+        s_tx_drift_suppressed_recorded = false;
+        audio_diagnostics_record_tx_drift_threshold(true);
+    }
+    else if (used <= (int32_t) AUDIO_TX_DRIFT_DOWN_START_WORDS)
+    {
+        s_tx_drift_direction = -1;
+        s_tx_drift_since_valid = true;
+        s_tx_drift_since_tick = now_ms;
+        s_tx_drift_suppressed_recorded = false;
+        audio_diagnostics_record_tx_drift_threshold(false);
+    }
+    else
+    {
+        // 通常の水位変動域。逸脱なし。
+    }
+
+    if ((s_tx_drift_direction == 0) || !s_tx_drift_since_valid)
+    {
+        return 0;
+    }
+
+    if ((uint32_t) (now_ms - s_tx_drift_since_tick) < AUDIO_TX_DRIFT_HOLD_MS)
+    {
+        return 0;
+    }
+
+    if (s_tx_last_correction_valid &&
+        ((uint32_t) (now_ms - s_tx_last_correction_tick) < AUDIO_TX_DRIFT_MIN_INTERVAL_MS))
+    {
+        if (!s_tx_drift_suppressed_recorded)
+        {
+            audio_diagnostics_record_tx_drift_suppressed(s_tx_drift_direction > 0);
+            s_tx_drift_suppressed_recorded = true;
+        }
+        return 0;
+    }
+
+    return s_tx_drift_direction;
+}
+
+// 補正（消費量変更と補間）を実際に実施した後に呼ぶ。頻度制限の時刻を更新し、
+// 継続時間を再計時する。Audio Task context only。
+static void audio_tx_drift_commit(uint32_t now_ms)
+{
+    s_tx_last_correction_valid = true;
+    s_tx_last_correction_tick = now_ms;
+    // 補正後も逸脱が続く場合に備え、継続時間を再計時する。
+    s_tx_drift_since_tick = now_ms;
 }
 
 static void fill_tx_half(uint32_t index0)
 {
     const uint32_t n           = (SAI_TX_BUF_SIZE / 2);
-    const uint32_t frame_words = 4;  // 4ch x 32bit = 1 frame
+    const uint32_t frame_words = AUDIO_RING_FRAME_WORDS;
     uint32_t consume_words     = n;
-    uint32_t source_skip_words = 0;
     uint32_t diagnostic_event_flags = 0u;
     const bool streaming       = s_streaming_out;
 
@@ -1069,9 +1258,34 @@ static void fill_tx_half(uint32_t index0)
 #endif
     if (used < 0)
     {
-        // 同期ズレは破棄して合わせ直す
+        // 同期ズレは破棄して合わせ直す。新しい再生開始境界として再primingする。
         audio_ring_discard_all(&s_tx_ring);
+        audio_tx_playback_state_reset();
         used = 0;
+    }
+
+    // USB実データの充填待ち（priming）。リングは消費せず無音を出し、
+    // USB受信とリング補充はaudio_transport_service()側で継続する。
+    if (!s_tx_primed)
+    {
+        if (s_tx_usb_fill_words >= AUDIO_TX_PRIME_LEVEL_WORDS)
+        {
+            s_tx_primed = true;
+            audio_diagnostics_record_tx_priming_complete();
+        }
+        else
+        {
+            // OUT停止中の待機は通常運用のsilenceなので診断へ計上しない。
+            if (streaming)
+            {
+                audio_diagnostics_record_tx_priming_wait();
+            }
+            memset(stereo_out_buf + index0, 0, n * sizeof(int32_t));
+            timecode_synth_render_output(stereo_out_buf + index0,
+                                         AUDIO_RING_FRAME_WORDS,
+                                         (SAI_TX_BUF_SIZE / 2u) / AUDIO_RING_FRAME_WORDS);
+            return;
+        }
     }
 
     // データ不足時は可能な分だけ再生し、残りは末尾フレーム保持で埋める
@@ -1079,6 +1293,9 @@ static void fill_tx_half(uint32_t index0)
     if (used < (int32_t) n)
     {
         diagnostic_event_flags |= AUDIO_TX_DIAG_EVENT_UNDERRUN;
+        // 空リング等で早期returnする場合も未実施の補正履歴を残さないよう先に解除する。
+        // primed状態と実施済み補正の最終時刻は維持する。
+        audio_tx_drift_history_clear();
         if (used <= 0)
         {
             memset(stereo_out_buf + index0, 0, n * sizeof(int32_t));
@@ -1103,8 +1320,9 @@ static void fill_tx_half(uint32_t index0)
     // usedが大きすぎる場合も異常（オーバーフロー等）
     if (used > (int32_t) s_tx_ring.capacity_words)
     {
-        // リセットして無音で埋める
+        // リセットして無音で埋める。新しい再生開始境界として再primingする。
         audio_ring_discard_all(&s_tx_ring);
+        audio_tx_playback_state_reset();
         memset(stereo_out_buf + index0, 0, n * sizeof(int32_t));
         timecode_synth_render_output(stereo_out_buf + index0,
                                      AUDIO_RING_FRAME_WORDS,
@@ -1112,24 +1330,30 @@ static void fill_tx_half(uint32_t index0)
         return;
     }
 
-    // 長時間再生時のUSB/SAIクロック差を吸収するため、リング水位に応じて
-    // 1 frameだけ消費量を増減する。usedはDMA half消費前の水位なので、
-    // 消費後の目標水位に今回の通常消費量を加えた値を判定基準にする。
-    const int32_t target_before_consume =
-        (int32_t) SAI_TX_TARGET_LEVEL_WORDS + (int32_t) n;
-
-    if (used > target_before_consume && used >= (int32_t) (n + frame_words))
+    // 長時間再生時のUSB/SAIクロック差を吸収するため、水位の継続的な逸脱に対して
+    // 1 frameだけ消費量を増減する。priming中・実underrun・異常水位では補正しない。
+    const uint32_t now_ms = HAL_GetTick();
+    const int8_t drift_direction = audio_tx_drift_update(used, now_ms);
+    bool drift_applied = false;
+    if ((drift_direction > 0) && (used >= (int32_t) (n + frame_words)))
     {
-        // バッファ過多: 最古の1 frameを捨て、DMA halfには通常量だけ書き込む
-        consume_words     = n + frame_words;
-        source_skip_words = frame_words;
+        // バッファ過多: 1 frame余分に消費し、half内のクロスフェードでつなぐ。
+        consume_words = n + frame_words;
+        drift_applied = true;
         diagnostic_event_flags |= AUDIO_TX_DIAG_EVENT_DRIFT_UP;
     }
-    else if (used >= (int32_t) n && used < target_before_consume && n > frame_words)
+    else if ((drift_direction < 0) && (used >= (int32_t) n))
     {
-        // バッファ不足傾向: 1 frame 少なく消費して追従
+        // バッファ不足傾向: 1 frame 少なく消費し、クロスフェードで引き伸ばす。
         consume_words = n - frame_words;
+        drift_applied = true;
         diagnostic_event_flags |= AUDIO_TX_DIAG_EVENT_DRIFT_DOWN;
+    }
+
+    if (drift_applied)
+    {
+        // 実際に補正を実施した場合だけ頻度制限の時刻を更新する。
+        audio_tx_drift_commit(now_ms);
     }
 
     // 安全ガード
@@ -1149,41 +1373,98 @@ static void fill_tx_half(uint32_t index0)
         return;
     }
 
-    if (source_skip_words > consume_words)
+    if (drift_applied)
     {
-        source_skip_words = 0;
-    }
-    uint32_t copy_words = consume_words - source_skip_words;
-    if (copy_words > n)
-    {
-        copy_words = n;
-    }
+        // 補正half: 先頭の非補間部は通常コピーし、末尾BLEND_FRAMESだけ
+        // 1 frame分ずらした2ソースを線形クロスフェードする。出力は常にn word。
+        const uint32_t copy_frames  = n / frame_words;
+        const uint32_t blend_frames = AUDIO_TX_DRIFT_BLEND_FRAMES;
+        const uint32_t plain_words  = (copy_frames - blend_frames) * frame_words;
 
-    const uint32_t index1 =
-        audio_ring_offset(&s_tx_ring, s_tx_ring.read_index + source_skip_words);
-    uint32_t first = s_tx_ring.capacity_words - index1;
-    if (first > copy_words)
-        first = copy_words;
-
-    memcpy(stereo_out_buf + index0, s_tx_ring.data + index1, first * sizeof(int32_t));
-    if (first < copy_words)
-        memcpy(stereo_out_buf + index0 + first,
-               s_tx_ring.data,
-               (copy_words - first) * sizeof(int32_t));
-
-    if (copy_words < n)
-    {
-        diagnostic_event_flags |= AUDIO_TX_DIAG_EVENT_PARTIAL_FILL;
-        // 不足分は最後の1frameを繰り返し、クリックノイズを抑える
-        uint32_t* dst = (uint32_t*) (stereo_out_buf + index0 + copy_words);
-        uint32_t* src = (uint32_t*) (stereo_out_buf + index0 + copy_words - frame_words);
-        for (uint32_t i = copy_words; i < n; i += frame_words)
+        const uint32_t index1 = audio_ring_offset(&s_tx_ring, s_tx_ring.read_index);
+        uint32_t first = s_tx_ring.capacity_words - index1;
+        if (first > plain_words)
         {
-            dst[0] = src[0];
-            dst[1] = src[1];
-            dst[2] = src[2];
-            dst[3] = src[3];
-            dst += frame_words;
+            first = plain_words;
+        }
+
+        memcpy(stereo_out_buf + index0, s_tx_ring.data + index1, first * sizeof(int32_t));
+        if (first < plain_words)
+        {
+            memcpy(stereo_out_buf + index0 + first,
+                   s_tx_ring.data,
+                   (plain_words - first) * sizeof(int32_t));
+        }
+
+        for (uint32_t j = 0; j < blend_frames; j++)
+        {
+            const uint32_t frame_index = (plain_words / frame_words) + j;
+            int32_t frame_a[4];
+            int32_t frame_b[4];
+            audio_ring_load_frame(&s_tx_ring,
+                                  s_tx_ring.read_index + frame_index * frame_words,
+                                  frame_a);
+            const uint32_t other_offset = (drift_direction > 0) ?
+                                              ((frame_index + 1u) * frame_words) :
+                                              ((frame_index - 1u) * frame_words);
+            audio_ring_load_frame(&s_tx_ring, s_tx_ring.read_index + other_offset, frame_b);
+
+            // 4chすべて同じ位置・同じ係数でクロスフェードする（ch間を混ぜない）。
+            // 中間値はint64で計算し、丸めは0から遠い側へ寄せる。24bit-in-32bitの
+            // 表現に依存せず、係数が0..blend_framesの凸結合なので結果は必ず
+            // 2入力の範囲内に収まり、飽和は不要。
+            const uint32_t w = j + 1u;
+            int32_t* dst = stereo_out_buf + index0 + plain_words + (j * frame_words);
+            for (uint32_t c = 0; c < frame_words; c++)
+            {
+                int64_t blended =
+                    ((int64_t) frame_a[c] * (int64_t) (blend_frames - w)) +
+                    ((int64_t) frame_b[c] * (int64_t) w);
+                if (blended >= 0)
+                {
+                    blended += (int64_t) (blend_frames / 2u);
+                }
+                else
+                {
+                    blended -= (int64_t) (blend_frames / 2u);
+                }
+                dst[c] = (int32_t) (blended / (int64_t) blend_frames);
+            }
+        }
+    }
+    else
+    {
+        uint32_t copy_words = consume_words;
+        if (copy_words > n)
+        {
+            copy_words = n;
+        }
+
+        const uint32_t index1 = audio_ring_offset(&s_tx_ring, s_tx_ring.read_index);
+        uint32_t first = s_tx_ring.capacity_words - index1;
+        if (first > copy_words)
+            first = copy_words;
+
+        memcpy(stereo_out_buf + index0, s_tx_ring.data + index1, first * sizeof(int32_t));
+        if (first < copy_words)
+            memcpy(stereo_out_buf + index0 + first,
+                   s_tx_ring.data,
+                   (copy_words - first) * sizeof(int32_t));
+
+        if (copy_words < n)
+        {
+            diagnostic_event_flags |= AUDIO_TX_DIAG_EVENT_PARTIAL_FILL;
+            // 不足分は最後の1frameを繰り返し、クリックノイズを抑える
+            uint32_t* dst = (uint32_t*) (stereo_out_buf + index0 + copy_words);
+            uint32_t* src = (uint32_t*) (stereo_out_buf + index0 + copy_words - frame_words);
+            for (uint32_t i = copy_words; i < n; i += frame_words)
+            {
+                dst[0] = src[0];
+                dst[1] = src[1];
+                dst[2] = src[2];
+                dst[3] = src[3];
+                dst += frame_words;
+            }
         }
     }
 
@@ -1451,14 +1732,39 @@ static uint16_t audio_out_read_budget_bytes(void)
         used = (int32_t) s_tx_ring.capacity_words;
     }
 
-    // Keep the TX ring around target + one DMA half-buffer.
-    int32_t budget_words = (int32_t) SAI_TX_TARGET_LEVEL_WORDS + (int32_t) (SAI_TX_BUF_SIZE / 2) - used;
+    // priming中はUSBから補充した実データ量を基準に読み出す。
+    // primed後は従来どおり target + one DMA half-buffer を基準にする。
+    int32_t budget_words;
+    if (!s_tx_primed)
+    {
+        budget_words = (int32_t) AUDIO_TX_PRIME_LEVEL_WORDS - (int32_t) s_tx_usb_fill_words;
+    }
+    else
+    {
+        budget_words = (int32_t) SAI_TX_TARGET_LEVEL_WORDS +
+                       (int32_t) (SAI_TX_BUF_SIZE / 2) - used;
+    }
     if (budget_words <= 0)
     {
         return 0;
     }
 
+    // リングの空きを超えて読むとcopybuf_usb2ring()で捨てられるため、空きで制限する。
+    const int32_t free_words = (int32_t) (s_tx_ring.capacity_words - 1U) - used;
+    if (free_words <= 0)
+    {
+        return 0;
+    }
+    if (budget_words > free_words)
+    {
+        budget_words = free_words;
+    }
+
     budget_words = (budget_words / (int32_t) AUDIO_RING_FRAME_WORDS) * (int32_t) AUDIO_RING_FRAME_WORDS;
+    if (budget_words <= 0)
+    {
+        return 0;
+    }
 
     uint32_t bytes = (uint32_t) budget_words * sizeof(int32_t);
     if (bytes > sizeof(usb_playback_buf))

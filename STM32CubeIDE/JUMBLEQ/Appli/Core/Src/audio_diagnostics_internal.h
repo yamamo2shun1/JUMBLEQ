@@ -63,6 +63,12 @@ typedef struct
     uint32_t last_sai_status_flags;
     uint32_t half_deadline_overruns;
     uint32_t cplt_deadline_overruns;
+    uint32_t priming_wait_events;         // priming待機で無音出力したhalf数
+    uint32_t priming_completed_events;    // priming完了回数
+    uint32_t drift_up_threshold_events;   // 上側開始閾値への逸脱回数（補正の有無に依らない）
+    uint32_t drift_down_threshold_events; // 下側開始閾値への逸脱回数
+    uint32_t drift_up_suppressed_events;  // 逸脱継続したが最小間隔制限で見送った回数
+    uint32_t drift_down_suppressed_events;
 } AudioTxDiagnostics_t;
 
 extern volatile AudioTxDiagnostics_t g_audio_tx_diagnostics;
@@ -148,6 +154,15 @@ void audio_diagnostics_reset_session(void);
 // TXリング水位。streaming は transport の s_streaming_out を渡す。
 void audio_diagnostics_record_tx_level(bool streaming, int32_t used);
 void audio_diagnostics_record_tx_interval_level(int32_t used);
+
+// USB再生priming。待機half数と完了回数を区別して記録する。
+void audio_diagnostics_record_tx_priming_wait(void);
+void audio_diagnostics_record_tx_priming_complete(void);
+
+// ドリフト補正の閾値逸脱と、最小間隔による補正見送り。
+// upward=true は上側（水位過多）、false は下側（水位不足傾向）。
+void audio_diagnostics_record_tx_drift_threshold(bool upward);
+void audio_diagnostics_record_tx_drift_suppressed(bool upward);
 
 // TXリングイベント。flags は AUDIO_TX_DIAG_EVENT_* のビット和。
 void audio_diagnostics_record_tx_event(bool streaming, uint32_t flags, int32_t used);

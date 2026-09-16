@@ -221,6 +221,40 @@ void audio_diagnostics_record_tx_interval_level(int32_t used)
 }
 #endif
 
+void audio_diagnostics_record_tx_priming_wait(void)
+{
+    g_audio_tx_diagnostics.priming_wait_events++;
+}
+
+void audio_diagnostics_record_tx_priming_complete(void)
+{
+    g_audio_tx_diagnostics.priming_completed_events++;
+}
+
+void audio_diagnostics_record_tx_drift_threshold(bool upward)
+{
+    if (upward)
+    {
+        g_audio_tx_diagnostics.drift_up_threshold_events++;
+    }
+    else
+    {
+        g_audio_tx_diagnostics.drift_down_threshold_events++;
+    }
+}
+
+void audio_diagnostics_record_tx_drift_suppressed(bool upward)
+{
+    if (upward)
+    {
+        g_audio_tx_diagnostics.drift_up_suppressed_events++;
+    }
+    else
+    {
+        g_audio_tx_diagnostics.drift_down_suppressed_events++;
+    }
+}
+
 void audio_diagnostics_record_tx_event(bool streaming, uint32_t flags, int32_t used)
 {
     if (streaming)
@@ -710,6 +744,14 @@ void audio_diagnostics_log_periodic(uint32_t sample_rate_hz,
                       (unsigned long) dbg_tx_partial_fill_events,
                       (unsigned long) dbg_tx_drift_up_events,
                       (unsigned long) dbg_tx_drift_dn_events);
+    SEGGER_RTT_printf(0,
+                      "[AUD][TX-PRIME] wait=%lu complete=%lu drift_thr(up/down)=%lu/%lu drift_sup(up/down)=%lu/%lu\r\n",
+                      (unsigned long) g_audio_tx_diagnostics.priming_wait_events,
+                      (unsigned long) g_audio_tx_diagnostics.priming_completed_events,
+                      (unsigned long) g_audio_tx_diagnostics.drift_up_threshold_events,
+                      (unsigned long) g_audio_tx_diagnostics.drift_down_threshold_events,
+                      (unsigned long) g_audio_tx_diagnostics.drift_up_suppressed_events,
+                      (unsigned long) g_audio_tx_diagnostics.drift_down_suppressed_events);
     SEGGER_RTT_printf(0,
                       "[AUD][USB-READ] zero=%lu bytes=%lu size_min/max=%u/%u\r\n",
                       (unsigned long) dbg_usb_read_zero_events,
