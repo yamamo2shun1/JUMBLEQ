@@ -13,6 +13,7 @@
 #include "ui_ch_fader_internal.h"
 
 #include "SigmaStudioFW.h"
+#include "sigma_spi.h"
 #include "JUMBLEQ_DSP_ADAU146xSchematic_1_PARAM.h"
 
 #include <math.h>
@@ -164,18 +165,29 @@ void renew(void)
     HAL_TIM_PWM_Start_DMA(&htim1, TIM_CHANNEL_3, (uint32_t*) led_buf, DMA_BUF_SIZE);
 }
 
-static float read_dbfs_from_sigma(uint16_t addr)
+// 読出し成功時はtrueを返す。SPI失敗と無効sampleではdBへ変換せずfalseを返し、
+// 呼出側は現在の表示更新単位で前回の表示を維持する。
+static bool read_dbfs_from_sigma(uint16_t addr, float* dbfs)
 {
     const float full_scale = 16777216.0f; // SigmaDSP 8.24 fixed-point unity gain = 0x01000000.
     ADI_REG_TYPE rx_data[4] = {0};
-    SIGMA_READ_REGISTER(DEVICE_ADDR_ADAU146XSCHEMATIC_1, addr, 4, rx_data);
-    uint32_t val = ((uint32_t) rx_data[0] << 24) | ((uint32_t) rx_data[1] << 16) | ((uint32_t) rx_data[2] << 8) | (uint32_t) rx_data[3];
 
-    if (val == 0 || val == 0xFFFFFFFF)
+    if (sigma_spi_read_register(DEVICE_ADDR_ADAU146XSCHEMATIC_1, addr, 4, rx_data) != SIGMA_SPI_RESULT_OK)
     {
-        return -96.0f;
+        return false;
     }
-    return 20.0f * log10f((float) val / full_scale);
+
+    const uint32_t val = ((uint32_t) rx_data[0] << 24) | ((uint32_t) rx_data[1] << 16) |
+                         ((uint32_t) rx_data[2] << 8) | (uint32_t) rx_data[3];
+
+    if (val == 0xFFFFFFFFU)
+    {
+        // 無効sampleは破棄して前回表示を維持する。
+        return false;
+    }
+
+    *dbfs = (val == 0U) ? -96.0f : 20.0f * log10f((float) val / full_scale);
+    return true;
 }
 
 static uint8_t vu_active_count(float dbfs)
@@ -192,7 +204,13 @@ static uint8_t vu_active_count(float dbfs)
 
 static void set_vu_meter_generic(uint16_t sigma_addr, const uint8_t led_index_low_to_high[VU_LEVEL_COUNT])
 {
-    const float dbfs        = read_dbfs_from_sigma(sigma_addr);
+    float dbfs = 0.0f;
+    if (!read_dbfs_from_sigma(sigma_addr, &dbfs))
+    {
+        // 読出し失敗・無効sample時は前回のLED状態を維持する。
+        return;
+    }
+
     const uint8_t active_on = vu_active_count(dbfs);
 
     for (uint8_t i = 0; i < VU_LEVEL_COUNT; i++)
