@@ -60,22 +60,37 @@ typedef struct
 
 extern volatile sigma_spi_diagnostics_t g_sigma_spi_diagnostics;
 
-// ポーリング書込み（チャンク分割、スケジューラ前は排他なしの単一呼出し前提）。
-sigma_spi_result_t sigma_spi_write_block(uint8_t devAddress, uint16_t address, uint32_t length, uint8_t* pData);
+// 呼出し固有の転送結果。呼出側はゼロ初期化して渡し、戻り値と合わせて
+// その呼出しの結果・HAL status・ErrorCodeを直接受け取る（共有診断の後読み不要）。
+typedef struct
+{
+    sigma_spi_result_t result;
+    uint32_t hal_status;   // 開始または停止時のHAL status
+    uint32_t hal_error;    // 元のhspi5.ErrorCode（HAL_SPI_Abortで消える前に保存）
+    uint32_t abort_status; // HAL_SPI_Abortの戻り値
+} sigma_spi_call_detail_t;
+
+// detailはNULL可。非NULLの場合、その呼出し固有の失敗内容が格納される。
+sigma_spi_result_t sigma_spi_write_block(uint8_t devAddress, uint16_t address, uint32_t length, uint8_t* pData,
+                                         sigma_spi_call_detail_t* detail);
 
 // IT書込み。スケジューラ実行中のmutex／セマフォが必要。
-sigma_spi_result_t sigma_spi_write_block_it(uint8_t devAddress, uint16_t address, uint16_t length, uint8_t* pData);
+sigma_spi_result_t sigma_spi_write_block_it(uint8_t devAddress, uint16_t address, uint16_t length, uint8_t* pData,
+                                            sigma_spi_call_detail_t* detail);
 
 // IT読み出し。成功時だけpDataへコピーする。
-sigma_spi_result_t sigma_spi_read_register(uint8_t devAddress, uint16_t address, uint16_t length, uint8_t* pData);
+sigma_spi_result_t sigma_spi_read_register(uint8_t devAddress, uint16_t address, uint16_t length, uint8_t* pData,
+                                           sigma_spi_call_detail_t* detail);
 
 // Safeload一括操作（data→control→frame待ち）用の外側排他。
 // beginからendまでの間は、lock済み書込み以外のSPI操作を呼ばないこと。
-sigma_spi_result_t sigma_spi_safeload_begin(void);
+sigma_spi_result_t sigma_spi_safeload_begin(sigma_spi_call_detail_t* detail);
 void sigma_spi_safeload_end(void);
-sigma_spi_result_t sigma_spi_safeload_write_locked(uint8_t devAddress, uint16_t dataAddress, uint16_t length, uint8_t* pData);
+sigma_spi_result_t sigma_spi_safeload_write_locked(uint8_t devAddress, uint16_t dataAddress, uint16_t length, uint8_t* pData,
+                                                   sigma_spi_call_detail_t* detail);
 
 // 単発Safeload書込み（互換wrapper用）。begin/write/endを内部で行う。
-sigma_spi_result_t sigma_spi_safeload_write_data(uint8_t devAddress, uint16_t dataAddress, uint16_t length, uint8_t* pData);
+sigma_spi_result_t sigma_spi_safeload_write_data(uint8_t devAddress, uint16_t dataAddress, uint16_t length, uint8_t* pData,
+                                                 sigma_spi_call_detail_t* detail);
 
 #endif /* INC_SIGMA_SPI_H_ */

@@ -13,6 +13,7 @@
 #include <stdint.h>
 
 #include "stm32h7rsxx_hal.h"
+#include "audio_diagnostics_internal.h"
 
 // バッファサイズ設定 - 小さいほど低レイテンシーだがアンダーラン/オーバーランのリスク増
 // 96kHz再生の安定性を優先し、TX/RING は余裕を持たせる。
@@ -71,14 +72,15 @@ void audio_transport_reset_buffers(void);
 // start_sai() のSAI/GPDMA開始シーケンス（TX開始→500ms→LED→RX開始）。
 void audio_transport_start(void);
 
-// サンプルレート変更の停止・バッファ消去部。SAI/GPDMA停止 → ring/event/
-// 診断リセット → buffer消去 → timecodeリセット → __DSB()。再開は
-// audio_transport_restart_after_rate_change() で行う。
-void audio_transport_reset_for_sample_rate(uint32_t sample_rate_hz);
+// 停止・再構築プリミティブの失敗内容は diagnostics 側の AudioTransportFailure_t を使う。
+// 呼出側はゼロ初期化して渡し、失敗した操作とHAL結果を診断へ引き継ぐ。
 
-// サンプルレート変更の再開部。DMA再初期化 → SAI再初期化 → TX prefill/開始 →
-// 10ms待機 → RX開始。失敗時は Error_Handler()。
-void audio_transport_restart_after_rate_change(void);
+// サンプルレート変更の停止・バッファ消去部。SAI/GPDMA停止を確認できた場合のみ
+// ring/event/診断リセット → buffer消去 → timecodeリセット → 新レートのIN FIFO目標適用
+// → __DSB() を行いtrueを返す。停止未確認なら参照バッファへ触れずfalseを返す。
+// 再開は audio_transport_rebuild_and_start_tx() から行う。
+bool audio_transport_reset_for_sample_rate(uint32_t sample_rate_hz,
+                                           AudioTransportFailure_t* failure);
 
 // Audio Taskから呼ぶデータ搬送サービス（USB OUT読み出し、ring/SAIコピー、
 // USB IN書き込み）。DMA half処理をTinyUSB FIFO操作より先に行う。
@@ -122,21 +124,35 @@ bool audio_transport_sai_error_isr(SAI_HandleTypeDef* hsai);
 // 復旧・レート変更共通の停止と初期化。Audio Task context only。
 // SAI/GPDMA停止（HAL_SAI_Abortで停止完了確認・フラグ/FIFO整理）、DMAイベント・
 // リングindexリセット、DMA/リング/USBバッファ消去。timecode設定には触れない。
-// deinit_sai=trueはSAIをDeInitする（レート変更用）。復旧はfalseにしてSAIのMSP資源と
-// 設定を維持し、HAL_SAI_MspInit（Error_Handlerを含む生成コード）を再実行させない。
-// 戻り値はSAI停止完了確認の成否（falseでもDMA abortとバッファ消去は行う）。
-bool audio_transport_stop_and_clear_paths(bool deinit_sai);
+// SAIのMSP資源と設定を維持し、HAL_SAI_MspInit（Error_Handlerを含む生成コード）を
+// 再実行させない。
+// 戻り値はSAI/GPDMA停止完了確認の成否。falseの場合は参照バッファを消去・再利用せず、
+// 呼出側は再構築を行わないこと。failureへ失敗した操作とHAL結果を格納する。
+bool audio_transport_stop_and_clear_paths(AudioTransportFailure_t* failure);
 
 // DMA channel再構築とTXリングprefill・TX開始。Audio Task context only。
-// init_sai=trueはレート変更用でCubeMX生成のMX_SAIx_Init()を呼ぶ。
-// falseは復旧用で、READY状態からのHAL_SAI_Init（MspInitをスキップ）によりMSP資源を
-// 維持したままSAI設定とErrorCodeを再初期化し、DMAリンクを再実行して再始動する。
-// 失敗時は両経路を停止してfalseを返す。
-bool audio_transport_rebuild_and_start_tx(bool init_sai);
+// READY状態からのHAL_SAI_Init（MspInitをスキップ）によりMSP資源を維持したまま
+// SAI設定とErrorCodeを再初期化し、DMAリンクを再実行して再始動する。
+// 失敗時は両経路を停止してfalseを返し、failureへ失敗した操作とHAL結果を格納する。
+bool audio_transport_rebuild_and_start_tx(AudioTransportFailure_t* failure);
+
+// DMA転送停止の確認。HAL_DMA_Abortの結果がHAL_OK、または未開始/停止済みを示す
+// HAL_DMA_ERROR_NO_XFERの場合だけtrueを返す。falseは転送が停止したと確認できず、
+// 参照バッファの消去・再構成を行ってはならない。
+bool audio_transport_dma_abort_confirmed(DMA_HandleTypeDef* hdma);
+
+// ISRからも参照できる、未acknowledgeの復旧要求sequence。レート切り替え開始時に
+// 固定し、切り替え成功後だけ audio_transport_ack_recovery_request() へ渡す。
+uint32_t audio_transport_recovery_request_sequence(void);
 
 // TX同期待ち後のRX開始。Audio Task context only。成功時は現在レートの
-// USB IN FIFO目標を再適用する。失敗時は両経路を停止（MSP維持）してfalseを返す。
-bool audio_transport_start_rx_after_tx_sync(void);
+// USB IN FIFO目標を再適用する。失敗時は両経路を停止（MSP維持）してfalseを返し、
+// failureへ失敗した操作とHAL結果を格納する。
+bool audio_transport_start_rx_after_tx_sync(AudioTransportFailure_t* failure);
+
+// TinyUSBのIN/OUT FIFOに残る切り替え期間中のデータを公開APIで破棄する。
+// TinyUSBが内部で使用しているバッファには触れない。Audio Task context only。
+void audio_transport_clear_usb_fifos(void);
 
 // 診断ログ・LED制御用。
 bool audio_transport_is_output_streaming(void);

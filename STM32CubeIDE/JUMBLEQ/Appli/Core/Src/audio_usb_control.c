@@ -42,6 +42,23 @@ enum
 static volatile uint32_t tx_blink_interval_ms = BLINK_NOT_MOUNTED;
 static volatile uint32_t rx_blink_interval_ms = BLINK_NOT_MOUNTED;
 
+#if CFG_TUD_AUDIO_ENABLE_EP_OUT && CFG_TUD_AUDIO_ENABLE_FEEDBACK_EP
+// アプリ側feedback計算の状態。TinyUSBのFIFO_COUNT方式と同じ平滑化・目標水位・
+// 上下限・補正量を手書きコードで維持する。feedbackは16.16形式。
+typedef struct
+{
+    bool     valid;            // 定数が初期化済み
+    uint16_t fifo_threshold;   // 目標FIFO水位(byte)
+    uint16_t rate_const[2];    // 目標からの水位偏差1byte当たりの補正量
+    uint32_t nominal;          // 公称feedback値(16.16)
+    uint32_t min_value;        // 許容下限(16.16)
+    uint32_t max_value;        // 許容上限(16.16)
+    uint32_t fifo_lvl_avg;     // 平滑化したFIFO水位(16.16)
+} audio_usb_feedback_state_t;
+
+static audio_usb_feedback_state_t s_feedback = {0};
+#endif
+
 const uint32_t sample_rates[] = {48000, 96000};
 
 // Current states
@@ -70,6 +87,115 @@ uint32_t get_rx_blink_interval_ms(void)
     return rx_blink_interval_ms;
 }
 
+#if CFG_TUD_AUDIO_ENABLE_EP_OUT && CFG_TUD_AUDIO_ENABLE_FEEDBACK_EP
+// マイクロフレーム当たりの公称フレーム数(16.16)をレートから求める。
+// High-Speedは8 kHzマイクロフレーム、Full-Speedは1 kHzフレーム基準。
+static uint32_t audio_usb_feedback_nominal(uint32_t sample_rate_hz, uint32_t frame_div)
+{
+    return ((sample_rate_hz / 100u) << 16) / (frame_div / 100u);
+}
+
+void audio_usb_control_feedback_reset(uint32_t sample_rate_hz)
+{
+    const uint32_t frame_div = (TUSB_SPEED_FULL == tud_speed_get()) ? 1000u : 8000u;
+    const uint32_t nominal = audio_usb_feedback_nominal(sample_rate_hz, frame_div);
+
+    uint32_t threshold = audio_transport_usb_out_fifo_target_bytes(sample_rate_hz);
+    if (threshold == 0u)
+    {
+        threshold = 1u;
+    }
+
+    const uint32_t max_value = ((sample_rate_hz / frame_div) + 1u) << 16;
+    const uint32_t min_value = ((sample_rate_hz - 1u) / frame_div) << 16;
+
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    s_feedback.valid          = true;
+    s_feedback.nominal        = nominal;
+    s_feedback.min_value      = min_value;
+    s_feedback.max_value      = max_value;
+    s_feedback.fifo_threshold = (uint16_t) threshold;
+    s_feedback.rate_const[0]  = (uint16_t) ((max_value - nominal) / threshold);
+    s_feedback.rate_const[1]  = (uint16_t) ((nominal - min_value) / threshold);
+    if (frame_div == 8000u)
+    {
+        // High-SpeedはパケットサイズがMSOごとに変動し得るため感度を下げる。
+        s_feedback.rate_const[0] /= 8u;
+        s_feedback.rate_const[1] /= 8u;
+    }
+    // 平滑化履歴は目標水位から開始し、切り替え後の初回補正を滑らかにする。
+    s_feedback.fifo_lvl_avg = threshold << 16;
+
+    __set_PRIMASK(primask);
+
+    // 初回送信が設定callbackより前に予約される場合があるため、公称値を先に設定する。
+    (void) tud_audio_n_fb_set(AUDIO_FUNC_ID, nominal);
+}
+
+void audio_usb_control_feedback_update(void)
+{
+    // 搬送禁止中は水位不足による補正をしない。FIFO読み捨てで水位が下がり、
+    // 補正が最大値へ張り付くのを防ぐ。
+    if (!audio_control_transport_ready() || !audio_control_transport_paths_safe())
+    {
+        return;
+    }
+
+    tu_fifo_t* ep_out_ff = tud_audio_n_get_ep_out_ff(AUDIO_FUNC_ID);
+    if (ep_out_ff == NULL)
+    {
+        return;
+    }
+
+    const uint16_t lvl_new = (uint16_t) tu_fifo_count(ep_out_ff);
+
+    uint32_t feedback = 0u;
+    bool updated = false;
+
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    if (s_feedback.valid)
+    {
+        // TinyUSBのFIFO_COUNT方式と同じ1/64低域通過フィルタで水位を平滑化する。
+        uint32_t lvl = (uint32_t) (((uint64_t) s_feedback.fifo_lvl_avg * 63u +
+                                    ((uint32_t) lvl_new << 16)) >> 6);
+        s_feedback.fifo_lvl_avg = lvl;
+
+        const uint32_t ff_lvl = lvl >> 16;
+        const uint32_t ff_thr = s_feedback.fifo_threshold;
+
+        if (ff_lvl < ff_thr)
+        {
+            feedback = s_feedback.nominal + (ff_thr - ff_lvl) * s_feedback.rate_const[0];
+        }
+        else
+        {
+            feedback = s_feedback.nominal - (ff_lvl - ff_thr) * s_feedback.rate_const[1];
+        }
+
+        if (feedback > s_feedback.max_value)
+        {
+            feedback = s_feedback.max_value;
+        }
+        if (feedback < s_feedback.min_value)
+        {
+            feedback = s_feedback.min_value;
+        }
+        updated = true;
+    }
+
+    __set_PRIMASK(primask);
+
+    if (updated)
+    {
+        (void) tud_audio_n_fb_set(AUDIO_FUNC_ID, feedback);
+    }
+}
+#endif
+
 //--------------------------------------------------------------------+
 // Device callbacks
 //--------------------------------------------------------------------+
@@ -84,6 +210,13 @@ void tud_mount_cb(void)
 #endif
     tx_blink_interval_ms = BLINK_MOUNTED;
     rx_blink_interval_ms = BLINK_MOUNTED;
+
+#if CFG_TUD_AUDIO_ENABLE_EP_OUT && CFG_TUD_AUDIO_ENABLE_FEEDBACK_EP
+    // 初回のSET_INTERFACEでfeedback送信が予約されるため、その前に公称値を設定する。
+    AudioRateSnapshot_t rate_snapshot;
+    audio_control_get_rate_snapshot(&rate_snapshot);
+    audio_usb_control_feedback_reset(rate_snapshot.requested_hz);
+#endif
 }
 
 // Invoked when device is unmounted
@@ -217,7 +350,9 @@ static bool audio20_clock_get_request(uint8_t rhport, tusb_control_request_t con
     }
     else if (TU_U16_HIGH(request->wValue) == AUDIO20_CS_CTRL_CLK_VALID && request->bRequest == AUDIO20_CS_REQ_CUR)
     {
-        audio20_control_cur_1_t cur_valid = {.bCur = 1};
+        // 最新要求と適用状態が整合し、切り替え全体が成功した場合だけ有効を返す。
+        // 要求受理後の未処理期間・SWITCHING・FAILED・初期適用未確認では0。
+        audio20_control_cur_1_t cur_valid = {.bCur = audio_control_clock_valid() ? 1U : 0U};
         TU_LOG1("Clock get is valid %u\r\n", cur_valid.bCur);
         return tud_audio_buffer_and_schedule_control_xfer(rhport, (tusb_control_request_t const*) request, &cur_valid, sizeof(cur_valid));
     }
@@ -259,6 +394,12 @@ static bool audio20_clock_set_request(uint8_t rhport, tusb_control_request_t con
         }
 
         audio_control_request_sample_rate(requested_sample_rate);
+
+#if CFG_TUD_AUDIO_ENABLE_EP_OUT && CFG_TUD_AUDIO_ENABLE_FEEDBACK_EP
+        // 受理した要求値で公称feedback値を先行設定する（切り替え成功時は
+        // 固定targetで再初期化し、途中で更新された要求値は混ぜない）。
+        audio_usb_control_feedback_reset(requested_sample_rate);
+#endif
 
         SEGGER_RTT_printf(0,
                           "[USB] sample-rate request: %lu Hz tick=%lu\n",
@@ -509,16 +650,12 @@ void tud_audio_feedback_params_cb(uint8_t func_id, uint8_t alt_itf, audio_feedba
         return;
     }
 
-    // Use TinyUSB's FIFO-count based feedback so host OUT packet rate follows
-    // this device's effective consume rate and suppresses long-term drift.
-    // sample_freqと目標水位が同じレートから計算されるよう、localへ一度だけ取得する。
-    const uint32_t sample_rate_hz = get_current_sample_rate_hz();
+    // TinyUSB内部の自動計算（旧レートの定数のままfeedbackを上書きし続ける）を止める。
+    // feedback値はアプリ側で計算し、tud_audio_n_fb_set()で更新する。
+    AudioRateSnapshot_t rate_snapshot;
+    audio_control_get_rate_snapshot(&rate_snapshot);
 
-    feedback_param->method      = AUDIO_FEEDBACK_METHOD_FIFO_COUNT;
-    feedback_param->sample_freq = sample_rate_hz;
-
-    // 0.5 ms相当の滞留時間を目標にし、ジッタ耐性とレイテンシーを両立する。
-    feedback_param->fifo_count.fifo_threshold =
-        audio_transport_usb_out_fifo_target_bytes(sample_rate_hz);
+    feedback_param->method      = AUDIO_FEEDBACK_METHOD_DISABLED;
+    feedback_param->sample_freq = rate_snapshot.requested_hz;
 }
 #endif

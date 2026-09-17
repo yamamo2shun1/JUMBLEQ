@@ -29,6 +29,10 @@ volatile AudioTxDiagnostics_t g_audio_tx_diagnostics = {
 
 volatile AudioRxDiagnostics_t g_audio_rx_diagnostics = {0};
 volatile AudioRecoveryDiagnostics_t g_audio_recovery_diagnostics = {0};
+// state=1はAudioRateState_tのSWITCHING（初期適用確認前）を表す。
+volatile AudioRateSwitchDiagnostics_t g_audio_rate_switch_diagnostics = {
+    .state = 1u,
+};
 
 #if AUDIO_DIAG_LOG
 static volatile uint32_t dbg_tx_used_min            = DBG_MIN_U32_INIT;
@@ -565,6 +569,62 @@ void audio_diagnostics_set_recovery_latched(bool latched)
     }
 }
 
+void audio_diagnostics_update_rate_snapshot(uint32_t state,
+                                            uint32_t applied_hz,
+                                            uint32_t applied_valid,
+                                            uint32_t clock_valid)
+{
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    g_audio_rate_switch_diagnostics.state         = state;
+    g_audio_rate_switch_diagnostics.last_applied_hz = applied_hz;
+    g_audio_rate_switch_diagnostics.applied_valid = applied_valid ? 1u : 0u;
+    g_audio_rate_switch_diagnostics.clock_valid   = clock_valid ? 1u : 0u;
+
+    __set_PRIMASK(primask);
+}
+
+void audio_diagnostics_record_rate_switch_attempt(uint32_t target_hz, uint32_t sequence)
+{
+    g_audio_rate_switch_diagnostics.attempt_count++;
+    g_audio_rate_switch_diagnostics.last_target_hz = target_hz;
+    g_audio_rate_switch_diagnostics.last_sequence  = sequence;
+    g_audio_rate_switch_diagnostics.last_attempt_tick_ms = HAL_GetTick();
+}
+
+void audio_diagnostics_record_rate_switch_noop(uint32_t target_hz, uint32_t sequence)
+{
+    g_audio_rate_switch_diagnostics.noop_count++;
+    g_audio_rate_switch_diagnostics.last_target_hz = target_hz;
+    g_audio_rate_switch_diagnostics.last_sequence  = sequence;
+}
+
+void audio_diagnostics_record_rate_switch_success(uint32_t applied_hz)
+{
+    g_audio_rate_switch_diagnostics.success_count++;
+    g_audio_rate_switch_diagnostics.last_applied_hz    = applied_hz;
+    g_audio_rate_switch_diagnostics.last_success_tick_ms = HAL_GetTick();
+}
+
+void audio_diagnostics_record_rate_switch_failure(uint32_t failed_result,
+                                                  uint32_t failed_stage,
+                                                  uint32_t hal_status,
+                                                  uint32_t aux_status)
+{
+    g_audio_rate_switch_diagnostics.failure_count++;
+    g_audio_rate_switch_diagnostics.last_failed_result     = failed_result;
+    g_audio_rate_switch_diagnostics.last_failed_stage      = failed_stage;
+    g_audio_rate_switch_diagnostics.last_failed_hal_status = hal_status;
+    g_audio_rate_switch_diagnostics.last_failed_aux_status = aux_status;
+    g_audio_rate_switch_diagnostics.last_failure_tick_ms   = HAL_GetTick();
+}
+
+void audio_diagnostics_record_rate_switch_cleanup(uint32_t cleanup_status)
+{
+    g_audio_rate_switch_diagnostics.last_cleanup_status = cleanup_status;
+}
+
 #if AUDIO_DIAG_LOG
 void audio_diagnostics_record_usb_out_packet(uint16_t bytes,
                                              uint32_t rx_cycle,
@@ -823,6 +883,23 @@ void audio_diagnostics_log_periodic(uint32_t sample_rate_hz,
                       (unsigned long) g_audio_recovery_diagnostics.latched,
                       (unsigned long) g_audio_recovery_diagnostics.last_cause_mask,
                       (unsigned long) g_audio_recovery_diagnostics.last_failed_stage);
+    SEGGER_RTT_printf(0,
+                      "[AUD][RATE] state=%lu applied=%lu valid=%lu clk_valid=%lu target=%lu seq=%lu attempt/ok/fail/noop=%lu/%lu/%lu/%lu result=%lu stage=%lu hal=0x%08lX aux=0x%08lX cleanup=0x%02lX\r\n",
+                      (unsigned long) g_audio_rate_switch_diagnostics.state,
+                      (unsigned long) g_audio_rate_switch_diagnostics.last_applied_hz,
+                      (unsigned long) g_audio_rate_switch_diagnostics.applied_valid,
+                      (unsigned long) g_audio_rate_switch_diagnostics.clock_valid,
+                      (unsigned long) g_audio_rate_switch_diagnostics.last_target_hz,
+                      (unsigned long) g_audio_rate_switch_diagnostics.last_sequence,
+                      (unsigned long) g_audio_rate_switch_diagnostics.attempt_count,
+                      (unsigned long) g_audio_rate_switch_diagnostics.success_count,
+                      (unsigned long) g_audio_rate_switch_diagnostics.failure_count,
+                      (unsigned long) g_audio_rate_switch_diagnostics.noop_count,
+                      (unsigned long) g_audio_rate_switch_diagnostics.last_failed_result,
+                      (unsigned long) g_audio_rate_switch_diagnostics.last_failed_stage,
+                      (unsigned long) g_audio_rate_switch_diagnostics.last_failed_hal_status,
+                      (unsigned long) g_audio_rate_switch_diagnostics.last_failed_aux_status,
+                      (unsigned long) g_audio_rate_switch_diagnostics.last_cleanup_status);
     SEGGER_RTT_printf(0,
                       "[AUD][SPI] calls=%lu errors=%lu timeouts=%lu mutex_timeouts=%lu\r\n",
                       (unsigned long) (sigma_calls - dbg_sigma_calls_prev),

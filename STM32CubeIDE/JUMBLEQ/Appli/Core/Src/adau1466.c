@@ -278,11 +278,11 @@ static bool adau1466_hp_source_to_mux_index(uint8_t source, uint8_t* mux_index)
     }
 }
 
-static bool adau1466_write_reg_u16(uint16_t addr, uint8_t value)
+static bool adau1466_write_reg_u16(uint16_t addr, uint8_t value, sigma_spi_call_detail_t* detail)
 {
     uint8_t data[2] = {0x00, value};
 
-    if (sigma_spi_write_block(DEVICE_ADDR_ADAU146XSCHEMATIC_1, addr, 2, data) != SIGMA_SPI_RESULT_OK)
+    if (sigma_spi_write_block(DEVICE_ADDR_ADAU146XSCHEMATIC_1, addr, 2, data, detail) != SIGMA_SPI_RESULT_OK)
     {
         SEGGER_RTT_printf(0, "[ADAU1466] register write failed: addr=%u\n", (unsigned) addr);
         return false;
@@ -291,29 +291,38 @@ static bool adau1466_write_reg_u16(uint16_t addr, uint8_t value)
     return true;
 }
 
-static bool adau1466_wait_pll_lock(uint32_t timeout_ms)
+// PLLロック待ちの結果。SPI読み出し失敗とロック待ちタイムアウトを区別する。
+typedef enum
+{
+    ADAU1466_PLL_WAIT_LOCKED = 0,
+    ADAU1466_PLL_WAIT_TIMEOUT,
+    ADAU1466_PLL_WAIT_SPI_FAILED,
+} adau1466_pll_wait_result_t;
+
+static adau1466_pll_wait_result_t adau1466_wait_pll_lock(uint32_t timeout_ms,
+                                                         sigma_spi_call_detail_t* detail)
 {
     uint8_t pll_lock[2] = {0};
     uint32_t start_tick = HAL_GetTick();
 
     while ((HAL_GetTick() - start_tick) < timeout_ms)
     {
-        if (sigma_spi_read_register(DEVICE_ADDR_ADAU146XSCHEMATIC_1, ADAU1466_REG_PLL_LOCK, 2, pll_lock) !=
-            SIGMA_SPI_RESULT_OK)
+        if (sigma_spi_read_register(DEVICE_ADDR_ADAU146XSCHEMATIC_1, ADAU1466_REG_PLL_LOCK, 2, pll_lock,
+                                    detail) != SIGMA_SPI_RESULT_OK)
         {
             // 読出し失敗を「PLL未lock」や過去の受信値と混同しない。
             SEGGER_RTT_printf(0, "[ADAU1466] PLL lock read failed\n");
-            return false;
+            return ADAU1466_PLL_WAIT_SPI_FAILED;
         }
         if ((pll_lock[1] & 0x01U) != 0U)
         {
-            return true;
+            return ADAU1466_PLL_WAIT_LOCKED;
         }
         osDelay(1);
     }
 
     SEGGER_RTT_printf(0, "[ADAU1466] PLL lock timeout\n");
-    return false;
+    return ADAU1466_PLL_WAIT_TIMEOUT;
 }
 
 static uint32_t adau1466_q8_24_to_raw(double val)
@@ -374,19 +383,28 @@ static void adau1466_wait_safeload_frame(void)
                       ADAU1466_CORE_SAMPLE_RATE_HZ);
 }
 
-static bool adau1466_safeload_write_words(uint16_t addr, uint8_t mem_page, const uint8_t* data, uint8_t word_count)
+static bool adau1466_safeload_write_words(uint16_t addr, uint8_t mem_page, const uint8_t* data, uint8_t word_count,
+                                          sigma_spi_call_detail_t* detail)
 {
     uint8_t safeload_ctrl[12] = {0x00};
 
     if ((data == NULL) || (word_count == 0U) || (word_count > 5U))
     {
         SEGGER_RTT_printf(0, "[ADAU1466] invalid safeload word_count: %u\n", word_count);
+        if (detail != NULL)
+        {
+            detail->result = SIGMA_SPI_RESULT_INVALID_ARG;
+        }
         return false;
     }
 
     if (mem_page > 1U)
     {
         SEGGER_RTT_printf(0, "[ADAU1466] invalid safeload mem_page: %u\n", mem_page);
+        if (detail != NULL)
+        {
+            detail->result = SIGMA_SPI_RESULT_INVALID_ARG;
+        }
         return false;
     }
 
@@ -401,7 +419,7 @@ static bool adau1466_safeload_write_words(uint16_t addr, uint8_t mem_page, const
     }
 
     // data準備→control/commit書込み→DSP frame待ちを一つの排他単位にする。
-    const sigma_spi_result_t begin = sigma_spi_safeload_begin();
+    const sigma_spi_result_t begin = sigma_spi_safeload_begin(detail);
     if (begin != SIGMA_SPI_RESULT_OK)
     {
         SEGGER_RTT_printf(0, "[ADAU1466] safeload lock failed: %u\n", (unsigned) begin);
@@ -409,12 +427,14 @@ static bool adau1466_safeload_write_words(uint16_t addr, uint8_t mem_page, const
     }
 
     sigma_spi_result_t result = sigma_spi_safeload_write_locked(
-        DEVICE_ADDR_ADAU146XSCHEMATIC_1, MOD_SAFELOAD_DATA_SAFELOAD0_ADDR, (uint16_t) (word_count * 4U), (uint8_t*) data);
+        DEVICE_ADDR_ADAU146XSCHEMATIC_1, MOD_SAFELOAD_DATA_SAFELOAD0_ADDR, (uint16_t) (word_count * 4U), (uint8_t*) data,
+        detail);
 
     if (result == SIGMA_SPI_RESULT_OK)
     {
         result = sigma_spi_safeload_write_locked(
-            DEVICE_ADDR_ADAU146XSCHEMATIC_1, MOD_SAFELOAD_ADDR_SAFELOAD_ADDR, sizeof(safeload_ctrl), safeload_ctrl);
+            DEVICE_ADDR_ADAU146XSCHEMATIC_1, MOD_SAFELOAD_ADDR_SAFELOAD_ADDR, sizeof(safeload_ctrl), safeload_ctrl,
+            detail);
     }
 
     if (result != SIGMA_SPI_RESULT_OK)
@@ -573,7 +593,7 @@ static bool adau1466_write_two_way_safeload(const adau1466_safeload_selector_t* 
     // One-hot in Q8.24 format: 1.0 in the selected word.
     safeload_data[(uint32_t) selected_index * 4U] = 0x01U;
 
-    return adau1466_safeload_write_words(selector->addr, selector->mem_page, safeload_data, 2U);
+    return adau1466_safeload_write_words(selector->addr, selector->mem_page, safeload_data, 2U, NULL);
 }
 
 static void adau1466_select_ch_fader_source(uint16_t addr, uint8_t source)
@@ -590,10 +610,10 @@ void safeload_write_q8_24(uint16_t addr, uint8_t mem_page, double val)
 {
     uint8_t safeload_data[4] = {0x00};
     adau1466_store_be32(adau1466_q8_24_to_raw(val), safeload_data);
-    (void) adau1466_safeload_write_words(addr, mem_page, safeload_data, 1U);
+    (void) adau1466_safeload_write_words(addr, mem_page, safeload_data, 1U, NULL);
 }
 
-void AUDIO_Init_ADAU1466(uint32_t hz)
+bool AUDIO_Init_ADAU1466_Checked(uint32_t hz)
 {
     // ADAU1466 HW Reset
     HAL_GPIO_WritePin(DSP_RESET_GPIO_Port, DSP_RESET_Pin, 0);
@@ -611,22 +631,65 @@ void AUDIO_Init_ADAU1466(uint32_t hz)
     if (!AUDIO_Update_ADAU1466_SampleRate(hz))
     {
         SEGGER_RTT_printf(0, "[ADAU1466] initialization failed for %lu Hz\n", (unsigned long) hz);
+        return false;
     }
+
+    return true;
 }
 
-bool AUDIO_Update_ADAU1466_SampleRate(uint32_t hz)
+void AUDIO_Init_ADAU1466(uint32_t hz)
+{
+    (void) AUDIO_Init_ADAU1466_Checked(hz);
+}
+
+// DSPレート適用の失敗理由を記録する。SPI結果・HAL結果は失敗した呼出し固有の
+// detail（共有診断の後読みではない）から取得する。
+static void adau1466_rate_failure_record(adau1466_rate_failure_t* failure,
+                                         adau1466_rate_fail_t reason,
+                                         adau1466_rate_step_t step,
+                                         const sigma_spi_call_detail_t* detail)
+{
+    if (failure == NULL)
+    {
+        return;
+    }
+
+    failure->reason           = reason;
+    failure->step             = step;
+    failure->spi_result       = (detail != NULL) ? (uint32_t) detail->result : 0u;
+    failure->spi_hal_status   = (detail != NULL) ? detail->hal_status : 0u;
+    failure->spi_hal_error    = (detail != NULL) ? detail->hal_error : 0u;
+    failure->spi_abort_status = (detail != NULL) ? detail->abort_status : 0u;
+}
+
+bool AUDIO_Update_ADAU1466_SampleRate_Checked(uint32_t hz, adau1466_rate_failure_t* failure)
 {
     adau1466_sample_rate_cfg_t cfg;
+
+    if (failure != NULL)
+    {
+        failure->reason           = ADAU1466_RATE_FAIL_NONE;
+        failure->step             = ADAU1466_RATE_STEP_NONE;
+        failure->spi_result       = 0u;
+        failure->spi_hal_status   = 0u;
+        failure->spi_hal_error    = 0u;
+        failure->spi_abort_status = 0u;
+    }
 
     if (!adau1466_get_sample_rate_cfg(hz, &cfg))
     {
         SEGGER_RTT_printf(0, "[ADAU1466] unsupported sample rate: %lu\n", (unsigned long) hz);
+        if (failure != NULL)
+        {
+            failure->reason = ADAU1466_RATE_FAIL_UNSUPPORTED;
+        }
         return false;
     }
 
     uint8_t mux_data[4] = {0U};
     uint8_t sout_data[4] = {0x00U, cfg.sout_source0, 0x00U, cfg.sout_source1};
     adau1466_store_be32(cfg.usb_mux_index, mux_data);
+    sigma_spi_call_detail_t detail = {0};
 
     if (hz == 48000U)
     {
@@ -635,20 +698,28 @@ bool AUDIO_Update_ADAU1466_SampleRate(uint32_t hz)
         if (!adau1466_safeload_write_words(MOD_USB_RATE_SELECT_INDEX4_ADDR,
                                            MOD_USB_RATE_SELECT_INDEX4_MEM_PAGE,
                                            mux_data,
-                                           1U))
+                                           1U,
+                                           &detail))
         {
+            adau1466_rate_failure_record(failure, ADAU1466_RATE_FAIL_SPI,
+                                         ADAU1466_RATE_STEP_MUX, &detail);
             return false;
         }
         if (sigma_spi_write_block(DEVICE_ADDR_ADAU146XSCHEMATIC_1,
                                   ADAU1466_REG_SOUT_SOURCE0,
                                   sizeof(sout_data),
-                                  sout_data) != SIGMA_SPI_RESULT_OK)
+                                  sout_data,
+                                  &detail) != SIGMA_SPI_RESULT_OK)
         {
             SEGGER_RTT_printf(0, "[ADAU1466] SOUT source write failed\n");
+            adau1466_rate_failure_record(failure, ADAU1466_RATE_FAIL_SPI,
+                                         ADAU1466_RATE_STEP_SOUT_SOURCE, &detail);
             return false;
         }
-        if (!adau1466_write_reg_u16(ADAU1466_REG_CLK_GEN2_M, cfg.clk_gen2_m))
+        if (!adau1466_write_reg_u16(ADAU1466_REG_CLK_GEN2_M, cfg.clk_gen2_m, &detail))
         {
+            adau1466_rate_failure_record(failure, ADAU1466_RATE_FAIL_SPI,
+                                         ADAU1466_RATE_STEP_CLK_GEN, &detail);
             return false;
         }
     }
@@ -656,32 +727,45 @@ bool AUDIO_Update_ADAU1466_SampleRate(uint32_t hz)
     {
         // Bring the USB-side serial port to 96 kHz before selecting the direct
         // paths. The DSP core and AK4619 clocks remain at 96 kHz throughout.
-        if (!adau1466_write_reg_u16(ADAU1466_REG_CLK_GEN2_M, cfg.clk_gen2_m))
+        if (!adau1466_write_reg_u16(ADAU1466_REG_CLK_GEN2_M, cfg.clk_gen2_m, &detail))
         {
+            adau1466_rate_failure_record(failure, ADAU1466_RATE_FAIL_SPI,
+                                         ADAU1466_RATE_STEP_CLK_GEN, &detail);
             return false;
         }
         osDelay(ADAU1466_CLOCK_SETTLE_MS);
         if (!adau1466_safeload_write_words(MOD_USB_RATE_SELECT_INDEX4_ADDR,
                                            MOD_USB_RATE_SELECT_INDEX4_MEM_PAGE,
                                            mux_data,
-                                           1U))
+                                           1U,
+                                           &detail))
         {
+            adau1466_rate_failure_record(failure, ADAU1466_RATE_FAIL_SPI,
+                                         ADAU1466_RATE_STEP_MUX, &detail);
             return false;
         }
         if (sigma_spi_write_block(DEVICE_ADDR_ADAU146XSCHEMATIC_1,
                                   ADAU1466_REG_SOUT_SOURCE0,
                                   sizeof(sout_data),
-                                  sout_data) != SIGMA_SPI_RESULT_OK)
+                                  sout_data,
+                                  &detail) != SIGMA_SPI_RESULT_OK)
         {
             SEGGER_RTT_printf(0, "[ADAU1466] SOUT source write failed\n");
+            adau1466_rate_failure_record(failure, ADAU1466_RATE_FAIL_SPI,
+                                         ADAU1466_RATE_STEP_SOUT_SOURCE, &detail);
             return false;
         }
     }
 
     osDelay(ADAU1466_CLOCK_SETTLE_MS);
 
-    if (!adau1466_wait_pll_lock(ADAU1466_PLL_LOCK_TIMEOUT_MS))
+    const adau1466_pll_wait_result_t pll_wait = adau1466_wait_pll_lock(ADAU1466_PLL_LOCK_TIMEOUT_MS, &detail);
+    if (pll_wait != ADAU1466_PLL_WAIT_LOCKED)
     {
+        // SPI読み出し失敗とロック待ちタイムアウトを区別して返す。
+        const adau1466_rate_fail_t reason = (pll_wait == ADAU1466_PLL_WAIT_SPI_FAILED) ?
+                                                ADAU1466_RATE_FAIL_SPI : ADAU1466_RATE_FAIL_PLL_TIMEOUT;
+        adau1466_rate_failure_record(failure, reason, ADAU1466_RATE_STEP_PLL_READ, &detail);
         return false;
     }
 
@@ -691,6 +775,11 @@ bool AUDIO_Update_ADAU1466_SampleRate(uint32_t hz)
                       cfg.clk_gen2_m,
                       (cfg.usb_mux_index == ADAU1466_USB_MUX_ASRC) ? "ASRC" : "direct");
     return true;
+}
+
+bool AUDIO_Update_ADAU1466_SampleRate(uint32_t hz)
+{
+    return AUDIO_Update_ADAU1466_SampleRate_Checked(hz, NULL);
 }
 
 void set_dc_inputA(float ch_fader_position)

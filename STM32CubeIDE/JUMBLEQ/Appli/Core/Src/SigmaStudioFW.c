@@ -89,8 +89,10 @@ static volatile bool s_channel_faulted = false;
 // 永続診断の更新。並行する呼出し（mutex解放後の記録や拒否経路）でカウンタの
 // read-modify-writeとlast_*の組が混ざらないよう、記録全体を短いIRQ禁止区間で
 // 更新する。本関数はISRから呼ばれない。
+// detailが非NULLなら、この呼出し固有の結果を呼出側へ直接返す（後読み依存を防ぐ）。
 static void sigma_spi_diag_note(sigma_spi_result_t result, sigma_spi_op_t op, uint32_t address,
-                                uint32_t hal_status, uint32_t hal_error, uint32_t abort_status)
+                                uint32_t hal_status, uint32_t hal_error, uint32_t abort_status,
+                                sigma_spi_call_detail_t* detail)
 {
     const uint32_t primask = __get_PRIMASK();
     __disable_irq();
@@ -117,6 +119,14 @@ static void sigma_spi_diag_note(sigma_spi_result_t result, sigma_spi_op_t op, ui
     g_sigma_spi_diagnostics.last_abort_status = abort_status;
 
     __set_PRIMASK(primask);
+
+    if (detail != NULL)
+    {
+        detail->result       = result;
+        detail->hal_status   = hal_status;
+        detail->hal_error    = hal_error;
+        detail->abort_status = abort_status;
+    }
 }
 
 static uint32_t sigma_spi_transfer_hal_error_get(void)
@@ -405,7 +415,8 @@ void HAL_SPI_ErrorCallback(SPI_HandleTypeDef* hspi)
     }
 }
 
-sigma_spi_result_t sigma_spi_write_block(uint8_t devAddress, uint16_t address, uint32_t length, uint8_t* pData)
+sigma_spi_result_t sigma_spi_write_block(uint8_t devAddress, uint16_t address, uint32_t length, uint8_t* pData,
+                                         sigma_spi_call_detail_t* detail)
 {
     uint32_t hal_status = 0U;
     uint32_t hal_error = 0U;
@@ -417,7 +428,7 @@ sigma_spi_result_t sigma_spi_write_block(uint8_t devAddress, uint16_t address, u
         ((length > SIGMA_WRITE_BLOCK_MAX_PAYLOAD) && ((length % SIGMA_SPI_MEMORY_WORD_SIZE) != 0U)))
     {
         sigma_spi_diag_note(SIGMA_SPI_RESULT_INVALID_ARG, SIGMA_SPI_OP_WRITE_BLOCK_POLL,
-                            address, 0U, 0U, 0U);
+                            address, 0U, 0U, 0U, detail);
         return SIGMA_SPI_RESULT_INVALID_ARG;
     }
 
@@ -426,13 +437,13 @@ sigma_spi_result_t sigma_spi_write_block(uint8_t devAddress, uint16_t address, u
     if (!sigma_spi_address_range_valid(address, length))
     {
         sigma_spi_diag_note(SIGMA_SPI_RESULT_INVALID_ARG, SIGMA_SPI_OP_WRITE_BLOCK_POLL,
-                            address, 0U, 0U, 0U);
+                            address, 0U, 0U, 0U, detail);
         return SIGMA_SPI_RESULT_INVALID_ARG;
     }
 
     if (s_channel_faulted)
     {
-        sigma_spi_diag_note(SIGMA_SPI_RESULT_FAULT, SIGMA_SPI_OP_WRITE_BLOCK_POLL, address, 0U, 0U, 0U);
+        sigma_spi_diag_note(SIGMA_SPI_RESULT_FAULT, SIGMA_SPI_OP_WRITE_BLOCK_POLL, address, 0U, 0U, 0U, detail);
         return SIGMA_SPI_RESULT_FAULT;
     }
 
@@ -443,13 +454,13 @@ sigma_spi_result_t sigma_spi_write_block(uint8_t devAddress, uint16_t address, u
         if (!sigma_spi_sync_objects_ready())
         {
             sigma_spi_diag_note(SIGMA_SPI_RESULT_NOT_INITIALIZED, SIGMA_SPI_OP_WRITE_BLOCK_POLL,
-                                address, 0U, 0U, 0U);
+                                address, 0U, 0U, 0U, detail);
             return SIGMA_SPI_RESULT_NOT_INITIALIZED;
         }
         if (osMutexAcquire(spiMutexHandle, pdMS_TO_TICKS(SIGMA_SPI_MUTEX_TIMEOUT_MS)) != osOK)
         {
             sigma_spi_diag_note(SIGMA_SPI_RESULT_MUTEX_TIMEOUT, SIGMA_SPI_OP_WRITE_BLOCK_POLL,
-                                address, 0U, 0U, 0U);
+                                address, 0U, 0U, 0U, detail);
             return SIGMA_SPI_RESULT_MUTEX_TIMEOUT;
         }
 
@@ -458,7 +469,7 @@ sigma_spi_result_t sigma_spi_write_block(uint8_t devAddress, uint16_t address, u
         {
             osMutexRelease(spiMutexHandle);
             sigma_spi_diag_note(SIGMA_SPI_RESULT_FAULT, SIGMA_SPI_OP_WRITE_BLOCK_POLL,
-                                address, 0U, 0U, 0U);
+                                address, 0U, 0U, 0U, detail);
             return SIGMA_SPI_RESULT_FAULT;
         }
     }
@@ -506,16 +517,17 @@ sigma_spi_result_t sigma_spi_write_block(uint8_t devAddress, uint16_t address, u
         osMutexRelease(spiMutexHandle);
     }
 
-    sigma_spi_diag_note(result, SIGMA_SPI_OP_WRITE_BLOCK_POLL, address, hal_status, hal_error, abort_status);
+    sigma_spi_diag_note(result, SIGMA_SPI_OP_WRITE_BLOCK_POLL, address, hal_status, hal_error, abort_status, detail);
     return result;
 }
 
 void SIGMA_WRITE_REGISTER_BLOCK(uint8_t devAddress, uint16_t address, uint32_t length, uint8_t* pData)
 {
-    (void) sigma_spi_write_block(devAddress, address, length, pData);
+    (void) sigma_spi_write_block(devAddress, address, length, pData, NULL);
 }
 
-sigma_spi_result_t sigma_spi_write_block_it(uint8_t devAddress, uint16_t address, uint16_t length, uint8_t* pData)
+sigma_spi_result_t sigma_spi_write_block_it(uint8_t devAddress, uint16_t address, uint16_t length, uint8_t* pData,
+                                            sigma_spi_call_detail_t* detail)
 {
     uint32_t hal_status = 0U;
     uint32_t hal_error = 0U;
@@ -529,27 +541,27 @@ sigma_spi_result_t sigma_spi_write_block_it(uint8_t devAddress, uint16_t address
         !sigma_spi_address_range_valid(address, length))
     {
         sigma_spi_it_write_errors++;
-        sigma_spi_diag_note(SIGMA_SPI_RESULT_INVALID_ARG, SIGMA_SPI_OP_WRITE_BLOCK_IT, address, 0U, 0U, 0U);
+        sigma_spi_diag_note(SIGMA_SPI_RESULT_INVALID_ARG, SIGMA_SPI_OP_WRITE_BLOCK_IT, address, 0U, 0U, 0U, detail);
         return SIGMA_SPI_RESULT_INVALID_ARG;
     }
     if (s_channel_faulted)
     {
         sigma_spi_it_write_errors++;
-        sigma_spi_diag_note(SIGMA_SPI_RESULT_FAULT, SIGMA_SPI_OP_WRITE_BLOCK_IT, address, 0U, 0U, 0U);
+        sigma_spi_diag_note(SIGMA_SPI_RESULT_FAULT, SIGMA_SPI_OP_WRITE_BLOCK_IT, address, 0U, 0U, 0U, detail);
         return SIGMA_SPI_RESULT_FAULT;
     }
     if (!sigma_spi_runtime() || !sigma_spi_sync_objects_ready())
     {
         // スケジューラ実行中の未初期化を、排他なしポーリングへfallbackしない。
         sigma_spi_it_write_errors++;
-        sigma_spi_diag_note(SIGMA_SPI_RESULT_NOT_INITIALIZED, SIGMA_SPI_OP_WRITE_BLOCK_IT, address, 0U, 0U, 0U);
+        sigma_spi_diag_note(SIGMA_SPI_RESULT_NOT_INITIALIZED, SIGMA_SPI_OP_WRITE_BLOCK_IT, address, 0U, 0U, 0U, detail);
         return SIGMA_SPI_RESULT_NOT_INITIALIZED;
     }
 
     if (osMutexAcquire(spiMutexHandle, pdMS_TO_TICKS(SIGMA_SPI_MUTEX_TIMEOUT_MS)) != osOK)
     {
         sigma_spi_it_mutex_timeouts++;
-        sigma_spi_diag_note(SIGMA_SPI_RESULT_MUTEX_TIMEOUT, SIGMA_SPI_OP_WRITE_BLOCK_IT, address, 0U, 0U, 0U);
+        sigma_spi_diag_note(SIGMA_SPI_RESULT_MUTEX_TIMEOUT, SIGMA_SPI_OP_WRITE_BLOCK_IT, address, 0U, 0U, 0U, detail);
         return SIGMA_SPI_RESULT_MUTEX_TIMEOUT;
     }
 
@@ -558,7 +570,7 @@ sigma_spi_result_t sigma_spi_write_block_it(uint8_t devAddress, uint16_t address
     {
         osMutexRelease(spiMutexHandle);
         sigma_spi_it_write_errors++;
-        sigma_spi_diag_note(SIGMA_SPI_RESULT_FAULT, SIGMA_SPI_OP_WRITE_BLOCK_IT, address, 0U, 0U, 0U);
+        sigma_spi_diag_note(SIGMA_SPI_RESULT_FAULT, SIGMA_SPI_OP_WRITE_BLOCK_IT, address, 0U, 0U, 0U, detail);
         return SIGMA_SPI_RESULT_FAULT;
     }
 
@@ -587,20 +599,20 @@ sigma_spi_result_t sigma_spi_write_block_it(uint8_t devAddress, uint16_t address
         sigma_spi_it_write_errors++;
     }
 
-    sigma_spi_diag_note(result, SIGMA_SPI_OP_WRITE_BLOCK_IT, address, hal_status, hal_error, abort_status);
+    sigma_spi_diag_note(result, SIGMA_SPI_OP_WRITE_BLOCK_IT, address, hal_status, hal_error, abort_status, detail);
     return result;
 }
 
 void SIGMA_WRITE_REGISTER_BLOCK_IT(uint8_t devAddress, uint16_t address, uint16_t length, uint8_t* pData)
 {
-    (void) sigma_spi_write_block_it(devAddress, address, length, pData);
+    (void) sigma_spi_write_block_it(devAddress, address, length, pData, NULL);
 }
 
-sigma_spi_result_t sigma_spi_safeload_begin(void)
+sigma_spi_result_t sigma_spi_safeload_begin(sigma_spi_call_detail_t* detail)
 {
     if (s_channel_faulted)
     {
-        sigma_spi_diag_note(SIGMA_SPI_RESULT_FAULT, SIGMA_SPI_OP_SAFELOAD, 0U, 0U, 0U, 0U);
+        sigma_spi_diag_note(SIGMA_SPI_RESULT_FAULT, SIGMA_SPI_OP_SAFELOAD, 0U, 0U, 0U, 0U, detail);
         return SIGMA_SPI_RESULT_FAULT;
     }
 
@@ -612,13 +624,13 @@ sigma_spi_result_t sigma_spi_safeload_begin(void)
 
     if (!sigma_spi_sync_objects_ready())
     {
-        sigma_spi_diag_note(SIGMA_SPI_RESULT_NOT_INITIALIZED, SIGMA_SPI_OP_SAFELOAD, 0U, 0U, 0U, 0U);
+        sigma_spi_diag_note(SIGMA_SPI_RESULT_NOT_INITIALIZED, SIGMA_SPI_OP_SAFELOAD, 0U, 0U, 0U, 0U, detail);
         return SIGMA_SPI_RESULT_NOT_INITIALIZED;
     }
 
     if (osMutexAcquire(spiMutexHandle, pdMS_TO_TICKS(SIGMA_SPI_MUTEX_TIMEOUT_MS)) != osOK)
     {
-        sigma_spi_diag_note(SIGMA_SPI_RESULT_MUTEX_TIMEOUT, SIGMA_SPI_OP_SAFELOAD, 0U, 0U, 0U, 0U);
+        sigma_spi_diag_note(SIGMA_SPI_RESULT_MUTEX_TIMEOUT, SIGMA_SPI_OP_SAFELOAD, 0U, 0U, 0U, 0U, detail);
         return SIGMA_SPI_RESULT_MUTEX_TIMEOUT;
     }
 
@@ -626,7 +638,7 @@ sigma_spi_result_t sigma_spi_safeload_begin(void)
     if (s_channel_faulted)
     {
         osMutexRelease(spiMutexHandle);
-        sigma_spi_diag_note(SIGMA_SPI_RESULT_FAULT, SIGMA_SPI_OP_SAFELOAD, 0U, 0U, 0U, 0U);
+        sigma_spi_diag_note(SIGMA_SPI_RESULT_FAULT, SIGMA_SPI_OP_SAFELOAD, 0U, 0U, 0U, 0U, detail);
         return SIGMA_SPI_RESULT_FAULT;
     }
 
@@ -641,7 +653,8 @@ void sigma_spi_safeload_end(void)
     }
 }
 
-sigma_spi_result_t sigma_spi_safeload_write_locked(uint8_t devAddress, uint16_t dataAddress, uint16_t length, uint8_t* pData)
+sigma_spi_result_t sigma_spi_safeload_write_locked(uint8_t devAddress, uint16_t dataAddress, uint16_t length, uint8_t* pData,
+                                                   sigma_spi_call_detail_t* detail)
 {
     uint32_t hal_status = 0U;
     uint32_t hal_error = 0U;
@@ -652,12 +665,12 @@ sigma_spi_result_t sigma_spi_safeload_write_locked(uint8_t devAddress, uint16_t 
         (((uint32_t) SIGMA_SPI_HEADER_SIZE + (uint32_t) length) > SIGMA_SPI_MAX_HAL_TRANSFER) ||
         !sigma_spi_address_range_valid(dataAddress, length))
     {
-        sigma_spi_diag_note(SIGMA_SPI_RESULT_INVALID_ARG, SIGMA_SPI_OP_SAFELOAD, dataAddress, 0U, 0U, 0U);
+        sigma_spi_diag_note(SIGMA_SPI_RESULT_INVALID_ARG, SIGMA_SPI_OP_SAFELOAD, dataAddress, 0U, 0U, 0U, detail);
         return SIGMA_SPI_RESULT_INVALID_ARG;
     }
     if (s_channel_faulted)
     {
-        sigma_spi_diag_note(SIGMA_SPI_RESULT_FAULT, SIGMA_SPI_OP_SAFELOAD, dataAddress, 0U, 0U, 0U);
+        sigma_spi_diag_note(SIGMA_SPI_RESULT_FAULT, SIGMA_SPI_OP_SAFELOAD, dataAddress, 0U, 0U, 0U, detail);
         return SIGMA_SPI_RESULT_FAULT;
     }
 
@@ -684,26 +697,27 @@ sigma_spi_result_t sigma_spi_safeload_write_locked(uint8_t devAddress, uint16_t 
                                          &hal_status, &hal_error, &abort_status);
     }
 
-    sigma_spi_diag_note(result, SIGMA_SPI_OP_SAFELOAD, dataAddress, hal_status, hal_error, abort_status);
+    sigma_spi_diag_note(result, SIGMA_SPI_OP_SAFELOAD, dataAddress, hal_status, hal_error, abort_status, detail);
     return result;
 }
 
-sigma_spi_result_t sigma_spi_safeload_write_data(uint8_t devAddress, uint16_t dataAddress, uint16_t length, uint8_t* pData)
+sigma_spi_result_t sigma_spi_safeload_write_data(uint8_t devAddress, uint16_t dataAddress, uint16_t length, uint8_t* pData,
+                                                 sigma_spi_call_detail_t* detail)
 {
-    const sigma_spi_result_t begin = sigma_spi_safeload_begin();
+    const sigma_spi_result_t begin = sigma_spi_safeload_begin(detail);
     if (begin != SIGMA_SPI_RESULT_OK)
     {
         return begin;
     }
 
-    const sigma_spi_result_t result = sigma_spi_safeload_write_locked(devAddress, dataAddress, length, pData);
+    const sigma_spi_result_t result = sigma_spi_safeload_write_locked(devAddress, dataAddress, length, pData, detail);
     sigma_spi_safeload_end();
     return result;
 }
 
 void SIGMA_SAFELOAD_WRITE_DATA(uint8_t devAddress, uint16_t dataAddress, uint16_t length, uint8_t* pData)
 {
-    (void) sigma_spi_safeload_write_data(devAddress, dataAddress, length, pData);
+    (void) sigma_spi_safeload_write_data(devAddress, dataAddress, length, pData, NULL);
 }
 
 void SIGMA_WRITE_DELAY(uint8_t devAddress, uint16_t dataAddress, uint16_t length, uint8_t* pData)
@@ -711,7 +725,8 @@ void SIGMA_WRITE_DELAY(uint8_t devAddress, uint16_t dataAddress, uint16_t length
     HAL_Delay(15);
 }
 
-sigma_spi_result_t sigma_spi_read_register(uint8_t devAddress, uint16_t address, uint16_t length, uint8_t* pData)
+sigma_spi_result_t sigma_spi_read_register(uint8_t devAddress, uint16_t address, uint16_t length, uint8_t* pData,
+                                           sigma_spi_call_detail_t* detail)
 {
     uint32_t hal_status = 0U;
     uint32_t hal_error = 0U;
@@ -722,23 +737,23 @@ sigma_spi_result_t sigma_spi_read_register(uint8_t devAddress, uint16_t address,
         (((uint32_t) SIGMA_SPI_HEADER_SIZE + (uint32_t) length) > SIGMA_SPI_MAX_HAL_TRANSFER) ||
         !sigma_spi_address_range_valid(address, length))
     {
-        sigma_spi_diag_note(SIGMA_SPI_RESULT_INVALID_ARG, SIGMA_SPI_OP_READ, address, 0U, 0U, 0U);
+        sigma_spi_diag_note(SIGMA_SPI_RESULT_INVALID_ARG, SIGMA_SPI_OP_READ, address, 0U, 0U, 0U, detail);
         return SIGMA_SPI_RESULT_INVALID_ARG;
     }
     if (s_channel_faulted)
     {
-        sigma_spi_diag_note(SIGMA_SPI_RESULT_FAULT, SIGMA_SPI_OP_READ, address, 0U, 0U, 0U);
+        sigma_spi_diag_note(SIGMA_SPI_RESULT_FAULT, SIGMA_SPI_OP_READ, address, 0U, 0U, 0U, detail);
         return SIGMA_SPI_RESULT_FAULT;
     }
     if (!sigma_spi_runtime() || !sigma_spi_sync_objects_ready())
     {
-        sigma_spi_diag_note(SIGMA_SPI_RESULT_NOT_INITIALIZED, SIGMA_SPI_OP_READ, address, 0U, 0U, 0U);
+        sigma_spi_diag_note(SIGMA_SPI_RESULT_NOT_INITIALIZED, SIGMA_SPI_OP_READ, address, 0U, 0U, 0U, detail);
         return SIGMA_SPI_RESULT_NOT_INITIALIZED;
     }
 
     if (osMutexAcquire(spiMutexHandle, pdMS_TO_TICKS(SIGMA_SPI_MUTEX_TIMEOUT_MS)) != osOK)
     {
-        sigma_spi_diag_note(SIGMA_SPI_RESULT_MUTEX_TIMEOUT, SIGMA_SPI_OP_READ, address, 0U, 0U, 0U);
+        sigma_spi_diag_note(SIGMA_SPI_RESULT_MUTEX_TIMEOUT, SIGMA_SPI_OP_READ, address, 0U, 0U, 0U, detail);
         return SIGMA_SPI_RESULT_MUTEX_TIMEOUT;
     }
 
@@ -746,7 +761,7 @@ sigma_spi_result_t sigma_spi_read_register(uint8_t devAddress, uint16_t address,
     if (s_channel_faulted)
     {
         osMutexRelease(spiMutexHandle);
-        sigma_spi_diag_note(SIGMA_SPI_RESULT_FAULT, SIGMA_SPI_OP_READ, address, 0U, 0U, 0U);
+        sigma_spi_diag_note(SIGMA_SPI_RESULT_FAULT, SIGMA_SPI_OP_READ, address, 0U, 0U, 0U, detail);
         return SIGMA_SPI_RESULT_FAULT;
     }
 
@@ -776,11 +791,11 @@ sigma_spi_result_t sigma_spi_read_register(uint8_t devAddress, uint16_t address,
 
     osMutexRelease(spiMutexHandle);
 
-    sigma_spi_diag_note(result, SIGMA_SPI_OP_READ, address, hal_status, hal_error, abort_status);
+    sigma_spi_diag_note(result, SIGMA_SPI_OP_READ, address, hal_status, hal_error, abort_status, detail);
     return result;
 }
 
 void SIGMA_READ_REGISTER(uint8_t devAddress, uint16_t address, uint16_t length, uint8_t* pData)
 {
-    (void) sigma_spi_read_register(devAddress, address, length, pData);
+    (void) sigma_spi_read_register(devAddress, address, length, pData, NULL);
 }

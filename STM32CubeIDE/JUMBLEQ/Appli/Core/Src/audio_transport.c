@@ -9,8 +9,10 @@
  */
 
 #include "audio_control.h"
+#include "audio_control_internal.h"
 #include "audio_diagnostics_internal.h"
 #include "audio_transport_internal.h"
+#include "audio_usb_control_internal.h"
 #include "timecode_synth.h"
 
 #include "gpdma.h"
@@ -365,6 +367,17 @@ void audio_transport_ack_recovery_request(uint32_t sequence)
     if ((int32_t) (sequence - s_recovery_request.acknowledged_sequence) > 0)
     {
         s_recovery_request.acknowledged_sequence = sequence;
+
+        // 未takeのpayloadをackで完了扱いにした場合、古い原因・HALコードが次の
+        // publishへマージされないよう消去する。take済みなら既に空。ack以後の
+        // 新しい要求がpendingならpayloadはその要求のものなので保持する。
+        if (s_recovery_request.acknowledged_sequence == s_recovery_request.published_sequence)
+        {
+            s_recovery_request.cause_mask       = 0u;
+            s_recovery_request.dma_error_code   = 0u;
+            s_recovery_request.sai_error_code   = 0u;
+            s_recovery_request.sai_status_flags = 0u;
+        }
     }
 
     __set_PRIMASK(primask);
@@ -592,23 +605,26 @@ void HAL_SAI_ErrorCallback(SAI_HandleTypeDef* hsai)
 // SAI / GPDMA lifecycle
 // ==============================
 
-static bool audio_transport_start_tx_path(void)
+static HAL_StatusTypeDef audio_transport_start_tx_path(void)
 {
-    if (MX_List_GPDMA1_Channel2_Config() != HAL_OK)
+    HAL_StatusTypeDef status = MX_List_GPDMA1_Channel2_Config();
+    if (status != HAL_OK)
     {
-        return false;
+        return status;
     }
-    if (HAL_DMAEx_List_LinkQ(&handle_GPDMA1_Channel2, &List_GPDMA1_Channel2) != HAL_OK)
+    status = HAL_DMAEx_List_LinkQ(&handle_GPDMA1_Channel2, &List_GPDMA1_Channel2);
+    if (status != HAL_OK)
     {
-        return false;
+        return status;
     }
 
     handle_GPDMA1_Channel2.XferHalfCpltCallback = dma_sai2_tx_half;
     handle_GPDMA1_Channel2.XferCpltCallback     = dma_sai2_tx_cplt;
     handle_GPDMA1_Channel2.XferErrorCallback    = dma_sai_error;
-    if (HAL_DMAEx_List_Start_IT(&handle_GPDMA1_Channel2) != HAL_OK)
+    status = HAL_DMAEx_List_Start_IT(&handle_GPDMA1_Channel2);
+    if (status != HAL_OK)
     {
-        return false;
+        return status;
     }
 
     // 手動DMA開始方式に合わせてHAL状態をBUSY_TXへ設定する。HAL IRQ handlerの
@@ -619,26 +635,29 @@ static bool audio_transport_start_tx_path(void)
 
     hsai_BlockA2.Instance->CR1 |= SAI_xCR1_DMAEN;
     __HAL_SAI_ENABLE(&hsai_BlockA2);
-    return true;
+    return HAL_OK;
 }
 
-static bool audio_transport_start_rx_path(void)
+static HAL_StatusTypeDef audio_transport_start_rx_path(void)
 {
-    if (MX_List_GPDMA1_Channel3_Config() != HAL_OK)
+    HAL_StatusTypeDef status = MX_List_GPDMA1_Channel3_Config();
+    if (status != HAL_OK)
     {
-        return false;
+        return status;
     }
-    if (HAL_DMAEx_List_LinkQ(&handle_GPDMA1_Channel3, &List_GPDMA1_Channel3) != HAL_OK)
+    status = HAL_DMAEx_List_LinkQ(&handle_GPDMA1_Channel3, &List_GPDMA1_Channel3);
+    if (status != HAL_OK)
     {
-        return false;
+        return status;
     }
 
     handle_GPDMA1_Channel3.XferHalfCpltCallback = dma_sai1_rx_half;
     handle_GPDMA1_Channel3.XferCpltCallback     = dma_sai1_rx_cplt;
     handle_GPDMA1_Channel3.XferErrorCallback    = dma_sai_error;
-    if (HAL_DMAEx_List_Start_IT(&handle_GPDMA1_Channel3) != HAL_OK)
+    status = HAL_DMAEx_List_Start_IT(&handle_GPDMA1_Channel3);
+    if (status != HAL_OK)
     {
-        return false;
+        return status;
     }
 
     // 手動DMA開始方式に合わせてHAL状態をBUSY_RXへ設定する。HAL IRQ handlerの
@@ -649,41 +668,83 @@ static bool audio_transport_start_rx_path(void)
 
     hsai_BlockA1.Instance->CR1 |= SAI_xCR1_DMAEN;
     __HAL_SAI_ENABLE(&hsai_BlockA1);
-    return true;
+    return HAL_OK;
 }
 
-// SAI停止。HAL_SAI_Abortで停止完了確認・DMA abort・IMR/フラグ初期化・FIFO flushを
-// 行い、StateをREADYへ戻す（次のHAL_SAI_Initが生成MspInitをスキップできる状態）。
-// deinit_sai=trueはさらにSAIをDeInitする（レート変更用）。復旧はfalseでMSPを維持する。
-// 戻り値は停止完了確認の成否。falseでもDMAは明示的にabortする。
-static bool audio_transport_stop_sai_paths(bool deinit_sai)
+bool audio_transport_dma_abort_confirmed(DMA_HandleTypeDef* hdma)
+{
+    if (hdma == NULL)
+    {
+        return false;
+    }
+
+    if (hdma->State == HAL_DMA_STATE_BUSY)
+    {
+        return (HAL_DMA_Abort(hdma) == HAL_OK);
+    }
+
+    // BUSY以外はabortを試みない。HAL_DMA_Abortは非BUSY時にErrorCodeを
+    // HAL_DMA_ERROR_NO_XFERへ上書きするため、ErrorCodeだけではabort timeout
+    // （State=ERROR、チャネルが動作中の可能性がある）と区別できない。
+    // READY(停止済み・転送エラー後のHALリセット済み)とRESET(未初期化)だけを
+    // 動作していない状態として扱い、ERROR/SUSPEND/ABORTは停止完了と見なさない。
+    return (hdma->State == HAL_DMA_STATE_READY) || (hdma->State == HAL_DMA_STATE_RESET);
+}
+
+uint32_t audio_transport_recovery_request_sequence(void)
+{
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    const uint32_t sequence = s_recovery_request.published_sequence;
+
+    __set_PRIMASK(primask);
+    return sequence;
+}
+
+// SAI停止。HAL_SAI_Abortで停止完了確認・DMA abort・IMR/フラグ初期化・FIFO flushを行い、
+// StateをREADYへ戻す（次のHAL_SAI_Initが生成MspInitをスキップできる状態）。
+// MSP資源とSAI設定は維持する（DeInitしない）。
+// 戻り値はSAI/GPDMA停止完了確認の成否。falseの場合は呼出側が再構築を行わない。
+static bool audio_transport_stop_sai_paths(AudioTransportFailure_t* failure)
 {
     bool stopped = true;
 
-    if (HAL_SAI_Abort(&hsai_BlockA2) != HAL_OK)
+    HAL_StatusTypeDef sai_status = HAL_SAI_Abort(&hsai_BlockA2);
+    if (sai_status != HAL_OK)
     {
         stopped = false;
+        audio_transport_failure_record(failure, AUDIO_RATE_OP_SAI_ABORT_TX,
+                                       (uint32_t) sai_status, hsai_BlockA2.ErrorCode);
     }
-    if (HAL_SAI_Abort(&hsai_BlockA1) != HAL_OK)
+    sai_status = HAL_SAI_Abort(&hsai_BlockA1);
+    if (sai_status != HAL_OK)
     {
         stopped = false;
+        audio_transport_failure_record(failure, AUDIO_RATE_OP_SAI_ABORT_RX,
+                                       (uint32_t) sai_status, hsai_BlockA1.ErrorCode);
     }
 
-    (void) HAL_DMA_Abort(&handle_GPDMA1_Channel2);
-    (void) HAL_DMA_Abort(&handle_GPDMA1_Channel3);
+    // SAI経由のabortに加え、各GPDMAチャネルが停止したことを個別に確認する。
+    if (!audio_transport_dma_abort_confirmed(&handle_GPDMA1_Channel2))
+    {
+        stopped = false;
+        audio_transport_failure_record(failure, AUDIO_RATE_OP_GPDMA_ABORT_TX,
+                                       (uint32_t) HAL_ERROR, handle_GPDMA1_Channel2.ErrorCode);
+    }
+    if (!audio_transport_dma_abort_confirmed(&handle_GPDMA1_Channel3))
+    {
+        stopped = false;
+        audio_transport_failure_record(failure, AUDIO_RATE_OP_GPDMA_ABORT_RX,
+                                       (uint32_t) HAL_ERROR, handle_GPDMA1_Channel3.ErrorCode);
+    }
     __DSB();
-
-    if (deinit_sai)
-    {
-        (void) HAL_SAI_DeInit(&hsai_BlockA2);
-        (void) HAL_SAI_DeInit(&hsai_BlockA1);
-    }
 
     return stopped;
 }
 
-static bool audio_transport_init_dma_channel(DMA_HandleTypeDef* hdma,
-                                             DMA_Channel_TypeDef* instance)
+static HAL_StatusTypeDef audio_transport_init_dma_channel(DMA_HandleTypeDef* hdma,
+                                                          DMA_Channel_TypeDef* instance)
 {
     hdma->Instance                         = instance;
     hdma->InitLinkedList.Priority          = DMA_LOW_PRIORITY_HIGH_WEIGHT;
@@ -692,17 +753,38 @@ static bool audio_transport_init_dma_channel(DMA_HandleTypeDef* hdma,
     hdma->InitLinkedList.TransferEventMode = DMA_TCEM_LAST_LL_ITEM_TRANSFER;
     hdma->InitLinkedList.LinkedListMode    = DMA_LINKEDLIST_CIRCULAR;
 
-    return (HAL_DMAEx_List_Init(hdma) == HAL_OK) &&
-           (HAL_DMA_ConfigChannelAttributes(hdma, DMA_CHANNEL_NPRIV) == HAL_OK);
+    HAL_StatusTypeDef status = HAL_DMAEx_List_Init(hdma);
+    if (status != HAL_OK)
+    {
+        return status;
+    }
+
+    return HAL_DMA_ConfigChannelAttributes(hdma, DMA_CHANNEL_NPRIV);
 }
 
-static bool audio_transport_reinit_dma_channels(void)
+static bool audio_transport_reinit_dma_channels(AudioTransportFailure_t* failure)
 {
     (void) HAL_DMA_DeInit(&handle_GPDMA1_Channel2);
     (void) HAL_DMA_DeInit(&handle_GPDMA1_Channel3);
 
-    return audio_transport_init_dma_channel(&handle_GPDMA1_Channel2, GPDMA1_Channel2) &&
-           audio_transport_init_dma_channel(&handle_GPDMA1_Channel3, GPDMA1_Channel3);
+    HAL_StatusTypeDef status = audio_transport_init_dma_channel(&handle_GPDMA1_Channel2,
+                                                                GPDMA1_Channel2);
+    if (status != HAL_OK)
+    {
+        audio_transport_failure_record(failure, AUDIO_RATE_OP_GPDMA_INIT_TX,
+                                       (uint32_t) status, handle_GPDMA1_Channel2.ErrorCode);
+        return false;
+    }
+
+    status = audio_transport_init_dma_channel(&handle_GPDMA1_Channel3, GPDMA1_Channel3);
+    if (status != HAL_OK)
+    {
+        audio_transport_failure_record(failure, AUDIO_RATE_OP_GPDMA_INIT_RX,
+                                       (uint32_t) status, handle_GPDMA1_Channel3.ErrorCode);
+        return false;
+    }
+
+    return true;
 }
 
 // ==============================
@@ -759,7 +841,7 @@ void audio_transport_start(void)
 
     // SAI2 -> Slave Transmit
     // USB -> STM32 -(SAI)-> ADAU1466
-    if (!audio_transport_start_tx_path())
+    if (audio_transport_start_tx_path() != HAL_OK)
     {
         Error_Handler();
     }
@@ -771,7 +853,7 @@ void audio_transport_start(void)
 
     // SAI1 -> Slave Receize
     // ADAU1466 -(SAI)-> STM32 -> USB
-    if (!audio_transport_start_rx_path())
+    if (audio_transport_start_rx_path() != HAL_OK)
     {
         Error_Handler();
     }
@@ -779,13 +861,16 @@ void audio_transport_start(void)
 
 // 復旧・レート変更共通。SAI/GPDMA停止 → DMAイベント/リングindexリセット →
 // DMA/リング/USBバッファ消去。timecode設定には触れない。Audio Task context only。
-// deinit_sai=trueはSAIをDeInitする（レート変更用）。復旧はfalseにしてSAIのMSP資源と
-// 設定を維持し、HAL_SAI_MspInit（Error_Handlerを含む）を再実行させない。
+// SAIのMSP資源と設定を維持し、HAL_SAI_MspInit（Error_Handlerを含む）を再実行させない。
 // g_audio_tx_diagnosticsは原因調査のため保持する（明示リセットは呼出側で行う）。
-// 戻り値はSAI停止完了確認の成否。バッファ消去は常に行う。
-bool audio_transport_stop_and_clear_paths(bool deinit_sai)
+// 戻り値はSAI/GPDMA停止完了確認の成否。falseの場合は転送停止を確認できていないため、
+// 参照バッファの消去・再利用を行わない。failureへ失敗した操作とHAL結果を格納する。
+bool audio_transport_stop_and_clear_paths(AudioTransportFailure_t* failure)
 {
-    const bool stopped = audio_transport_stop_sai_paths(deinit_sai);
+    if (!audio_transport_stop_sai_paths(failure))
+    {
+        return false;
+    }
 
     audio_ring_reset_indices(&s_tx_ring, 0U);
     audio_ring_reset_indices(&s_rx_ring, 0U);
@@ -814,12 +899,16 @@ bool audio_transport_stop_and_clear_paths(bool deinit_sai)
     memset(usb_capture_buf, 0, sizeof(usb_capture_buf));
     __DSB();
 
-    return stopped;
+    return true;
 }
 
-void audio_transport_reset_for_sample_rate(uint32_t sample_rate_hz)
+bool audio_transport_reset_for_sample_rate(uint32_t sample_rate_hz,
+                                           AudioTransportFailure_t* failure)
 {
-    (void) audio_transport_stop_and_clear_paths(true);
+    if (!audio_transport_stop_and_clear_paths(failure))
+    {
+        return false;
+    }
 
     // レート変更はstream開始と同様、TX診断を明示的にリセットする。
     audio_transport_reset_tx_diagnostics();
@@ -829,50 +918,60 @@ void audio_transport_reset_for_sample_rate(uint32_t sample_rate_hz)
     // alt settingが維持されたままレートだけ変わる場合に備え、新レートのIN FIFO目標も適用する。
     audio_transport_apply_usb_in_fifo_target(sample_rate_hz);
 
+    // 切り替え期間中のTinyUSB残存データをここで破棄し、再開後のprimingや
+    // USB IN送信へ持ち越さない。
+    audio_transport_clear_usb_fifos();
+
     __DSB();
+
+    return true;
 }
 
 // DMA channel再構築とTX開始。失敗時は両経路を停止してfalse。
-// init_sai=trueはレート変更用で、CubeMX生成のMX_SAIx_Init()でSAIを再構築する。
-// init_sai=falseは復旧用で、READY状態からのHAL_SAI_Init（MspInitをスキップ）により
-// MSP資源を維持したままSAI設定とErrorCodeを再初期化して再始動する。
-bool audio_transport_rebuild_and_start_tx(bool init_sai)
+// READY状態からのHAL_SAI_Init（MspInitをスキップ）によりMSP資源を維持したまま
+// SAI設定とErrorCodeを再初期化し、DMAリンクを再実行して再始動する。
+bool audio_transport_rebuild_and_start_tx(AudioTransportFailure_t* failure)
 {
     /* Re-init DMA channels (linked-list mode) */
-    if (!audio_transport_reinit_dma_channels())
+    if (!audio_transport_reinit_dma_channels(failure))
     {
-        (void) audio_transport_stop_sai_paths(init_sai);
+        (void) audio_transport_stop_sai_paths(failure);
         return false;
     }
 
-    if (init_sai)
+    /* 停止時にStateがREADYへ戻っているためMspInitは再実行されない。 */
+    HAL_StatusTypeDef sai_status = HAL_SAI_Init(&hsai_BlockA1);
+    if (sai_status != HAL_OK)
     {
-        /* Reconfigure peripherals (SAI). 失敗時は既存どおりfatal。 */
-        MX_SAI1_Init();
-        MX_SAI2_Init();
+        audio_transport_failure_record(failure, AUDIO_RATE_OP_SAI_INIT_RX,
+                                       (uint32_t) sai_status, hsai_BlockA1.ErrorCode);
+        (void) audio_transport_stop_sai_paths(failure);
+        return false;
     }
-    else
+    sai_status = HAL_SAI_Init(&hsai_BlockA2);
+    if (sai_status != HAL_OK)
     {
-        /* 復旧: 停止時にStateがREADYへ戻っているためMspInitは再実行されない。 */
-        if ((HAL_SAI_Init(&hsai_BlockA1) != HAL_OK) || (HAL_SAI_Init(&hsai_BlockA2) != HAL_OK))
-        {
-            (void) audio_transport_stop_sai_paths(false);
-            return false;
-        }
+        audio_transport_failure_record(failure, AUDIO_RATE_OP_SAI_INIT_TX,
+                                       (uint32_t) sai_status, hsai_BlockA2.ErrorCode);
+        (void) audio_transport_stop_sai_paths(failure);
+        return false;
+    }
 
-        // HAL_SAI_Initで設定が入り直すためDMAリンクを再実行する。
-        __HAL_LINKDMA(&hsai_BlockA1, hdmarx, handle_GPDMA1_Channel3);
-        __HAL_LINKDMA(&hsai_BlockA2, hdmatx, handle_GPDMA1_Channel2);
-    }
+    // HAL_SAI_Initで設定が入り直すためDMAリンクを再実行する。
+    __HAL_LINKDMA(&hsai_BlockA1, hdmarx, handle_GPDMA1_Channel3);
+    __HAL_LINKDMA(&hsai_BlockA2, hdmatx, handle_GPDMA1_Channel2);
 
     /* TX ringは空のまま再始動する。priming完了まではfill_tx_half()が無音を書き、
      * prefillを入れるとUSB音声の前に無音が残って再生されるため。 */
     audio_ring_reset_indices(&s_tx_ring, 0U);
 
     /* Configure and link DMA for SAI2 TX */
-    if (!audio_transport_start_tx_path())
+    sai_status = audio_transport_start_tx_path();
+    if (sai_status != HAL_OK)
     {
-        (void) audio_transport_stop_sai_paths(init_sai);
+        audio_transport_failure_record(failure, AUDIO_RATE_OP_TX_PATH_START,
+                                       (uint32_t) sai_status, handle_GPDMA1_Channel2.ErrorCode);
+        (void) audio_transport_stop_sai_paths(failure);
         return false;
     }
 
@@ -880,34 +979,44 @@ bool audio_transport_rebuild_and_start_tx(bool init_sai)
 }
 
 // TX同期待ち後のRX開始。失敗時は両経路を停止（MSP維持）してfalse。
-bool audio_transport_start_rx_after_tx_sync(void)
+bool audio_transport_start_rx_after_tx_sync(AudioTransportFailure_t* failure)
 {
     /* Configure and link DMA for SAI1 RX */
-    if (!audio_transport_start_rx_path())
+    HAL_StatusTypeDef rx_status = audio_transport_start_rx_path();
+    if (rx_status != HAL_OK)
     {
-        (void) audio_transport_stop_sai_paths(false);
+        audio_transport_failure_record(failure, AUDIO_RATE_OP_RX_PATH_START,
+                                       (uint32_t) rx_status, handle_GPDMA1_Channel3.ErrorCode);
+        (void) audio_transport_stop_sai_paths(failure);
         return false;
     }
 
     // 復旧後もalt settingが維持される場合があるため、IN FIFO目標を再適用する。
-    audio_transport_apply_usb_in_fifo_target(get_current_sample_rate_hz());
+    audio_transport_apply_usb_in_fifo_target(audio_control_transport_sample_rate_hz());
     return true;
 }
 
-void audio_transport_restart_after_rate_change(void)
+// TinyUSBのIN/OUT FIFOに残る切り替え期間中のデータを公開APIで破棄する。
+// TinyUSBが内部で使用しているバッファには触れない。Audio Task context only。
+// クリアはFIFOのrd_idx/wr_idxを更新するため、USB ISRとUSB TaskのFIFO操作の
+// どちらとも直列化する必要がある。PRIMASKはISRと（PendSV/SysTick経由の）
+// Task切替の両方を止めるため、この短区間で両方と排他できる。
+void audio_transport_clear_usb_fifos(void)
 {
-    if (!audio_transport_rebuild_and_start_tx(true))
+    if (!tud_inited())
     {
-        Error_Handler();
+        return;
     }
 
-    /* Wait for SAI TX to synchronize with external clock before starting RX */
-    osDelay(10);
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
 
-    if (!audio_transport_start_rx_after_tx_sync())
-    {
-        Error_Handler();
-    }
+    (void) tud_audio_n_clear_ep_out_ff(AUDIO_FUNC_ID);
+    (void) tud_audio_n_clear_ep_in_ff(AUDIO_FUNC_ID);
+
+    __set_PRIMASK(primask);
+
+    spk_data_size = 0u;
 }
 
 void audio_transport_request_stream(AudioTransportStream_t stream, bool enabled)
@@ -1044,7 +1153,7 @@ static void audio_stream_apply_in_state(bool enabled)
     {
         // TinyUSBはSET_INTERFACEのたびにIN FIFO thresholdをFIFO半分へ戻すため、
         // 有効要求を適用するたびに現在レートの目標で上書きする。
-        audio_transport_apply_usb_in_fifo_target(get_current_sample_rate_hz());
+        audio_transport_apply_usb_in_fifo_target(audio_control_transport_sample_rate_hz());
     }
 }
 
@@ -1774,6 +1883,32 @@ static uint16_t audio_out_read_budget_bytes(void)
     return (uint16_t) bytes;
 }
 
+// レート未確定・失敗期間のUSB OUT残存FIFOを読み捨てる。リングへは積まず、
+// usb_playback_bufは転送用の一時領域としてのみ使用する。Audio Task context only。
+static void audio_transport_discard_usb_out(void)
+{
+    spk_data_size = 0u;
+
+    if (!tud_inited() || !tud_audio_n_mounted(AUDIO_FUNC_ID))
+    {
+        return;
+    }
+
+    uint16_t avail = tud_audio_n_available(AUDIO_FUNC_ID);
+    while (avail > 0u)
+    {
+        const uint16_t chunk = (avail > (uint16_t) sizeof(usb_playback_buf)) ?
+                                   (uint16_t) sizeof(usb_playback_buf) :
+                                   avail;
+        const uint16_t read = tud_audio_n_read(AUDIO_FUNC_ID, usb_playback_buf, chunk);
+        if (read == 0u)
+        {
+            break;
+        }
+        avail = tud_audio_n_available(AUDIO_FUNC_ID);
+    }
+}
+
 static void copybuf_ring2usb_and_send(uint32_t sample_rate_hz)
 {
     if (!tud_audio_n_mounted(AUDIO_FUNC_ID))
@@ -1882,7 +2017,10 @@ bool tud_audio_tx_done_isr(uint8_t rhport, uint16_t n_bytes_sent, uint8_t func_i
 #endif
 
     // USB INの転送完了後、次の0.5ms分が揃っている時だけTaskを起こす。
-    if (s_streaming_in && !usb_tx_pending && audio_usb_in_source_ready(get_current_sample_rate_hz()))
+    // レート未確定・失敗中・停止未確認の復旧中は搬送を許可しない。
+    if (s_streaming_in && !usb_tx_pending &&
+        audio_control_transport_ready() && audio_control_transport_paths_safe() &&
+        audio_usb_in_source_ready(audio_control_transport_sample_rate_hz()))
     {
         usb_tx_pending = true;
 #if AUDIO_DIAG_LOG
@@ -1916,6 +2054,9 @@ bool tud_audio_rx_done_isr(uint8_t rhport, uint16_t n_bytes_received, uint8_t fu
 #else
     (void) n_bytes_received;
 #endif
+
+    // アプリ側feedback更新。搬送禁止中は水位不足による補正をしない。
+    audio_usb_control_feedback_update();
 
     usb_rx_pending = true;
     audio_transport_notify_from_isr();
@@ -1954,6 +2095,32 @@ void audio_transport_service(uint32_t sample_rate_hz)
     }
 #endif
 
+    // レート未確定（初期適用失敗・切替中・FAILED）の間、およびDMA復旧が停止確認を
+    // 経ていない間は通常搬送を許可しない。USB OUTは読み捨て、SAI/RXリング・USB IN
+    // へは積まず、参照バッファにも触れない。
+    const uint32_t request_sequence = audio_control_rate_request_sequence();
+    if (!audio_control_transport_commit_allowed(request_sequence))
+    {
+        audio_transport_discard_usb_out();
+        return;
+    }
+
+    // 以降のcommit区間は要求publishとmutexで排他にする。TinyUSB APIを割り込み禁止
+    // 区間へ入れずに、受理済み要求がcommitの途中へ割り込まないことを保証する。
+    if (!audio_control_commit_lock())
+    {
+        // ロックできない場合は安全側でこの周期の搬送を見送る。
+        audio_transport_discard_usb_out();
+        return;
+    }
+
+    if (!audio_control_transport_commit_allowed(request_sequence))
+    {
+        audio_control_commit_unlock();
+        audio_transport_discard_usb_out();
+        return;
+    }
+
     // DMA halfをTinyUSB FIFO操作より先に処理する。
     // USB -> SAI (TX側の安全なhalfを書き換える)
     copybuf_ring2sai(sample_rate_hz);
@@ -1989,7 +2156,7 @@ void audio_transport_service(uint32_t sample_rate_hz)
     audio_diagnostics_record_usb_out_read(s_streaming_out, spk_data_size);
 #endif
 
-    // USB -> SAI
+    // USB -> SAI。commit区間内なので要求sequenceは変化しない。
     if (spk_data_size > 0)
     {
         copybuf_usb2ring();
@@ -2001,6 +2168,8 @@ void audio_transport_service(uint32_t sample_rate_hz)
     {
         copybuf_ring2usb_and_send(sample_rate_hz);
     }
+
+    audio_control_commit_unlock();
 }
 
 bool audio_transport_is_output_streaming(void)
