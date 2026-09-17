@@ -29,6 +29,7 @@
 #include <stdio.h>
 #include "tusb.h"
 #include "audio_control.h"
+#include "audio_control_internal.h"
 #include "ak4619.h"
 #include "adau1466.h"
 #include "led_control.h"
@@ -398,7 +399,7 @@ void StartAudioTask(void *argument)
      * RESET_FROMFWを0に設定し、ここ以下の行で一旦ブレークして、
      * SigmaStudio+からダウンロードを実行すること。
      */
-    AUDIO_Init_ADAU1466(48000);
+    const bool dsp_rate_ok = AUDIO_Init_ADAU1466_Checked(48000);
     AUDIO_LoadAndApplyRoutingFromEEPROM();
     osDelay(500);
 
@@ -406,7 +407,19 @@ void StartAudioTask(void *argument)
     HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, 0);
     HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, 0);
 
-    start_sai();
+    if (dsp_rate_ok)
+    {
+        // 初期レート適用と音声開始の成功後にREADYを公開し、CLK_VALIDと通常搬送を許可する。
+        start_sai();
+        audio_control_publish_initial_rate_result(48000U, true);
+    }
+    else
+    {
+        // 初期レート適用失敗: SAIを開始せず、クロック無効のままREADYを公開しない。
+        // 新しい対応SET_CURを再試行契機とする。USB Taskの初期化順序は必ず進める。
+        audio_control_publish_initial_rate_result(48000U, false);
+    }
+
     start_audio_control();
     osDelay(100);
 

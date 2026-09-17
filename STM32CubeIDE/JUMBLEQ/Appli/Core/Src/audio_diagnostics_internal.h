@@ -13,6 +13,7 @@
 #define AUDIO_DIAGNOSTICS_INTERNAL_H_
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #ifndef AUDIO_DIAG_LOG
@@ -134,6 +135,124 @@ enum
     AUDIO_RECOVERY_STAGE_TX_START = 2u,
     AUDIO_RECOVERY_STAGE_RX_START = 3u,
 };
+
+// サンプルレート切り替えの永続診断。切替・失敗・cleanupの結果をAUDIO_DIAG_LOG=0でも
+// デバッガから参照できる形で残す。バッファ消去や復旧では消去しない。
+typedef struct
+{
+    uint32_t attempt_count;
+    uint32_t success_count;
+    uint32_t failure_count;
+    uint32_t noop_count;
+    uint32_t last_target_hz;
+    uint32_t last_sequence;
+    uint32_t last_applied_hz;
+    uint32_t last_failed_result;   // 失敗したAPIの結果コード（sigma_spi_result_t等）
+    uint32_t last_failed_stage;
+    uint32_t last_failed_hal_status;
+    uint32_t last_failed_aux_status;
+    uint32_t last_cleanup_status;
+    uint32_t last_attempt_tick_ms;
+    uint32_t last_success_tick_ms;
+    uint32_t last_failure_tick_ms;
+    uint32_t state;
+    uint32_t applied_valid;
+    uint32_t clock_valid;
+} AudioRateSwitchDiagnostics_t;
+
+extern volatile AudioRateSwitchDiagnostics_t g_audio_rate_switch_diagnostics;
+
+// レート切り替えの失敗段階。
+enum
+{
+    AUDIO_RATE_STAGE_NONE           = 0u,
+    AUDIO_RATE_STAGE_ADC_STOP       = 1u,
+    AUDIO_RATE_STAGE_TRANSPORT_STOP = 2u,
+    AUDIO_RATE_STAGE_DSP_UPDATE     = 3u,
+    AUDIO_RATE_STAGE_TX_START       = 4u,
+    AUDIO_RATE_STAGE_RX_START       = 5u,
+    AUDIO_RATE_STAGE_ADC_RESTART    = 6u,
+};
+
+// cleanup状態bit。停止確認・ADC復帰の成否を切り替え失敗と別に残す。
+enum
+{
+    AUDIO_RATE_CLEANUP_TRANSPORT_STOPPED = (1u << 0),
+    AUDIO_RATE_CLEANUP_ADC_RESTARTED     = (1u << 1),
+};
+
+// 失敗操作ID。last_failed_aux_statusの上位16bitへ格納し、どの操作で失敗したかを
+// 下位16bitのErrorCodeと合わせて区別する。
+enum
+{
+    AUDIO_RATE_OP_NONE = 0u,
+    AUDIO_RATE_OP_ADC_STOP,
+    AUDIO_RATE_OP_HPDMA_STOP,
+    AUDIO_RATE_OP_SAI_ABORT_TX,
+    AUDIO_RATE_OP_SAI_ABORT_RX,
+    AUDIO_RATE_OP_GPDMA_ABORT_TX,
+    AUDIO_RATE_OP_GPDMA_ABORT_RX,
+    AUDIO_RATE_OP_GPDMA_INIT_TX,
+    AUDIO_RATE_OP_GPDMA_INIT_RX,
+    AUDIO_RATE_OP_SAI_INIT_TX,
+    AUDIO_RATE_OP_SAI_INIT_RX,
+    AUDIO_RATE_OP_TX_PATH_START,
+    AUDIO_RATE_OP_RX_PATH_START,
+    AUDIO_RATE_OP_ADC_RESTART_LIST_CONFIG,
+    AUDIO_RATE_OP_ADC_RESTART_LINKQ,
+    AUDIO_RATE_OP_ADC_RESTART_START,
+    AUDIO_RATE_OP_ADC_RESTART_ADC,
+    AUDIO_RATE_OP_DSP_MUX,
+    AUDIO_RATE_OP_DSP_SOUT_SOURCE,
+    AUDIO_RATE_OP_DSP_CLK_GEN,
+    AUDIO_RATE_OP_DSP_PLL_LOCK,
+    AUDIO_RATE_OP_DSP_UNSUPPORTED,
+    AUDIO_RATE_OP_DSP_SKIPPED,
+};
+
+// last_failed_aux_statusのエンコード: (操作ID << 16) | (ErrorCode & 0xFFFF)。
+static inline uint32_t audio_rate_aux_pack(uint32_t operation, uint32_t error_code)
+{
+    return (operation << 16) | (error_code & 0xFFFFu);
+}
+
+// 停止・再構築処理の失敗内容。呼出側はゼロ初期化して渡す。
+typedef struct
+{
+    uint32_t operation;   // AUDIO_RATE_OP_*
+    uint32_t hal_status;  // 失敗したHAL APIの戻り値
+    uint32_t error_code;  // 対象ハンドルのErrorCode
+} AudioTransportFailure_t;
+
+// 最初の失敗だけを保持する。failureがNULLなら何もしない。
+static inline void audio_transport_failure_record(AudioTransportFailure_t* failure,
+                                                  uint32_t operation,
+                                                  uint32_t hal_status,
+                                                  uint32_t error_code)
+{
+    if ((failure != NULL) && (failure->operation == AUDIO_RATE_OP_NONE))
+    {
+        failure->operation  = operation;
+        failure->hal_status = hal_status;
+        failure->error_code = error_code;
+    }
+}
+
+// レート状態遷移のsnapshot。状態・適用値・有効フラグ・CLK_VALIDを同じ更新で記録する。
+void audio_diagnostics_update_rate_snapshot(uint32_t state,
+                                            uint32_t applied_hz,
+                                            uint32_t applied_valid,
+                                            uint32_t clock_valid);
+
+void audio_diagnostics_record_rate_switch_attempt(uint32_t target_hz, uint32_t sequence);
+void audio_diagnostics_record_rate_switch_noop(uint32_t target_hz, uint32_t sequence);
+void audio_diagnostics_record_rate_switch_success(uint32_t applied_hz);
+// failed_resultは失敗したAPIの結果コード（sigma_spi_result_tやADAU1466_RATE_FAIL_*等）。
+void audio_diagnostics_record_rate_switch_failure(uint32_t failed_result,
+                                                  uint32_t failed_stage,
+                                                  uint32_t hal_status,
+                                                  uint32_t aux_status);
+void audio_diagnostics_record_rate_switch_cleanup(uint32_t cleanup_status);
 
 // DMA callback kinds. The values must match the transport's internal
 // DMA event encoding; audio_transport.c asserts this at compile time.

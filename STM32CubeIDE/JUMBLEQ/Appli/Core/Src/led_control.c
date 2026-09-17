@@ -172,7 +172,7 @@ static bool read_dbfs_from_sigma(uint16_t addr, float* dbfs)
     const float full_scale = 16777216.0f; // SigmaDSP 8.24 fixed-point unity gain = 0x01000000.
     ADI_REG_TYPE rx_data[4] = {0};
 
-    if (sigma_spi_read_register(DEVICE_ADDR_ADAU146XSCHEMATIC_1, addr, 4, rx_data) != SIGMA_SPI_RESULT_OK)
+    if (sigma_spi_read_register(DEVICE_ADDR_ADAU146XSCHEMATIC_1, addr, 4, rx_data, NULL) != SIGMA_SPI_RESULT_OK)
     {
         return false;
     }

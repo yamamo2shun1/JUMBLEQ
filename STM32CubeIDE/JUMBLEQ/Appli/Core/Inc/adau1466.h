@@ -91,7 +91,43 @@ enum
 double convert_pot2dB(uint16_t adc_val);
 int16_t convert_pot2dB_int(uint16_t adc_val);
 
+// サンプルレート適用の失敗理由。SPI転送失敗とPLLロック待ちタイムアウトを区別する。
+// 共有SPI診断の後読みに依存せず、失敗した処理から直接返す。
+typedef enum
+{
+    ADAU1466_RATE_FAIL_NONE = 0,
+    ADAU1466_RATE_FAIL_UNSUPPORTED,   // 未対応レート
+    ADAU1466_RATE_FAIL_SPI,           // SPI操作失敗（step/spi_result/spi_hal_errorが有効）
+    ADAU1466_RATE_FAIL_PLL_TIMEOUT,   // PLLロック待ちタイムアウト（SPI読み出し自体は成功の場合あり）
+} adau1466_rate_fail_t;
+
+typedef enum
+{
+    ADAU1466_RATE_STEP_NONE = 0,
+    ADAU1466_RATE_STEP_MUX,           // USBレート選択muxのsafeload
+    ADAU1466_RATE_STEP_SOUT_SOURCE,   // SOUT sourceレジスタ
+    ADAU1466_RATE_STEP_CLK_GEN,       // CLK_GEN2 M
+    ADAU1466_RATE_STEP_PLL_READ,      // PLLロック読み出し
+} adau1466_rate_step_t;
+
+typedef struct
+{
+    adau1466_rate_fail_t reason;
+    adau1466_rate_step_t step;
+    uint32_t spi_result;       // sigma_spi_result_t（失敗した呼出し固有の結果）
+    uint32_t spi_hal_status;   // 失敗した呼出しのHAL status
+    uint32_t spi_hal_error;    // 失敗した呼出しのhspi5.ErrorCode
+    uint32_t spi_abort_status; // 停止を伴う失敗時のHAL_SPI_Abort戻り値
+} adau1466_rate_failure_t;
+
+// DSPリセット・program download・初期レート適用を行う。初期レート適用の成否を返し、
+// program downloadそのものの成否は従来どおり検証しない。
+bool AUDIO_Init_ADAU1466_Checked(uint32_t hz);
+// 互換wrapper。初期レート適用の失敗はログのみで、戻り値を持たない。
 void AUDIO_Init_ADAU1466(uint32_t hz);
+// レートを適用する。失敗時はfailureへ理由（SPI失敗／PLLタイムアウト等）を返す。
+bool AUDIO_Update_ADAU1466_SampleRate_Checked(uint32_t hz, adau1466_rate_failure_t* failure);
+// 互換wrapper。失敗理由は取得できない。
 bool AUDIO_Update_ADAU1466_SampleRate(uint32_t hz);
 
 void set_dc_inputA(float ch_fader_position);
