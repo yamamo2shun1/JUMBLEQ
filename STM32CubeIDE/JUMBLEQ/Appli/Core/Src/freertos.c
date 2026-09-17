@@ -30,6 +30,7 @@
 #include "tusb.h"
 #include "audio_control.h"
 #include "audio_control_internal.h"
+#include "audio_usb_control_internal.h"
 #include "ak4619.h"
 #include "adau1466.h"
 #include "led_control.h"
@@ -421,6 +422,10 @@ void StartAudioTask(void *argument)
     }
 
     start_audio_control();
+
+    // DSP初期化とSAI開始後に、USB音量・ミュートの適用専用Taskを開始する。
+    audio_usb_control_feature_task_start();
+
     osDelay(100);
 
     HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, 1);
