@@ -500,14 +500,15 @@ double convert_dB2gain(double db)
     return pow(10.0, db / 20.0);
 }
 
-static void write_q8_24(const uint16_t addr, const double val)
+// DSPへQ8.24値を書き込む。呼出側が適用成否を判定できるようSPI結果を返す。
+static sigma_spi_result_t write_q8_24(const uint16_t addr, const double val)
 {
     uint8_t gain_array[4] = {0x00};
     uint32_t raw          = adau1466_q8_24_to_raw(val);
 
     adau1466_store_be32(raw, gain_array);
 
-    SIGMA_WRITE_REGISTER_BLOCK_IT(DEVICE_ADDR_ADAU146XSCHEMATIC_1, addr, 4, gain_array);
+    return sigma_spi_write_block_it(DEVICE_ADDR_ADAU146XSCHEMATIC_1, addr, 4, gain_array, NULL);
 }
 
 static void adau1466_write_indexed_q8_24(const uint16_t* addr_table, uint32_t count,
@@ -794,27 +795,27 @@ void set_dc_inputB(float ch_fader_position)
                                  ADAU1466_DC_INPUT_B, ch_fader_position);
 }
 
-void control_input_from_usb_gain(uint8_t ch, int16_t db)
+sigma_spi_result_t control_input_from_usb_gain(uint8_t ch, int16_t db)
 {
     SEGGER_RTT_printf(0, "USB CH%d Gain: %d dB\n", ch, db);
 
     if ((ch < 1U) || ((uint16_t) ch > ADAU1466_USB_CH_COUNT))
     {
-        return;
+        return SIGMA_SPI_RESULT_INVALID_ARG;
     }
 
-    write_q8_24(s_usb_gain_addr[(uint32_t) ch - 1U], convert_dB2gain(db));
+    return write_q8_24(s_usb_gain_addr[(uint32_t) ch - 1U], convert_dB2gain(db));
 }
 
-void control_input_from_usb_mute(uint8_t ch, bool muted)
+sigma_spi_result_t control_input_from_usb_mute(uint8_t ch, bool muted)
 {
     if ((ch < 1U) || ((uint16_t) ch > ADAU1466_USB_CH_COUNT))
     {
-        return;
+        return SIGMA_SPI_RESULT_INVALID_ARG;
     }
 
     SEGGER_RTT_printf(0, "USB CH%d Mute: %d\n", ch, muted ? 1 : 0);
-    write_q8_24(s_usb_mute_addr[(uint32_t) ch - 1U], muted ? 0.0 : 1.0);
+    return write_q8_24(s_usb_mute_addr[(uint32_t) ch - 1U], muted ? 0.0 : 1.0);
 }
 
 void control_input_from_ch1_gain(const uint16_t adc_val)

@@ -16,6 +16,9 @@
 #include "adau1466.h"
 #include "main.h"
 
+#include "FreeRTOS.h"
+#include "task.h"
+#include "cmsis_os2.h"
 #include "SEGGER_RTT.h"
 #if AUDIO_DIAG_LOG
 #include "device/dcd.h"
@@ -64,6 +67,234 @@ const uint32_t sample_rates[] = {48000, 96000};
 // Current states
 int8_t mute[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX + 1];     // +1 for master channel 0
 int16_t volume[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX + 1];  // +1 for master channel 0
+
+// ---- Feature Unit（音量・ミュート）の非同期適用 ----
+// USB callbackは要求値とdirty bitの記録だけを行い、DSP適用は専用Taskが行う。
+enum
+{
+    AUDIO_USB_FEATURE_SERVICE_PERIOD_MS = 10U,
+    AUDIO_USB_FEATURE_RETRY_INTERVAL_MS = 50U,
+    AUDIO_USB_FEATURE_ALL_CHANNEL_MASK  = (1U << CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX) - 1U,
+};
+
+static volatile uint8_t s_feature_dirty_mask = 0U;
+static bool s_feature_backoff_active = false;
+static uint32_t s_feature_retry_started_tick = 0U;
+static osThreadId_t s_feature_task_handle = NULL;
+// ヒープ不足時もvApplicationMallocFailedHookへ入らず生成できるよう、スタックとTCBは
+// 静的確保で提供する（CMSIS-RTOS2のcb_mem/stack_mem指定でxTaskCreateStatic経路）。
+static StackType_t s_feature_task_stack[(256 * 4) / sizeof(StackType_t)]
+    __attribute__((aligned(portBYTE_ALIGNMENT)));
+static StaticTask_t s_feature_task_cb;
+static const osThreadAttr_t s_feature_task_attributes = {
+    .name       = "usbFeatureTask",
+    .stack_mem  = s_feature_task_stack,
+    .stack_size = sizeof(s_feature_task_stack),
+    .cb_mem     = &s_feature_task_cb,
+    .cb_size    = sizeof(s_feature_task_cb),
+    .priority   = (osPriority_t) osPriorityNormal,
+};
+
+volatile AudioUsbFeatureDiagnostics_t g_audio_usb_feature_diagnostics = {0};
+
+// チャンネルのdirty bit。Master(ch0)は全チャンネルを対象にする。
+static uint8_t audio_usb_feature_channel_bit(uint8_t channel)
+{
+    if (channel == 0U)
+    {
+        return (uint8_t) AUDIO_USB_FEATURE_ALL_CHANNEL_MASK;
+    }
+
+    return (uint8_t) (1U << (channel - 1U));
+}
+
+// SET_CUR受理。要求値の更新とdirty bit設定を同じPRIMASK区間で行う。
+// SPI呼出し・mutex/セマフォ待ち・printfは行わない。
+static void audio_usb_feature_store_mute(uint8_t channel, int8_t value)
+{
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    mute[channel] = value;
+    const uint8_t dirty_bit = audio_usb_feature_channel_bit(channel);
+    if ((s_feature_dirty_mask & dirty_bit) != 0U)
+    {
+        g_audio_usb_feature_diagnostics.coalesced_request_count++;
+    }
+    s_feature_dirty_mask |= dirty_bit;
+
+    __set_PRIMASK(primask);
+}
+
+static void audio_usb_feature_store_volume(uint8_t channel, int16_t value)
+{
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    volume[channel] = value;
+    const uint8_t dirty_bit = audio_usb_feature_channel_bit(channel);
+    if ((s_feature_dirty_mask & dirty_bit) != 0U)
+    {
+        g_audio_usb_feature_diagnostics.coalesced_request_count++;
+    }
+    s_feature_dirty_mask |= dirty_bit;
+
+    __set_PRIMASK(primask);
+}
+
+// 適用失敗。当該チャンネルをpendingへ戻し、失敗時刻からのバックオフを開始する。
+static void audio_usb_feature_note_failure(uint8_t channel, uint32_t operation,
+                                           sigma_spi_result_t result)
+{
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    s_feature_dirty_mask |= audio_usb_feature_channel_bit(channel);
+    __set_PRIMASK(primask);
+
+    s_feature_retry_started_tick = HAL_GetTick();
+    s_feature_backoff_active     = true;
+
+    g_audio_usb_feature_diagnostics.failed_channel_count++;
+    g_audio_usb_feature_diagnostics.last_result           = (uint32_t) result;
+    g_audio_usb_feature_diagnostics.last_failed_result    = (uint32_t) result;
+    g_audio_usb_feature_diagnostics.last_failed_channel   = channel;
+    g_audio_usb_feature_diagnostics.last_failed_operation = operation;
+    g_audio_usb_feature_diagnostics.backoff_active        = 1U;
+}
+
+// 1チャンネル分の適用。ミュート要求はMuteを先に書き、Gain失敗を理由に
+// ミュートを見送らない。ミュート解除は同一snapshotのGain成功時だけ行う。
+static void audio_usb_feature_apply_channel(uint8_t channel,
+                                            const int8_t* mute_snapshot,
+                                            const int16_t* volume_snapshot)
+{
+    const int32_t effective_volume_q8_8 = (int32_t) volume_snapshot[0] + volume_snapshot[channel];
+    const int16_t effective_volume_db   = (int16_t) (effective_volume_q8_8 / 256);
+    const bool effective_mute           = (mute_snapshot[0] != 0) || (mute_snapshot[channel] != 0);
+
+    sigma_spi_result_t result = SIGMA_SPI_RESULT_OK;
+    uint32_t failed_operation = AUDIO_USB_FEATURE_OP_NONE;
+
+    g_audio_usb_feature_diagnostics.last_apply_tick_ms = HAL_GetTick();
+
+    if (effective_mute)
+    {
+        result = control_input_from_usb_mute(channel, true);
+        if (result == SIGMA_SPI_RESULT_OK)
+        {
+            result = control_input_from_usb_gain(channel, effective_volume_db);
+            if (result != SIGMA_SPI_RESULT_OK)
+            {
+                failed_operation = AUDIO_USB_FEATURE_OP_GAIN;
+            }
+        }
+        else
+        {
+            failed_operation = AUDIO_USB_FEATURE_OP_MUTE;
+        }
+    }
+    else
+    {
+        result = control_input_from_usb_gain(channel, effective_volume_db);
+        if (result == SIGMA_SPI_RESULT_OK)
+        {
+            result = control_input_from_usb_mute(channel, false);
+            if (result != SIGMA_SPI_RESULT_OK)
+            {
+                failed_operation = AUDIO_USB_FEATURE_OP_MUTE;
+            }
+        }
+        else
+        {
+            failed_operation = AUDIO_USB_FEATURE_OP_GAIN;
+        }
+    }
+
+    if (result != SIGMA_SPI_RESULT_OK)
+    {
+        // Gain成功・Mute失敗もチャンネル全体の適用成功としては記録しない。
+        audio_usb_feature_note_failure(channel, failed_operation, result);
+        return;
+    }
+
+    g_audio_usb_feature_diagnostics.applied_channel_count++;
+    g_audio_usb_feature_diagnostics.last_result = (uint32_t) SIGMA_SPI_RESULT_OK;
+}
+
+// 専用Taskから周期呼出しする適用service。dirtyチャンネルを最新値へ集約して適用する。
+static void audio_usb_control_feature_service(void)
+{
+    if (s_feature_backoff_active)
+    {
+        // 失敗時刻からの経過で再試行可否を判定する（期限後も判定が崩れない）。
+        if ((uint32_t) (HAL_GetTick() - s_feature_retry_started_tick) < AUDIO_USB_FEATURE_RETRY_INTERVAL_MS)
+        {
+            return;
+        }
+
+        s_feature_backoff_active = false;
+        g_audio_usb_feature_diagnostics.backoff_active = 0U;
+        g_audio_usb_feature_diagnostics.retry_count++;
+    }
+
+    uint8_t dirty_mask = 0U;
+    int8_t mute_snapshot[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX + 1];
+    int16_t volume_snapshot[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX + 1];
+
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    dirty_mask = s_feature_dirty_mask;
+    if (dirty_mask != 0U)
+    {
+        // 適用前にクリアし、適用中に届いた新要求を次回へ引き継ぐ。
+        s_feature_dirty_mask = 0U;
+        for (uint32_t i = 0U; i <= CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX; i++)
+        {
+            mute_snapshot[i]   = mute[i];
+            volume_snapshot[i] = volume[i];
+        }
+    }
+
+    __set_PRIMASK(primask);
+
+    for (uint32_t channel = 1U; channel <= CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX; channel++)
+    {
+        if ((dirty_mask & (uint8_t) (1U << (channel - 1U))) == 0U)
+        {
+            continue;
+        }
+
+        // 失敗したチャンネルはpendingへ戻り、他チャンネルの適用は継続する。
+        // （snapshotでmaskをクリア済みのため、残りを止めると要求を失う）
+        audio_usb_feature_apply_channel((uint8_t) channel, mute_snapshot, volume_snapshot);
+    }
+}
+
+static void audio_usb_feature_task(void* argument)
+{
+    (void) argument;
+
+    for (;;)
+    {
+        audio_usb_control_feature_service();
+        osDelay(AUDIO_USB_FEATURE_SERVICE_PERIOD_MS);
+    }
+}
+
+void audio_usb_control_feature_task_start(void)
+{
+    if (s_feature_task_handle != NULL)
+    {
+        return;
+    }
+
+    s_feature_task_handle = osThreadNew(audio_usb_feature_task, NULL, &s_feature_task_attributes);
+    if (s_feature_task_handle == NULL)
+    {
+        g_audio_usb_feature_diagnostics.task_create_failed = 1U;
+    }
+}
 
 void audio_usb_control_set_tx_stream_blink(bool streaming)
 {
@@ -287,24 +518,6 @@ void tud_event_hook_cb(uint8_t rhport, uint32_t eventid, bool in_isr)
 // UAC2 Helper Functions
 //--------------------------------------------------------------------+
 
-static void audio20_feature_unit_apply_channel(uint8_t channel)
-{
-    const int32_t effective_volume_q8_8 = (int32_t) volume[0] + volume[channel];
-    const int16_t effective_volume_db   = (int16_t) (effective_volume_q8_8 / 256);
-    const bool effective_mute           = (mute[0] != 0) || (mute[channel] != 0);
-
-    control_input_from_usb_gain(channel, effective_volume_db);
-    control_input_from_usb_mute(channel, effective_mute);
-}
-
-static void audio20_feature_unit_apply_all_channels(void)
-{
-    for (uint8_t channel = 1U; channel <= CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX; channel++)
-    {
-        audio20_feature_unit_apply_channel(channel);
-    }
-}
-
 // Helper for clock get requests
 static bool audio20_clock_get_request(uint8_t rhport, tusb_control_request_t const* request)
 {
@@ -481,18 +694,18 @@ static bool audio20_feature_unit_set_request(uint8_t rhport, tusb_control_reques
     {
         TU_VERIFY(request->wLength == sizeof(audio20_control_cur_1_t));
 
-        mute[channel] = ((audio20_control_cur_1_t const*) buf)->bCur;
+        const int8_t requested_mute = ((audio20_control_cur_1_t const*) buf)->bCur;
 
-        TU_LOG1("Set channel %d Mute: %d\r\n", channel, mute[channel]);
+        // 要求値を記録してdirty bitを立てるだけ。DSP適用はusbFeatureTaskが行う。
+        audio_usb_feature_store_mute(channel, requested_mute);
 
+        g_audio_usb_feature_diagnostics.request_count++;
         if (channel == 0U)
         {
-            audio20_feature_unit_apply_all_channels();
+            g_audio_usb_feature_diagnostics.master_request_count++;
         }
-        else
-        {
-            audio20_feature_unit_apply_channel(channel);
-        }
+
+        TU_LOG1("Set channel %d Mute: %d\r\n", channel, requested_mute);
 
         return true;
     }
@@ -500,18 +713,18 @@ static bool audio20_feature_unit_set_request(uint8_t rhport, tusb_control_reques
     {
         TU_VERIFY(request->wLength == sizeof(audio20_control_cur_2_t));
 
-        volume[channel] = ((audio20_control_cur_2_t const*) buf)->bCur;
+        const int16_t requested_volume = ((audio20_control_cur_2_t const*) buf)->bCur;
 
-        TU_LOG1("Set channel %d volume: %d dB\r\n", channel, volume[channel] / 256);
+        // 要求値を記録してdirty bitを立てるだけ。DSP適用はusbFeatureTaskが行う。
+        audio_usb_feature_store_volume(channel, requested_volume);
 
+        g_audio_usb_feature_diagnostics.request_count++;
         if (channel == 0U)
         {
-            audio20_feature_unit_apply_all_channels();
+            g_audio_usb_feature_diagnostics.master_request_count++;
         }
-        else
-        {
-            audio20_feature_unit_apply_channel(channel);
-        }
+
+        TU_LOG1("Set channel %d volume: %d dB\r\n", channel, requested_volume / 256);
 
         return true;
     }

@@ -11,6 +11,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "sigma_spi.h"
+
 enum
 {
     INPUT_CH1 = 0,
@@ -134,8 +136,9 @@ void set_dc_inputA(float ch_fader_position);
 void set_dc_inputB(float ch_fader_position);
 void safeload_write_q8_24(uint16_t addr, uint8_t mem_page, double val);
 
-void control_input_from_usb_gain(uint8_t ch, int16_t db);
-void control_input_from_usb_mute(uint8_t ch, bool muted);
+// USB Gain/MuteはSPI書込み結果を返す。不正チャンネルはSIGMA_SPI_RESULT_INVALID_ARG。
+sigma_spi_result_t control_input_from_usb_gain(uint8_t ch, int16_t db);
+sigma_spi_result_t control_input_from_usb_mute(uint8_t ch, bool muted);
 void control_input_from_ch1_gain(const uint16_t adc_val);
 void control_input_from_ch2_gain(const uint16_t adc_val);
 void control_input_from_return_gain(const uint16_t adc_val);
