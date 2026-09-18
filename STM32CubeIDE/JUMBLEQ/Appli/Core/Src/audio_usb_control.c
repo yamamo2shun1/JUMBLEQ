@@ -37,9 +37,16 @@ enum
 
 enum
 {
-    VOLUME_CTRL_0_DB    = 0,
-    VOLUME_CTRL_50_DB   = 12800,
+    VOLUME_CTRL_0_DB          = 0,
+    VOLUME_CTRL_50_DB         = 12800,
+    VOLUME_CTRL_RESOLUTION_DB = 256,  // Q8.8で1dB。GET_RANGEのbResと一致させる
 };
+
+// 広告範囲の境界が刻みと整合していることを保証する。
+_Static_assert((VOLUME_CTRL_0_DB % VOLUME_CTRL_RESOLUTION_DB) == 0,
+               "volume control max must align with the resolution");
+_Static_assert((VOLUME_CTRL_50_DB % VOLUME_CTRL_RESOLUTION_DB) == 0,
+               "volume control min must align with the resolution");
 
 // Audio controls
 static volatile uint32_t tx_blink_interval_ms = BLINK_NOT_MOUNTED;
@@ -108,6 +115,18 @@ static uint8_t audio_usb_feature_channel_bit(uint8_t channel)
     return (uint8_t) (1U << (channel - 1U));
 }
 
+// 音量要求の検証。GET_RANGEで広告する範囲(-50..0dB)と1dB刻みに一致する場合だけ
+// 受理する。受信値はUSB little-endianのsigned Q8.8として復号済みの値。
+static bool audio20_feature_unit_volume_is_valid(int16_t volume_q8_8)
+{
+    if ((volume_q8_8 < -VOLUME_CTRL_50_DB) || (volume_q8_8 > VOLUME_CTRL_0_DB))
+    {
+        return false;
+    }
+
+    return (volume_q8_8 % VOLUME_CTRL_RESOLUTION_DB) == 0;
+}
+
 // SET_CUR受理。要求値の更新とdirty bit設定を同じPRIMASK区間で行う。
 // SPI呼出し・mutex/セマフォ待ち・printfは行わない。
 static void audio_usb_feature_store_mute(uint8_t channel, int8_t value)
@@ -169,7 +188,7 @@ static void audio_usb_feature_apply_channel(uint8_t channel,
                                             const int16_t* volume_snapshot)
 {
     const int32_t effective_volume_q8_8 = (int32_t) volume_snapshot[0] + volume_snapshot[channel];
-    const int16_t effective_volume_db   = (int16_t) (effective_volume_q8_8 / 256);
+    const int16_t effective_volume_db   = (int16_t) (effective_volume_q8_8 / VOLUME_CTRL_RESOLUTION_DB);
     const bool effective_mute           = (mute_snapshot[0] != 0) || (mute_snapshot[channel] != 0);
 
     sigma_spi_result_t result = SIGMA_SPI_RESULT_OK;
@@ -658,15 +677,15 @@ static bool audio20_feature_unit_get_request(uint8_t rhport, tusb_control_reques
         {
             audio20_control_range_2_n_t(1) range_vol = {
                 .wNumSubRanges = tu_htole16(1),
-                .subrange[0]   = {.bMin = tu_htole16(-VOLUME_CTRL_50_DB), tu_htole16(VOLUME_CTRL_0_DB), tu_htole16(256)}
+                .subrange[0]   = {.bMin = tu_htole16(-VOLUME_CTRL_50_DB), tu_htole16(VOLUME_CTRL_0_DB), tu_htole16(VOLUME_CTRL_RESOLUTION_DB)}
             };
-            TU_LOG1("Get channel %u volume range (%d, %d, %u) dB\r\n", TU_U16_LOW(request->wValue), range_vol.subrange[0].bMin / 256, range_vol.subrange[0].bMax / 256, range_vol.subrange[0].bRes / 256);
+            TU_LOG1("Get channel %u volume range (%d, %d, %u) dB\r\n", TU_U16_LOW(request->wValue), range_vol.subrange[0].bMin / VOLUME_CTRL_RESOLUTION_DB, range_vol.subrange[0].bMax / VOLUME_CTRL_RESOLUTION_DB, range_vol.subrange[0].bRes / VOLUME_CTRL_RESOLUTION_DB);
             return tud_audio_buffer_and_schedule_control_xfer(rhport, (tusb_control_request_t const*) request, &range_vol, sizeof(range_vol));
         }
         else if (request->bRequest == AUDIO20_CS_REQ_CUR)
         {
             audio20_control_cur_2_t cur_vol = {.bCur = tu_htole16(volume[channel])};
-            TU_LOG1("Get channel %u volume %d dB\r\n", channel, cur_vol.bCur / 256);
+            TU_LOG1("Get channel %u volume %d dB\r\n", channel, cur_vol.bCur / VOLUME_CTRL_RESOLUTION_DB);
             return tud_audio_buffer_and_schedule_control_xfer(rhport, (tusb_control_request_t const*) request, &cur_vol, sizeof(cur_vol));
         }
     }
@@ -715,6 +734,17 @@ static bool audio20_feature_unit_set_request(uint8_t rhport, tusb_control_reques
 
         const int16_t requested_volume = ((audio20_control_cur_2_t const*) buf)->bCur;
 
+        if (!audio20_feature_unit_volume_is_valid(requested_volume))
+        {
+            // 広告範囲(-50..0dB, 1dB刻み)外・端数はSTALLで拒否し、保存値・
+            // dirty bit・適用要求を変更しない（既存のpending要求も保持する）。
+            g_audio_usb_feature_diagnostics.rejected_request_count++;
+            g_audio_usb_feature_diagnostics.last_rejected_channel = channel;
+            g_audio_usb_feature_diagnostics.last_rejected_volume  = requested_volume;
+            TU_LOG1("Reject channel %d volume: %d (Q8.8)\r\n", channel, requested_volume);
+            return false;
+        }
+
         // 要求値を記録してdirty bitを立てるだけ。DSP適用はusbFeatureTaskが行う。
         audio_usb_feature_store_volume(channel, requested_volume);
 
@@ -724,7 +754,7 @@ static bool audio20_feature_unit_set_request(uint8_t rhport, tusb_control_reques
             g_audio_usb_feature_diagnostics.master_request_count++;
         }
 
-        TU_LOG1("Set channel %d volume: %d dB\r\n", channel, requested_volume / 256);
+        TU_LOG1("Set channel %d volume: %d dB\r\n", channel, requested_volume / VOLUME_CTRL_RESOLUTION_DB);
 
         return true;
     }
