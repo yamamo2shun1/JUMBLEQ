@@ -1615,10 +1615,16 @@ static void copybuf_ring2sai(uint32_t sample_rate_hz)
         return;
     }
 
-    if (s_streaming_out)
+    const bool streaming = s_streaming_out;
+    // 既存service計測と同じ位置で処理開始時刻を取得する。期限計算はこの後に行うため、
+    // 既存service_cyclesへ期限計算時間は混入しない。
+    const uint32_t process_start_cycle = DWT->CYCCNT;
+
+    uint32_t deadline_cycles;
+    if (streaming)
     {
-        const uint32_t service_cycles = DWT->CYCCNT - event.cycle;
-        const uint32_t deadline_cycles =
+        const uint32_t service_cycles = process_start_cycle - event.cycle;
+        deadline_cycles =
             audio_dma_half_deadline_cycles(SAI_TX_BUF_SIZE / 2u, sample_rate_hz);
         audio_diagnostics_record_tx_dma_service(event.event, service_cycles,
                                                 service_cycles > deadline_cycles);
@@ -1630,6 +1636,12 @@ static void copybuf_ring2sai(uint32_t sample_rate_hz)
                                                        audio_tx_used_words());
         }
     }
+    else
+    {
+        // stream停止中もDMAとfill/synthは動作するため、完了計測用の期限を算出する。
+        deadline_cycles =
+            audio_dma_half_deadline_cycles(SAI_TX_BUF_SIZE / 2u, sample_rate_hz);
+    }
 
     // 遅延時は古い要求を処理しない。最新コールバックが示す現在安全なhalfだけを更新する。
     if (event.event == DMA_AUDIO_EVENT_HALF)
@@ -1640,6 +1652,13 @@ static void copybuf_ring2sai(uint32_t sample_rate_hz)
     {
         fill_tx_half(SAI_TX_BUF_SIZE / 2);
     }
+
+    // half更新完了時点を境界とし、コピー・補間・合成を含む完了時間を計測する。
+    const uint32_t end_cycle = DWT->CYCCNT;
+    audio_diagnostics_record_tx_dma_complete(event.event,
+                                             end_cycle - process_start_cycle,
+                                             end_cycle - event.cycle,
+                                             deadline_cycles);
 }
 
 // ==============================
@@ -1723,10 +1742,15 @@ static void copybuf_sai2ring(uint32_t sample_rate_hz)
         return;
     }
 
-    if (s_streaming_in)
+    const bool streaming = s_streaming_in;
+    // 既存service計測と同じ位置で処理開始時刻を取得する。
+    const uint32_t process_start_cycle = DWT->CYCCNT;
+
+    uint32_t deadline_cycles;
+    if (streaming)
     {
-        const uint32_t service_cycles = DWT->CYCCNT - event.cycle;
-        const uint32_t deadline_cycles =
+        const uint32_t service_cycles = process_start_cycle - event.cycle;
+        deadline_cycles =
             audio_dma_half_deadline_cycles(SAI_RX_BUF_SIZE / 2u, sample_rate_hz);
         audio_diagnostics_record_rx_dma_service(event.event, service_cycles,
                                                 service_cycles > deadline_cycles);
@@ -1735,6 +1759,12 @@ static void copybuf_sai2ring(uint32_t sample_rate_hz)
         {
             audio_diagnostics_record_rx_events_dropped(event.event, event.dropped_events);
         }
+    }
+    else
+    {
+        // stream停止中もDMAとfill/synthは動作するため、完了計測用の期限を算出する。
+        deadline_cycles =
+            audio_dma_half_deadline_cycles(SAI_RX_BUF_SIZE / 2u, sample_rate_hz);
     }
 
     // TXと同様に、最新コールバックが示す現在安全なhalfだけを取り込む。
@@ -1746,6 +1776,13 @@ static void copybuf_sai2ring(uint32_t sample_rate_hz)
     {
         fill_rx_half(SAI_RX_BUF_SIZE / 2, s_streaming_in);
     }
+
+    // half取り込み完了時点を境界とし、synth処理を含む完了時間を計測する。
+    const uint32_t end_cycle = DWT->CYCCNT;
+    audio_diagnostics_record_rx_dma_complete(event.event,
+                                             end_cycle - process_start_cycle,
+                                             end_cycle - event.cycle,
+                                             deadline_cycles);
 }
 
 // USB INエンドポイントの1転送間隔あたりのフレーム数

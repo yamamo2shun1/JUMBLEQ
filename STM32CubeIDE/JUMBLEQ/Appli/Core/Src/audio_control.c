@@ -644,6 +644,7 @@ void audio_task(void)
         audio_diagnostics_log_periodic(s_sample_rate.requested_hz,
                                        audio_task_frequency,
                                        audio_transport_is_output_streaming(),
+                                       audio_transport_is_input_streaming(),
                                        audio_transport_tx_used_words());
         audio_diagnostics_reset_interval();
 #endif

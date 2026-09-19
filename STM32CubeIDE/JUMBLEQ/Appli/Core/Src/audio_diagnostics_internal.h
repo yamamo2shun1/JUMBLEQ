@@ -70,6 +70,21 @@ typedef struct
     uint32_t drift_down_threshold_events; // 下側開始閾値への逸脱回数
     uint32_t drift_up_suppressed_events;  // 逸脱継続したが最小間隔制限で見送った回数
     uint32_t drift_down_suppressed_events;
+    // DMA処理完了時間（DWT->CYCCNT基準、割り込み／Taskプリエンプト時間を含む）。
+    // process=処理開始→完了、complete=callback→完了。deadline=DMA half期間
+    // （half frame数/実サンプルレート）。complete最大値の更新時はその時点のdeadlineも
+    // 同時に保存する。UINT32_MAXは期限なし（レート未確定）。
+    uint32_t half_process_cycles_max;
+    uint32_t cplt_process_cycles_max;
+    uint32_t half_complete_cycles_max;
+    uint32_t cplt_complete_cycles_max;
+    uint32_t half_complete_deadline_cycles_at_max;
+    uint32_t cplt_complete_deadline_cycles_at_max;
+    uint32_t half_complete_deadline_overruns;
+    uint32_t cplt_complete_deadline_overruns;
+    uint32_t last_process_cycles;
+    uint32_t last_complete_cycles;
+    uint32_t last_complete_deadline_cycles;
 } AudioTxDiagnostics_t;
 
 extern volatile AudioTxDiagnostics_t g_audio_tx_diagnostics;
@@ -99,6 +114,19 @@ typedef struct
     uint32_t last_dma_error_code;
     uint32_t last_sai_error_code;
     uint32_t last_sai_status_flags;
+    // DMA処理完了時間。TXと同じ定義（DWT->CYCCNT基準）。RX診断はレート変更をまたいで
+    // 永続するため、complete最大値に対応するdeadlineを同時に保存する。
+    uint32_t rx_half_process_cycles_max;
+    uint32_t rx_cplt_process_cycles_max;
+    uint32_t rx_half_complete_cycles_max;
+    uint32_t rx_cplt_complete_cycles_max;
+    uint32_t rx_half_complete_deadline_cycles_at_max;
+    uint32_t rx_cplt_complete_deadline_cycles_at_max;
+    uint32_t rx_half_complete_deadline_overruns;
+    uint32_t rx_cplt_complete_deadline_overruns;
+    uint32_t rx_last_process_cycles;
+    uint32_t rx_last_complete_cycles;
+    uint32_t rx_last_complete_deadline_cycles;
 } AudioRxDiagnostics_t;
 
 extern volatile AudioRxDiagnostics_t g_audio_rx_diagnostics;
@@ -299,6 +327,17 @@ void audio_diagnostics_record_tx_dma_service(uint32_t callback_event,
 void audio_diagnostics_record_rx_dma_service(uint32_t callback_event,
                                              uint32_t service_cycles,
                                              bool deadline_overrun);
+// DMA処理完了時間。process_cycles=処理開始→完了、complete_cycles=callback→完了、
+// deadline_cycles=そのイベント時点のDMA half期限。complete_cycles > deadline_cyclesで
+// 完了期限超過数を加算し、complete最大値の更新時はdeadlineも同時に保存する。
+void audio_diagnostics_record_tx_dma_complete(uint32_t callback_event,
+                                              uint32_t process_cycles,
+                                              uint32_t complete_cycles,
+                                              uint32_t deadline_cycles);
+void audio_diagnostics_record_rx_dma_complete(uint32_t callback_event,
+                                              uint32_t process_cycles,
+                                              uint32_t complete_cycles,
+                                              uint32_t deadline_cycles);
 void audio_diagnostics_record_tx_events_dropped(uint32_t last_event,
                                                 uint32_t dropped_events,
                                                 int32_t used);
@@ -350,9 +389,11 @@ void audio_diagnostics_record_usb_in_write(uint16_t written, uint16_t requested)
 void audio_diagnostics_record_usb_in_fifo(uint16_t fifo_count);
 
 // 1秒周期のRTTサマリー。Audio Taskから一度だけ呼び出す。
+// streaming_out/streaming_inが両方falseの場合は出力しない。
 void audio_diagnostics_log_periodic(uint32_t sample_rate_hz,
                                     uint32_t task_frequency_hz,
                                     bool streaming_out,
+                                    bool streaming_in,
                                     int32_t tx_used_words);
 
 #endif /* AUDIO_DIAGNOSTICS_INTERNAL_H_ */
