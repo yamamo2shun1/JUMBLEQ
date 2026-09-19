@@ -436,6 +436,94 @@ void audio_diagnostics_record_rx_dma_service(uint32_t callback_event,
     }
 }
 
+// DMA処理完了時間の記録。complete最大値の更新時に、そのイベントのdeadlineも
+// 同時に保存する。deadline_cycles == UINT32_MAX（レート未確定）は期限超過に数えない。
+void audio_diagnostics_record_tx_dma_complete(uint32_t callback_event,
+                                              uint32_t process_cycles,
+                                              uint32_t complete_cycles,
+                                              uint32_t deadline_cycles)
+{
+    if (callback_event == AUDIO_DIAG_DMA_EVENT_HALF)
+    {
+        if (process_cycles > g_audio_tx_diagnostics.half_process_cycles_max)
+        {
+            g_audio_tx_diagnostics.half_process_cycles_max = process_cycles;
+        }
+        if (complete_cycles > g_audio_tx_diagnostics.half_complete_cycles_max)
+        {
+            g_audio_tx_diagnostics.half_complete_cycles_max = complete_cycles;
+            g_audio_tx_diagnostics.half_complete_deadline_cycles_at_max = deadline_cycles;
+        }
+        if (complete_cycles > deadline_cycles)
+        {
+            g_audio_tx_diagnostics.half_complete_deadline_overruns++;
+        }
+    }
+    else if (callback_event == AUDIO_DIAG_DMA_EVENT_COMPLETE)
+    {
+        if (process_cycles > g_audio_tx_diagnostics.cplt_process_cycles_max)
+        {
+            g_audio_tx_diagnostics.cplt_process_cycles_max = process_cycles;
+        }
+        if (complete_cycles > g_audio_tx_diagnostics.cplt_complete_cycles_max)
+        {
+            g_audio_tx_diagnostics.cplt_complete_cycles_max = complete_cycles;
+            g_audio_tx_diagnostics.cplt_complete_deadline_cycles_at_max = deadline_cycles;
+        }
+        if (complete_cycles > deadline_cycles)
+        {
+            g_audio_tx_diagnostics.cplt_complete_deadline_overruns++;
+        }
+    }
+
+    g_audio_tx_diagnostics.last_process_cycles           = process_cycles;
+    g_audio_tx_diagnostics.last_complete_cycles          = complete_cycles;
+    g_audio_tx_diagnostics.last_complete_deadline_cycles = deadline_cycles;
+}
+
+void audio_diagnostics_record_rx_dma_complete(uint32_t callback_event,
+                                              uint32_t process_cycles,
+                                              uint32_t complete_cycles,
+                                              uint32_t deadline_cycles)
+{
+    if (callback_event == AUDIO_DIAG_DMA_EVENT_HALF)
+    {
+        if (process_cycles > g_audio_rx_diagnostics.rx_half_process_cycles_max)
+        {
+            g_audio_rx_diagnostics.rx_half_process_cycles_max = process_cycles;
+        }
+        if (complete_cycles > g_audio_rx_diagnostics.rx_half_complete_cycles_max)
+        {
+            g_audio_rx_diagnostics.rx_half_complete_cycles_max = complete_cycles;
+            g_audio_rx_diagnostics.rx_half_complete_deadline_cycles_at_max = deadline_cycles;
+        }
+        if (complete_cycles > deadline_cycles)
+        {
+            g_audio_rx_diagnostics.rx_half_complete_deadline_overruns++;
+        }
+    }
+    else if (callback_event == AUDIO_DIAG_DMA_EVENT_COMPLETE)
+    {
+        if (process_cycles > g_audio_rx_diagnostics.rx_cplt_process_cycles_max)
+        {
+            g_audio_rx_diagnostics.rx_cplt_process_cycles_max = process_cycles;
+        }
+        if (complete_cycles > g_audio_rx_diagnostics.rx_cplt_complete_cycles_max)
+        {
+            g_audio_rx_diagnostics.rx_cplt_complete_cycles_max = complete_cycles;
+            g_audio_rx_diagnostics.rx_cplt_complete_deadline_cycles_at_max = deadline_cycles;
+        }
+        if (complete_cycles > deadline_cycles)
+        {
+            g_audio_rx_diagnostics.rx_cplt_complete_deadline_overruns++;
+        }
+    }
+
+    g_audio_rx_diagnostics.rx_last_process_cycles           = process_cycles;
+    g_audio_rx_diagnostics.rx_last_complete_cycles          = complete_cycles;
+    g_audio_rx_diagnostics.rx_last_complete_deadline_cycles = deadline_cycles;
+}
+
 void audio_diagnostics_record_tx_events_dropped(uint32_t last_event,
                                                 uint32_t dropped_events,
                                                 int32_t used)
@@ -774,14 +862,65 @@ void audio_diagnostics_record_usb_in_fifo(uint16_t fifo_count)
 }
 #endif
 
+#if AUDIO_DIAG_LOG
+// deadline_cyclesの表示用換算。未計測(0)と期限なし(UINT32_MAX)は0で表示する。
+static uint32_t audio_diag_deadline_us(uint32_t deadline_cycles)
+{
+    if ((deadline_cycles == 0u) || (deadline_cycles == UINT32_MAX))
+    {
+        return 0u;
+    }
+    return audio_diag_cycles_to_us(deadline_cycles);
+}
+
+// DMA処理完了時間の1秒周期サマリー。計測値はAudio Task contextだけが更新する。
+static void audio_diag_log_tx_dma_time(void)
+{
+    SEGGER_RTT_printf(0,
+                      "[AUD][TX-DMA-TIME] proc_us half/cplt=%lu/%lu complete_us half/cplt=%lu/%lu complete_deadline_us half/cplt=%lu/%lu overruns half/cplt=%lu/%lu\r\n",
+                      (unsigned long) audio_diag_cycles_to_us(g_audio_tx_diagnostics.half_process_cycles_max),
+                      (unsigned long) audio_diag_cycles_to_us(g_audio_tx_diagnostics.cplt_process_cycles_max),
+                      (unsigned long) audio_diag_cycles_to_us(g_audio_tx_diagnostics.half_complete_cycles_max),
+                      (unsigned long) audio_diag_cycles_to_us(g_audio_tx_diagnostics.cplt_complete_cycles_max),
+                      (unsigned long) audio_diag_deadline_us(g_audio_tx_diagnostics.half_complete_deadline_cycles_at_max),
+                      (unsigned long) audio_diag_deadline_us(g_audio_tx_diagnostics.cplt_complete_deadline_cycles_at_max),
+                      (unsigned long) g_audio_tx_diagnostics.half_complete_deadline_overruns,
+                      (unsigned long) g_audio_tx_diagnostics.cplt_complete_deadline_overruns);
+}
+
+static void audio_diag_log_rx_dma_time(void)
+{
+    SEGGER_RTT_printf(0,
+                      "[AUD][RX-DMA-TIME] proc_us half/cplt=%lu/%lu complete_us half/cplt=%lu/%lu complete_deadline_us half/cplt=%lu/%lu overruns half/cplt=%lu/%lu\r\n",
+                      (unsigned long) audio_diag_cycles_to_us(g_audio_rx_diagnostics.rx_half_process_cycles_max),
+                      (unsigned long) audio_diag_cycles_to_us(g_audio_rx_diagnostics.rx_cplt_process_cycles_max),
+                      (unsigned long) audio_diag_cycles_to_us(g_audio_rx_diagnostics.rx_half_complete_cycles_max),
+                      (unsigned long) audio_diag_cycles_to_us(g_audio_rx_diagnostics.rx_cplt_complete_cycles_max),
+                      (unsigned long) audio_diag_deadline_us(g_audio_rx_diagnostics.rx_half_complete_deadline_cycles_at_max),
+                      (unsigned long) audio_diag_deadline_us(g_audio_rx_diagnostics.rx_cplt_complete_deadline_cycles_at_max),
+                      (unsigned long) g_audio_rx_diagnostics.rx_half_complete_deadline_overruns,
+                      (unsigned long) g_audio_rx_diagnostics.rx_cplt_complete_deadline_overruns);
+}
+#endif
+
 void audio_diagnostics_log_periodic(uint32_t sample_rate_hz,
                                     uint32_t task_frequency_hz,
                                     bool streaming_out,
+                                    bool streaming_in,
                                     int32_t tx_used_words)
 {
 #if AUDIO_DIAG_LOG
+    if (!streaming_out && !streaming_in)
+    {
+        return;
+    }
+
+    // USB OUT停止中（USB INのみ等）も、いずれかのstream動作中は
+    // TX/RX両方向の完了時間を出力する。
     if (!streaming_out)
     {
+        audio_diag_log_tx_dma_time();
+        audio_diag_log_rx_dma_time();
         return;
     }
 
@@ -930,10 +1069,15 @@ void audio_diagnostics_log_periodic(uint32_t sample_rate_hz,
     dbg_sigma_err_prev   = sigma_err;
     dbg_sigma_to_prev    = sigma_to;
     dbg_sigma_mto_prev   = sigma_mto;
+
+    // 両方向の完了時間。いずれかのstream動作中に出力する。
+    audio_diag_log_tx_dma_time();
+    audio_diag_log_rx_dma_time();
 #else
     (void) sample_rate_hz;
     (void) task_frequency_hz;
     (void) streaming_out;
+    (void) streaming_in;
     (void) tx_used_words;
 #endif
 }
