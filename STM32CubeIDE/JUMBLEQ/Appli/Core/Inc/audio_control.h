@@ -10,9 +10,9 @@
 
 #include <stdint.h>
 
-uint32_t get_current_sample_rate_hz(void);
-void reset_audio_buffer(void);
-void AUDIO_LoadAndApplyRoutingFromEEPROM(void);
+uint32_t audio_control_requested_sample_rate_hz(void);
+void audio_control_reset_runtime_state(void);
+void audio_control_load_config_or_restore_defaults(void);
 
 void start_sai(void);
 

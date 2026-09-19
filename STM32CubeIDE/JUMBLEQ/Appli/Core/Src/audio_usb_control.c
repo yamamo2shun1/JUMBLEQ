@@ -546,7 +546,7 @@ static bool audio20_clock_get_request(uint8_t rhport, tusb_control_request_t con
     {
         if (request->bRequest == AUDIO20_CS_REQ_CUR)
         {
-            const uint32_t current_sample_rate = get_current_sample_rate_hz();
+            const uint32_t current_sample_rate = audio_control_requested_sample_rate_hz();
             TU_LOG1("Clock get current freq %" PRIu32 "\r\n", current_sample_rate);
 
             audio20_control_cur_4_t curf = {(int32_t) tu_htole32(current_sample_rate)};

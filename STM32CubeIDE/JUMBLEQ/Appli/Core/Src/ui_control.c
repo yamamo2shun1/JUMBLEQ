@@ -31,15 +31,15 @@ typedef struct
 {
     bool mag_out_as_note;
     bool curve_edit_mode;
-    bool is_start_audio_control;
+    bool runtime_processing_enabled;
 } ui_control_state_t;
 
-static bool is_started_audio_control(void);
+static bool ui_control_runtime_processing_enabled(void);
 
 static ui_control_state_t s_ui = {
-    .mag_out_as_note        = false,
-    .curve_edit_mode        = false,
-    .is_start_audio_control = false,
+    .mag_out_as_note            = false,
+    .curve_edit_mode            = false,
+    .runtime_processing_enabled = false,
 };
 
 static const uint8_t MIDI_CH_15                  = 14U;  // zero-based MIDI channel index.
@@ -575,7 +575,7 @@ void ui_control_task(void)
     return;
 #endif
 
-    if (!is_started_audio_control())
+    if (!ui_control_runtime_processing_enabled())
     {
         return;
     }
@@ -600,15 +600,15 @@ void ui_control_task(void)
     ui_ch_fader_service_dsp_outputs();
 }
 
-void start_audio_control(void)
+void ui_control_enable_runtime_processing(void)
 {
-    s_ui.is_start_audio_control = true;
+    s_ui.runtime_processing_enabled = true;
     __DMB();
 }
 
-static bool is_started_audio_control(void)
+static bool ui_control_runtime_processing_enabled(void)
 {
-    return s_ui.is_start_audio_control;
+    return s_ui.runtime_processing_enabled;
 }
 
 // OLED Task専用。owner状態の軽量copyだけをscheduler停止区間で行い、
@@ -633,7 +633,7 @@ bool ui_control_get_display_snapshot(UI_DisplaySnapshot_t* snapshot)
     ui_ch_fader_capture_display_state(&ch_fader_state);
     ui_uf2_control_capture_display_state(&uf2_state);
     curve_edit_mode = s_ui.curve_edit_mode;
-    sample_rate_hz  = get_current_sample_rate_hz();
+    sample_rate_hz  = audio_control_requested_sample_rate_hz();
     (void) xTaskResumeAll();
 
     UI_DisplaySnapshot_t local;

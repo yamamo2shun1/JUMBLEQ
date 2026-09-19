@@ -392,7 +392,7 @@ void StartAudioTask(void *argument)
     HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, 0);
     HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, 0);
 
-    reset_audio_buffer();
+    audio_control_reset_runtime_state();
 
     AUDIO_Init_AK4619(96000);
 
@@ -401,7 +401,7 @@ void StartAudioTask(void *argument)
      * SigmaStudio+からダウンロードを実行すること。
      */
     const bool dsp_rate_ok = AUDIO_Init_ADAU1466_Checked(48000);
-    AUDIO_LoadAndApplyRoutingFromEEPROM();
+    audio_control_load_config_or_restore_defaults();
     osDelay(500);
 
     HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, 1);
@@ -421,7 +421,7 @@ void StartAudioTask(void *argument)
         audio_control_publish_initial_rate_result(48000U, false);
     }
 
-    start_audio_control();
+    ui_control_enable_runtime_processing();
 
     // DSP初期化とSAI開始後に、USB音量・ミュートの適用専用Taskを開始する。
     audio_usb_control_feature_task_start();
