@@ -73,6 +73,6 @@ float ui_control_evaluate_ch_fader_curve_preview(uint8_t cc_value, float normali
 
 void start_adc(void);
 void ui_control_task(void);
-void start_audio_control(void);
+void ui_control_enable_runtime_processing(void);
 
 #endif /* INC_UI_CONTROL_H_ */

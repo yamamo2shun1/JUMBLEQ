@@ -326,7 +326,9 @@ void audio_control_publish_initial_rate_result(uint32_t applied_hz, bool success
 #endif
 }
 
-void AUDIO_LoadAndApplyRoutingFromEEPROM(void)
+// EEPROMからデバイス設定全体を読み込み、DSP/UIへ適用する。読込失敗または設定不正時は
+// デフォルト設定を適用し、EEPROMへ保存して次回起動に備える。
+void audio_control_load_config_or_restore_defaults(void)
 {
     EEPROM_DeviceConfig_t cfg;
 
@@ -384,12 +386,14 @@ void AUDIO_LoadAndApplyRoutingFromEEPROM(void)
 // 最後に受理した設定要求値（要求レート）を返す。物理的な適用成功の通知ではない。
 // USB GET_CUR、feedback初期設定、UI表示はこの要求値を共用する。実搬送のレートには
 // audio_control_transport_sample_rate_hz()（適用値／切替中の固定target）を使う。
-uint32_t get_current_sample_rate_hz(void)
+uint32_t audio_control_requested_sample_rate_hz(void)
 {
     return s_sample_rate.requested_hz;
 }
 
-void reset_audio_buffer(void)
+// UI状態、タイムコード合成状態、トランスポートバッファを含む実行時状態を初期化する。
+// バッファ消去のみを行う audio_transport_reset_buffers() とは範囲が異なる。
+void audio_control_reset_runtime_state(void)
 {
     ui_control_reset_state();
 

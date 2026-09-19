@@ -66,7 +66,7 @@ bool audio_transport_apply_requested_stream_state(void);
 // initialized yet.
 void audio_transport_clear_pending_events(void);
 
-// reset_audio_buffer() のバッファ消去部。__DSB() まで含む。
+// audio_control_reset_runtime_state() のバッファ消去部。__DSB() まで含む。
 void audio_transport_reset_buffers(void);
 
 // start_sai() のSAI/GPDMA開始シーケンス（TX開始→500ms→LED→RX開始）。
