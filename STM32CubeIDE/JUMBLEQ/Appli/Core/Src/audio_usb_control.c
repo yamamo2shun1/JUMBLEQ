@@ -736,13 +736,13 @@ static bool audio20_feature_unit_set_request(uint8_t rhport, tusb_control_reques
 
         if (!audio20_feature_unit_volume_is_valid(requested_volume))
         {
-            // 広告範囲(-50..0dB, 1dB刻み)外・端数はSTALLで拒否し、保存値・
+            // 広告範囲(-50..0dB, 1dB刻み)外・端数は保存せず受理し、保存値・
             // dirty bit・適用要求を変更しない（既存のpending要求も保持する）。
             g_audio_usb_feature_diagnostics.rejected_request_count++;
             g_audio_usb_feature_diagnostics.last_rejected_channel = channel;
             g_audio_usb_feature_diagnostics.last_rejected_volume  = requested_volume;
             TU_LOG1("Reject channel %d volume: %d (Q8.8)\r\n", channel, requested_volume);
-            return false;
+            return true;
         }
 
         // 要求値を記録してdirty bitを立てるだけ。DSP適用はusbFeatureTaskが行う。
