@@ -46,9 +46,9 @@ typedef struct
     uint32_t request_count;            // SET_CUR受理数（mute/volume合計）
     uint32_t master_request_count;     // Master(ch0)要求数
     uint32_t coalesced_request_count;  // 適用待ち中チャンネルへの追加要求数
-    uint32_t rejected_request_count;   // 範囲・刻み検証で拒否した要求数
-    int32_t  last_rejected_volume;     // 最後に拒否した音量要求値(Q8.8)
-    uint32_t last_rejected_channel;    // 最後に拒否したチャンネル
+    uint32_t normalized_request_count; // 範囲・刻みに補正した要求数（無音値は含めない）
+    int32_t  last_normalized_requested_volume; // 最後に補正した元の要求値(Q8.8)
+    uint32_t last_normalized_channel;  // 最後に補正したチャンネル
     uint32_t applied_channel_count;    // GainとMuteの両方が成功したチャンネル数
     uint32_t failed_channel_count;     // 適用失敗チャンネル数
     uint32_t retry_count;              // バックオフ後の再試行回数
