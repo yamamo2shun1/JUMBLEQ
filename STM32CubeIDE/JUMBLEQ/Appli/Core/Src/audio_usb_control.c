@@ -40,6 +40,7 @@ enum
     VOLUME_CTRL_0_DB          = 0,
     VOLUME_CTRL_50_DB         = 12800,
     VOLUME_CTRL_RESOLUTION_DB = 256,  // Q8.8で1dB。GET_RANGEのbResと一致させる
+    VOLUME_CTRL_SILENCE       = INT16_MIN,  // UAC2の無音(0x8000)。有限ゲインと区別する
 };
 
 // 広告範囲の境界が刻みと整合していることを保証する。
@@ -115,16 +116,28 @@ static uint8_t audio_usb_feature_channel_bit(uint8_t channel)
     return (uint8_t) (1U << (channel - 1U));
 }
 
-// 音量要求の検証。GET_RANGEで広告する範囲(-50..0dB)と1dB刻みに一致する場合だけ
-// 受理する。受信値はUSB little-endianのsigned Q8.8として復号済みの値。
-static bool audio20_feature_unit_volume_is_valid(int16_t volume_q8_8)
+// UAC2 5.2.2: 最も近い有効値へ補正する。5.2.5.7.2の無音値はそのまま保持する。
+// 有限値はGET_RANGEの-50..0dB/1dB刻みへ丸め、同距離では減衰の大きい側を選ぶ。
+static int16_t audio20_feature_unit_normalize_volume(int16_t volume_q8_8)
 {
-    if ((volume_q8_8 < -VOLUME_CTRL_50_DB) || (volume_q8_8 > VOLUME_CTRL_0_DB))
+    if (volume_q8_8 == VOLUME_CTRL_SILENCE)
     {
-        return false;
+        return VOLUME_CTRL_SILENCE;
     }
 
-    return (volume_q8_8 % VOLUME_CTRL_RESOLUTION_DB) == 0;
+    int32_t finite_volume = volume_q8_8;
+    if (finite_volume < -VOLUME_CTRL_50_DB)
+    {
+        finite_volume = -VOLUME_CTRL_50_DB;
+    }
+    else if (finite_volume > VOLUME_CTRL_0_DB)
+    {
+        finite_volume = VOLUME_CTRL_0_DB;
+    }
+
+    const int32_t attenuation_steps =
+        (-finite_volume + VOLUME_CTRL_RESOLUTION_DB / 2) / VOLUME_CTRL_RESOLUTION_DB;
+    return (int16_t) (-attenuation_steps * VOLUME_CTRL_RESOLUTION_DB);
 }
 
 // SET_CUR受理。要求値の更新とdirty bit設定を同じPRIMASK区間で行う。
@@ -187,9 +200,15 @@ static void audio_usb_feature_apply_channel(uint8_t channel,
                                             const int8_t* mute_snapshot,
                                             const int16_t* volume_snapshot)
 {
-    const int32_t effective_volume_q8_8 = (int32_t) volume_snapshot[0] + volume_snapshot[channel];
+    const bool master_silence = volume_snapshot[0] == VOLUME_CTRL_SILENCE;
+    const bool channel_silence = volume_snapshot[channel] == VOLUME_CTRL_SILENCE;
+    // 無音値を有限ゲインへ加算しない。無音は既存のMute先行適用で保証する。
+    const int32_t master_volume = master_silence ? VOLUME_CTRL_0_DB : volume_snapshot[0];
+    const int32_t channel_volume = channel_silence ? VOLUME_CTRL_0_DB : volume_snapshot[channel];
+    const int32_t effective_volume_q8_8 = master_volume + channel_volume;
     const int16_t effective_volume_db   = (int16_t) (effective_volume_q8_8 / VOLUME_CTRL_RESOLUTION_DB);
-    const bool effective_mute           = (mute_snapshot[0] != 0) || (mute_snapshot[channel] != 0);
+    const bool effective_mute           = (mute_snapshot[0] != 0) || (mute_snapshot[channel] != 0)
+                                         || master_silence || channel_silence;
 
     sigma_spi_result_t result = SIGMA_SPI_RESULT_OK;
     uint32_t failed_operation = AUDIO_USB_FEATURE_OP_NONE;
@@ -733,20 +752,19 @@ static bool audio20_feature_unit_set_request(uint8_t rhport, tusb_control_reques
         TU_VERIFY(request->wLength == sizeof(audio20_control_cur_2_t));
 
         const int16_t requested_volume = ((audio20_control_cur_2_t const*) buf)->bCur;
+        const int16_t normalized_volume = audio20_feature_unit_normalize_volume(requested_volume);
 
-        if (!audio20_feature_unit_volume_is_valid(requested_volume))
+        if (normalized_volume != requested_volume)
         {
-            // 広告範囲(-50..0dB, 1dB刻み)外・端数はSTALLで拒否し、保存値・
-            // dirty bit・適用要求を変更しない（既存のpending要求も保持する）。
-            g_audio_usb_feature_diagnostics.rejected_request_count++;
-            g_audio_usb_feature_diagnostics.last_rejected_channel = channel;
-            g_audio_usb_feature_diagnostics.last_rejected_volume  = requested_volume;
-            TU_LOG1("Reject channel %d volume: %d (Q8.8)\r\n", channel, requested_volume);
-            return false;
+            g_audio_usb_feature_diagnostics.normalized_request_count++;
+            g_audio_usb_feature_diagnostics.last_normalized_channel = channel;
+            g_audio_usb_feature_diagnostics.last_normalized_requested_volume = requested_volume;
+            TU_LOG1("Normalize channel %d volume: %d -> %d (Q8.8)\r\n",
+                    channel, requested_volume, normalized_volume);
         }
 
         // 要求値を記録してdirty bitを立てるだけ。DSP適用はusbFeatureTaskが行う。
-        audio_usb_feature_store_volume(channel, requested_volume);
+        audio_usb_feature_store_volume(channel, normalized_volume);
 
         g_audio_usb_feature_diagnostics.request_count++;
         if (channel == 0U)
@@ -754,7 +772,7 @@ static bool audio20_feature_unit_set_request(uint8_t rhport, tusb_control_reques
             g_audio_usb_feature_diagnostics.master_request_count++;
         }
 
-        TU_LOG1("Set channel %d volume: %d dB\r\n", channel, requested_volume / VOLUME_CTRL_RESOLUTION_DB);
+        TU_LOG1("Set channel %d volume: %d (Q8.8; -32768=silence)\r\n", channel, normalized_volume);
 
         return true;
     }
