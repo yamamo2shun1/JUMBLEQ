@@ -18,21 +18,21 @@
 // バッファサイズ設定 - 小さいほど低レイテンシーだがアンダーラン/オーバーランのリスク増
 // 96kHz再生の安定性を優先し、TX/RING は余裕を持たせる。
 // サイズはすべてword単位で、1 frame = 4ch × 32bit = 4 word = 16 byte。
-// リング容量相当は SAI_RNG_BUF_SIZE / 4 / sample_rate 秒。8192 word = 2048 frame なので
+// リング容量相当は AUDIO_RING_CAPACITY_WORDS / 4 / sample_rate 秒。8192 word = 2048 frame なので
 // 48kHzで約42.67ms、96kHzで約21.33ms。これは滞留可能な上限であり、通常の滞留水位や
 // end-to-end遅延を表す値ではない。
-#define SAI_RNG_BUF_SIZE 8192  // リングバッファ（word単位、2のべき乗必須）
-#define SAI_TX_BUF_SIZE  256  // 4ch DMAバッファ (USB->SAI, word単位)
-#define SAI_RX_BUF_SIZE  256  // 4ch DMAバッファ (SAI->USB, word単位)
+#define AUDIO_RING_CAPACITY_WORDS 8192  // TX/RXリング容量（word単位、2のべき乗必須）
+#define SAI_TX_DMA_BUF_WORDS  256  // 4ch DMAバッファ (USB OUT->SAI TX, word単位)
+#define SAI_RX_DMA_BUF_WORDS  256  // 4ch DMAバッファ (SAI RX->USB IN, word単位)
 // DMA halfを消費した後のTXリング目標水位（word単位、24 frame）。
 // 消費前の判定基準は、この値にDMA half-buffer分を加えた水位になる。
 // 0.5ms相当（48kHz、24 frame）／0.25ms相当（96kHz）で、DMA half期間（32 frame、
 // 48kHz約0.667ms／96kHz約0.333ms）や容量相当時間とは合算しない。
 #define SAI_TX_TARGET_LEVEL_WORDS 96
 
-// DMA転送先storage。linked_list.cがaddressを参照する。
-extern int32_t stereo_out_buf[SAI_TX_BUF_SIZE];
-extern int32_t stereo_in_buf[SAI_RX_BUF_SIZE];
+// SAI DMAバッファ。linked_list.cがaddressを参照する（JUMBLEQ.iocのLinkedlist設定と対応）。
+extern int32_t sai_tx_dma_buf[SAI_TX_DMA_BUF_WORDS];
+extern int32_t sai_rx_dma_buf[SAI_RX_DMA_BUF_WORDS];
 
 typedef enum
 {
