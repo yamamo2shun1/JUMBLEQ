@@ -237,11 +237,11 @@ static void sync_ch_fader_dsp_output(const ch_fader_pair_runtime_t* pair, float 
 static void refresh_ch_fader_dsp_context(const ch_fader_pair_runtime_t* pair)
 {
     ch_fader_dsp_state_t* state = &s_ch_fader_dsp[pair->prev_idx];
-    const uint8_t assign = get_ch_fader_dsp_assign(pair);
-    const bool delay_enabled = ch_fader_assign_uses_dvs(assign);
+    const UI_RoutingSource_t routing_source = get_ch_fader_dsp_assign(pair);
+    const bool delay_enabled = ch_fader_assign_uses_dvs(routing_source);
 
     if (state->context_valid &&
-        ((state->input_assign != assign) || (state->delay_enabled != delay_enabled)))
+        ((state->input_assign != routing_source) || (state->delay_enabled != delay_enabled)))
     {
         state->head = 0U;
         state->count = 0U;
@@ -250,7 +250,7 @@ static void refresh_ch_fader_dsp_context(const ch_fader_pair_runtime_t* pair)
             write_ch_fader_dsp_output(pair, state->target_value);
         }
     }
-    state->input_assign = assign;
+    state->input_assign = routing_source;
     state->delay_enabled = delay_enabled;
     state->context_valid = true;
 }
