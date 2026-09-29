@@ -46,186 +46,187 @@ static const uint8_t MIDI_CH_15                  = 14U;  // zero-based MIDI chan
 static const uint8_t MIDI_CC_CH_FADER_CURVE_A        = 20U;
 static const uint8_t MIDI_CC_CH_FADER_CURVE_B        = 21U;
 static const uint8_t MIDI_CC_CH_FADER_DVS_DELAY      = 22U;
-static const uint8_t MIDI_PC_CURVE_EDIT_MODE_OFF = 120U;
-static const uint8_t MIDI_PC_CURVE_EDIT_MODE_ON  = 121U;
-static const uint8_t MIDI_PC_MUX_OUTPUT_CC       = 122U;
-static const uint8_t MIDI_PC_MUX_OUTPUT_NOTE     = 123U;
-static const uint8_t MIDI_PC_ARM_UF2_BOOTLOADER  = 124U;
-static const uint8_t MIDI_PC_CANCEL_UF2_BOOTLOADER = 125U;
-static const uint8_t MIDI_PC_REQUEST_EEPROM_DUMP = 126U;
-static const uint8_t MIDI_PC_SAVE_EEPROM         = 127U;
 
-static uint8_t midi_program_for_input_type(uint8_t input_ch, uint8_t input_type)
+static UI_MidiProgram_t midi_program_for_input_type(AudioInputSource_t audio_input_source,
+                                                    uint8_t input_type)
 {
-    if (input_ch == INPUT_CH1)
+    if (audio_input_source == AUDIO_INPUT_SOURCE_CH1)
     {
-        return (input_type == INPUT_TYPE_PHONO) ? CH1_PHONO : CH1_LINE;
+        return (input_type == INPUT_TYPE_PHONO) ? UI_MIDI_PROGRAM_CH1_PHONO
+                                                : UI_MIDI_PROGRAM_CH1_LINE;
     }
 
-    if (input_ch == INPUT_CH2)
+    if (audio_input_source == AUDIO_INPUT_SOURCE_CH2)
     {
-        return (input_type == INPUT_TYPE_PHONO) ? CH2_PHONO : CH2_LINE;
+        return (input_type == INPUT_TYPE_PHONO) ? UI_MIDI_PROGRAM_CH2_PHONO
+                                                : UI_MIDI_PROGRAM_CH2_LINE;
     }
 
-    return CH1_LINE;
+    return UI_MIDI_PROGRAM_CH1_LINE;
 }
 
-static uint8_t midi_program_for_ch_fader_assign_a(uint8_t assign)
+static UI_MidiProgram_t midi_program_for_ch_fader_assign_a(UI_RoutingSource_t routing_source)
 {
-    switch (assign)
+    switch (routing_source)
     {
-    case INPUT_SRC_CH1_LN:
-    case INPUT_SRC_CH1_PN:
-        return CH_FADER_ASSIGN_A_CH1;
-    case INPUT_SRC_CH2_LN:
-    case INPUT_SRC_CH2_PN:
-        return CH_FADER_ASSIGN_A_CH2;
-    case INPUT_SRC_USB12:
-        return CH_FADER_ASSIGN_A_USB12;
-    case INPUT_SRC_USB34:
-        return CH_FADER_ASSIGN_A_USB34;
+    case UI_ROUTING_SOURCE_CH1_LINE:
+    case UI_ROUTING_SOURCE_CH1_PHONO:
+        return UI_MIDI_PROGRAM_CH_FADER_ASSIGN_A_CH1;
+    case UI_ROUTING_SOURCE_CH2_LINE:
+    case UI_ROUTING_SOURCE_CH2_PHONO:
+        return UI_MIDI_PROGRAM_CH_FADER_ASSIGN_A_CH2;
+    case UI_ROUTING_SOURCE_USB12:
+        return UI_MIDI_PROGRAM_CH_FADER_ASSIGN_A_USB12;
+    case UI_ROUTING_SOURCE_USB34:
+        return UI_MIDI_PROGRAM_CH_FADER_ASSIGN_A_USB34;
     default:
-        return CH_FADER_ASSIGN_A_CH1;
+        return UI_MIDI_PROGRAM_CH_FADER_ASSIGN_A_CH1;
     }
 }
 
-static uint8_t midi_program_for_ch_fader_assign_b(uint8_t assign)
+static UI_MidiProgram_t midi_program_for_ch_fader_assign_b(UI_RoutingSource_t routing_source)
 {
-    switch (assign)
+    switch (routing_source)
     {
-    case INPUT_SRC_CH1_LN:
-    case INPUT_SRC_CH1_PN:
-        return CH_FADER_ASSIGN_B_CH1;
-    case INPUT_SRC_CH2_LN:
-    case INPUT_SRC_CH2_PN:
-        return CH_FADER_ASSIGN_B_CH2;
-    case INPUT_SRC_USB12:
-        return CH_FADER_ASSIGN_B_USB12;
-    case INPUT_SRC_USB34:
-        return CH_FADER_ASSIGN_B_USB34;
+    case UI_ROUTING_SOURCE_CH1_LINE:
+    case UI_ROUTING_SOURCE_CH1_PHONO:
+        return UI_MIDI_PROGRAM_CH_FADER_ASSIGN_B_CH1;
+    case UI_ROUTING_SOURCE_CH2_LINE:
+    case UI_ROUTING_SOURCE_CH2_PHONO:
+        return UI_MIDI_PROGRAM_CH_FADER_ASSIGN_B_CH2;
+    case UI_ROUTING_SOURCE_USB12:
+        return UI_MIDI_PROGRAM_CH_FADER_ASSIGN_B_USB12;
+    case UI_ROUTING_SOURCE_USB34:
+        return UI_MIDI_PROGRAM_CH_FADER_ASSIGN_B_USB34;
     default:
-        return CH_FADER_ASSIGN_B_CH1;
+        return UI_MIDI_PROGRAM_CH_FADER_ASSIGN_B_CH1;
     }
 }
 
-static uint8_t midi_program_for_ch_fader_assign_post(uint8_t assign)
+static UI_MidiProgram_t midi_program_for_ch_fader_assign_post(UI_RoutingSource_t routing_source)
 {
-    switch (assign)
+    switch (routing_source)
     {
-    case INPUT_SRC_CH1_LN:
-    case INPUT_SRC_CH1_PN:
-        return CH_FADER_ASSIGN_POST_CH1;
-    case INPUT_SRC_CH2_LN:
-    case INPUT_SRC_CH2_PN:
-        return CH_FADER_ASSIGN_POST_CH2;
-    case INPUT_SRC_USB12:
-        return CH_FADER_ASSIGN_POST_USB12;
-    case INPUT_SRC_USB34:
-        return CH_FADER_ASSIGN_POST_USB34;
+    case UI_ROUTING_SOURCE_CH1_LINE:
+    case UI_ROUTING_SOURCE_CH1_PHONO:
+        return UI_MIDI_PROGRAM_CH_FADER_ASSIGN_POST_CH1;
+    case UI_ROUTING_SOURCE_CH2_LINE:
+    case UI_ROUTING_SOURCE_CH2_PHONO:
+        return UI_MIDI_PROGRAM_CH_FADER_ASSIGN_POST_CH2;
+    case UI_ROUTING_SOURCE_USB12:
+        return UI_MIDI_PROGRAM_CH_FADER_ASSIGN_POST_USB12;
+    case UI_ROUTING_SOURCE_USB34:
+        return UI_MIDI_PROGRAM_CH_FADER_ASSIGN_POST_USB34;
     default:
-        return CH_FADER_ASSIGN_POST_CH1;
+        return UI_MIDI_PROGRAM_CH_FADER_ASSIGN_POST_CH1;
     }
 }
 
-static uint8_t midi_program_for_input_mode(uint8_t input_ch, uint8_t mode)
+static UI_MidiProgram_t midi_program_for_input_mode(AudioInputSource_t audio_input_source,
+                                                    uint8_t mode)
 {
-    if (input_ch == INPUT_CH1)
+    if (audio_input_source == AUDIO_INPUT_SOURCE_CH1)
     {
         if (mode == UI_INPUT_MODE_DVS)
         {
-            return CH1_MODE_DVS;
+            return UI_MIDI_PROGRAM_CH1_MODE_DVS;
         }
         if (mode == UI_INPUT_MODE_SYNTH)
         {
-            return CH1_MODE_SYNTH;
+            return UI_MIDI_PROGRAM_CH1_MODE_SYNTH;
         }
-        return CH1_MODE_DISABLE;
+        return UI_MIDI_PROGRAM_CH1_MODE_DISABLE;
     }
 
-    if (input_ch == INPUT_CH2)
+    if (audio_input_source == AUDIO_INPUT_SOURCE_CH2)
     {
         if (mode == UI_INPUT_MODE_DVS)
         {
-            return CH2_MODE_DVS;
+            return UI_MIDI_PROGRAM_CH2_MODE_DVS;
         }
         if (mode == UI_INPUT_MODE_SYNTH)
         {
-            return CH2_MODE_SYNTH;
+            return UI_MIDI_PROGRAM_CH2_MODE_SYNTH;
         }
-        return CH2_MODE_DISABLE;
+        return UI_MIDI_PROGRAM_CH2_MODE_DISABLE;
     }
 
-    return CH1_MODE_DISABLE;
+    return UI_MIDI_PROGRAM_CH1_MODE_DISABLE;
 }
 
-static uint8_t midi_program_for_return_assign(uint8_t assign)
+static UI_MidiProgram_t midi_program_for_return_assign(UI_RoutingSource_t routing_source)
 {
-    switch (assign)
+    switch (routing_source)
     {
-    case INPUT_SRC_USB12:
-        return RETURN_CH_USB12;
-    case INPUT_SRC_USB34:
-        return RETURN_CH_USB34;
-    case INPUT_SRC_NONE:
-        return RETURN_CH_NONE;
+    case UI_ROUTING_SOURCE_USB12:
+        return UI_MIDI_PROGRAM_RETURN_CH_USB12;
+    case UI_ROUTING_SOURCE_USB34:
+        return UI_MIDI_PROGRAM_RETURN_CH_USB34;
+    case UI_ROUTING_SOURCE_NONE:
+        return UI_MIDI_PROGRAM_RETURN_CH_NONE;
     default:
-        return RETURN_CH_USB34;
+        return UI_MIDI_PROGRAM_RETURN_CH_USB34;
     }
 }
 
-static uint8_t midi_program_for_hp_out_source(uint8_t source)
+static UI_MidiProgram_t midi_program_for_hp_out_source(HpSource_t hp_source)
 {
-    switch (source)
+    switch (hp_source)
     {
-    case CUE_SEL_CH_FADER_A:
-        return HP_OUT_CH_FADER_A;
-    case CUE_SEL_CH_FADER_B:
-        return HP_OUT_CH_FADER_B;
-    case CUE_SEL_THRU:
-        return HP_OUT_THRU;
-    case CUE_SEL_MST:
-        return HP_OUT_MASTER;
+    case HP_SOURCE_CH_FADER_A:
+        return UI_MIDI_PROGRAM_HP_OUT_CH_FADER_A;
+    case HP_SOURCE_CH_FADER_B:
+        return UI_MIDI_PROGRAM_HP_OUT_CH_FADER_B;
+    case HP_SOURCE_THRU:
+        return UI_MIDI_PROGRAM_HP_OUT_THRU;
+    case HP_SOURCE_MASTER:
+        return UI_MIDI_PROGRAM_HP_OUT_MASTER;
     default:
-        return HP_OUT_MASTER;
+        return UI_MIDI_PROGRAM_HP_OUT_MASTER;
     }
 }
 
-static uint8_t midi_program_for_ch_fader_aux_assignment(uint8_t sensor_idx, uint8_t assign)
+static UI_MidiProgram_t midi_program_for_ch_fader_aux_assignment(uint8_t sensor_idx,
+                                                                uint8_t assign)
 {
     if (sensor_idx == 2U)
     {
-        return (assign == UI_CH_FADER_AUX_ASSIGN_A) ? CH_FADER_AUX_SENSOR2_TO_A : CH_FADER_AUX_SENSOR2_TO_B;
+        return (assign == UI_CH_FADER_AUX_ASSIGN_A) ? UI_MIDI_PROGRAM_CH_FADER_AUX_SENSOR2_TO_A
+                                                    : UI_MIDI_PROGRAM_CH_FADER_AUX_SENSOR2_TO_B;
     }
 
-    return (assign == UI_CH_FADER_AUX_ASSIGN_A) ? CH_FADER_AUX_SENSOR3_TO_A : CH_FADER_AUX_SENSOR3_TO_B;
+    return (assign == UI_CH_FADER_AUX_ASSIGN_A) ? UI_MIDI_PROGRAM_CH_FADER_AUX_SENSOR3_TO_A
+                                                : UI_MIDI_PROGRAM_CH_FADER_AUX_SENSOR3_TO_B;
 }
 
-static uint8_t midi_program_for_timecode_synth_ratio_set(uint8_t ratio_set)
+static UI_MidiProgram_t midi_program_for_timecode_synth_ratio_set(
+    TimecodeOscillatorRatioSet_t ratio_set)
 {
     if (ratio_set == TIMECODE_RATIO_HARMONIC)
     {
-        return SYNTH_RATIO_HARMONIC;
+        return UI_MIDI_PROGRAM_SYNTH_RATIO_HARMONIC;
     }
     if (ratio_set == TIMECODE_RATIO_CHORD)
     {
-        return SYNTH_RATIO_CHORD;
+        return UI_MIDI_PROGRAM_SYNTH_RATIO_CHORD;
     }
-    return SYNTH_RATIO_OCTAVE;
+    return UI_MIDI_PROGRAM_SYNTH_RATIO_OCTAVE;
 }
 
-static uint8_t midi_program_for_timecode_synth_warp_algorithm(uint8_t warp_algorithm)
+static UI_MidiProgram_t midi_program_for_timecode_synth_warp_algorithm(
+    TimecodeOscillatorWarpAlgorithm_t warp_algorithm)
 {
     switch (warp_algorithm)
     {
     case TIMECODE_WARP_CLEAN:
-        return SYNTH_WARP_CLEAN;
+        return UI_MIDI_PROGRAM_SYNTH_WARP_CLEAN;
     case TIMECODE_WARP_RING_MOD:
-        return SYNTH_WARP_RING_MOD;
+        return UI_MIDI_PROGRAM_SYNTH_WARP_RING_MOD;
     case TIMECODE_WARP_COMPARATOR:
-        return SYNTH_WARP_COMPARATOR;
+        return UI_MIDI_PROGRAM_SYNTH_WARP_COMPARATOR;
     case TIMECODE_WARP_CROSSFOLD:
     default:
-        return SYNTH_WARP_CROSSFOLD;
+        return UI_MIDI_PROGRAM_SYNTH_WARP_CROSSFOLD;
     }
 }
 
@@ -236,31 +237,66 @@ static void send_midi_config_dump(const EEPROM_DeviceConfig_t* cfg)
         return;
     }
 
-    ui_midi_control_send_program(midi_program_for_input_type(INPUT_CH1, cfg->current_ch1_input_type), MIDI_CH_15);
-    ui_midi_control_send_program(midi_program_for_input_type(INPUT_CH2, cfg->current_ch2_input_type), MIDI_CH_15);
-    ui_midi_control_send_program(midi_program_for_ch_fader_assign_a(cfg->current_ch_fader_a_assign), MIDI_CH_15);
-    ui_midi_control_send_program(midi_program_for_ch_fader_assign_b(cfg->current_ch_fader_b_assign), MIDI_CH_15);
-    ui_midi_control_send_program(midi_program_for_ch_fader_assign_post(cfg->current_ch_fader_post_assign), MIDI_CH_15);
-    ui_midi_control_send_program(midi_program_for_return_assign(cfg->current_return_assign), MIDI_CH_15);
-    ui_midi_control_send_program(midi_program_for_hp_out_source(cfg->current_hp_out_source), MIDI_CH_15);
-    ui_midi_control_send_program(midi_program_for_input_mode(INPUT_CH1, cfg->current_ch1_input_mode), MIDI_CH_15);
-    ui_midi_control_send_program(midi_program_for_input_mode(INPUT_CH2, cfg->current_ch2_input_mode), MIDI_CH_15);
-    ui_midi_control_send_program(midi_program_for_ch_fader_aux_assignment(2U, cfg->sensor2_aux_fade_down_assign), MIDI_CH_15);
-    ui_midi_control_send_program(midi_program_for_ch_fader_aux_assignment(3U, cfg->sensor3_aux_fade_down_assign), MIDI_CH_15);
-    ui_midi_control_send_program(eeprom_config_is_ch_fader_reverse_a_enabled(cfg) ? CH_FADER_REVERSE_A_ON : CH_FADER_REVERSE_A_OFF, MIDI_CH_15);
-    ui_midi_control_send_program(eeprom_config_is_ch_fader_reverse_b_enabled(cfg) ? CH_FADER_REVERSE_B_ON : CH_FADER_REVERSE_B_OFF, MIDI_CH_15);
-    ui_midi_control_send_program(midi_program_for_timecode_synth_ratio_set(cfg->timecode_synth_ratio_set), MIDI_CH_15);
-    ui_midi_control_send_program(midi_program_for_timecode_synth_warp_algorithm(cfg->timecode_synth_warp_algorithm), MIDI_CH_15);
+    ui_midi_control_send_program(
+        midi_program_for_input_type(AUDIO_INPUT_SOURCE_CH1, cfg->current_ch1_input_type),
+        MIDI_CH_15);
+    ui_midi_control_send_program(
+        midi_program_for_input_type(AUDIO_INPUT_SOURCE_CH2, cfg->current_ch2_input_type),
+        MIDI_CH_15);
+    ui_midi_control_send_program(
+        midi_program_for_ch_fader_assign_a((UI_RoutingSource_t) cfg->current_ch_fader_a_assign),
+        MIDI_CH_15);
+    ui_midi_control_send_program(
+        midi_program_for_ch_fader_assign_b((UI_RoutingSource_t) cfg->current_ch_fader_b_assign),
+        MIDI_CH_15);
+    ui_midi_control_send_program(
+        midi_program_for_ch_fader_assign_post(
+            (UI_RoutingSource_t) cfg->current_ch_fader_post_assign),
+        MIDI_CH_15);
+    ui_midi_control_send_program(
+        midi_program_for_return_assign((UI_RoutingSource_t) cfg->current_return_assign),
+        MIDI_CH_15);
+    ui_midi_control_send_program(
+        midi_program_for_hp_out_source((HpSource_t) cfg->current_hp_out_source),
+        MIDI_CH_15);
+    ui_midi_control_send_program(
+        midi_program_for_input_mode(AUDIO_INPUT_SOURCE_CH1, cfg->current_ch1_input_mode),
+        MIDI_CH_15);
+    ui_midi_control_send_program(
+        midi_program_for_input_mode(AUDIO_INPUT_SOURCE_CH2, cfg->current_ch2_input_mode),
+        MIDI_CH_15);
+    ui_midi_control_send_program(
+        midi_program_for_ch_fader_aux_assignment(2U, cfg->sensor2_aux_fade_down_assign),
+        MIDI_CH_15);
+    ui_midi_control_send_program(
+        midi_program_for_ch_fader_aux_assignment(3U, cfg->sensor3_aux_fade_down_assign),
+        MIDI_CH_15);
+    ui_midi_control_send_program(
+        eeprom_config_is_ch_fader_reverse_a_enabled(cfg) ? UI_MIDI_PROGRAM_CH_FADER_REVERSE_A_ON
+                                                         : UI_MIDI_PROGRAM_CH_FADER_REVERSE_A_OFF,
+        MIDI_CH_15);
+    ui_midi_control_send_program(
+        eeprom_config_is_ch_fader_reverse_b_enabled(cfg) ? UI_MIDI_PROGRAM_CH_FADER_REVERSE_B_ON
+                                                         : UI_MIDI_PROGRAM_CH_FADER_REVERSE_B_OFF,
+        MIDI_CH_15);
+    ui_midi_control_send_program(
+        midi_program_for_timecode_synth_ratio_set(
+            (TimecodeOscillatorRatioSet_t) cfg->timecode_synth_ratio_set),
+        MIDI_CH_15);
+    ui_midi_control_send_program(
+        midi_program_for_timecode_synth_warp_algorithm(
+            (TimecodeOscillatorWarpAlgorithm_t) cfg->timecode_synth_warp_algorithm),
+        MIDI_CH_15);
     ui_midi_control_send_cc(MIDI_CC_CH_FADER_CURVE_A, ui_ch_fader_curve_width_to_midi_cc(cfg->current_ch_fader_curve_width_a), MIDI_CH_15);
     ui_midi_control_send_cc(MIDI_CC_CH_FADER_CURVE_B, ui_ch_fader_curve_width_to_midi_cc(cfg->current_ch_fader_curve_width_b), MIDI_CH_15);
     ui_midi_control_send_cc(MIDI_CC_CH_FADER_DVS_DELAY, cfg->ch_fader_dvs_delay_ms, MIDI_CH_15);
     if (eeprom_config_is_mag_out_as_note(cfg))
     {
-        ui_midi_control_send_program(MIDI_PC_MUX_OUTPUT_NOTE, MIDI_CH_15);
+        ui_midi_control_send_program(UI_MIDI_PROGRAM_MUX_OUTPUT_NOTE, MIDI_CH_15);
     }
     else
     {
-        ui_midi_control_send_program(MIDI_PC_MUX_OUTPUT_CC, MIDI_CH_15);
+        ui_midi_control_send_program(UI_MIDI_PROGRAM_MUX_OUTPUT_CC, MIDI_CH_15);
     }
 }
 
@@ -269,65 +305,91 @@ static void ui_control_reapply_ch_fader_outputs(void)
     ui_ch_fader_reapply_outputs();
 }
 
-typedef void (*midi_program_handler_t)(uint8_t arg);
+typedef struct
+{
+    AudioInputSource_t input_source;
+    uint8_t input_type;
+} midi_input_type_arg_t;
 
 typedef struct
 {
-    uint8_t command;
+    AudioInputSource_t input_source;
+    UI_InputMode_t mode;
+} midi_input_mode_arg_t;
+
+typedef struct
+{
+    uint8_t sensor_idx;
+    uint8_t aux_assign;
+} midi_aux_assign_arg_t;
+
+// コマンド表の引数。値ドメインごとにメンバを分け、指定初期化子で所属を明示する。
+typedef union
+{
+    midi_input_type_arg_t input_type;
+    midi_input_mode_arg_t input_mode;
+    midi_aux_assign_arg_t aux_assign;
+    AudioInputSource_t audio_input_source;  // Ch Fader A/B/Post
+    UI_RoutingSource_t routing_source;      // Return
+    HpSource_t hp_source;                   // Headphone
+    TimecodeOscillatorRatioSet_t ratio_set;
+    TimecodeOscillatorWarpAlgorithm_t warp_algorithm;
+} midi_program_arg_t;
+
+typedef void (*midi_program_handler_t)(midi_program_arg_t arg);
+
+typedef struct
+{
+    UI_MidiProgram_t command;
     midi_program_handler_t handler;
-    uint8_t arg;
+    midi_program_arg_t arg;
 } midi_program_cmd_t;
 
-static void midi_program_set_input_type(uint8_t arg)
+static void midi_program_set_input_type(midi_program_arg_t arg)
 {
-    uint8_t input_ch   = (arg >> 4) & 0x0F;
-    uint8_t input_type = arg & 0x0F;
-    ui_routing_apply_input_type(input_ch, input_type);
+    ui_routing_apply_input_type(arg.input_type.input_source, arg.input_type.input_type);
 }
 
-static void midi_program_apply_ch_fader_a(uint8_t input_ch)
+static void midi_program_apply_ch_fader_a(midi_program_arg_t arg)
 {
-    ui_routing_apply_ch_fader_assign_a(input_ch);
+    ui_routing_apply_ch_fader_assign_a(arg.audio_input_source);
 }
 
-static void midi_program_apply_ch_fader_b(uint8_t input_ch)
+static void midi_program_apply_ch_fader_b(midi_program_arg_t arg)
 {
-    ui_routing_apply_ch_fader_assign_b(input_ch);
+    ui_routing_apply_ch_fader_assign_b(arg.audio_input_source);
 }
 
-static void midi_program_apply_ch_fader_post(uint8_t input_ch)
+static void midi_program_apply_ch_fader_post(midi_program_arg_t arg)
 {
-    ui_routing_apply_ch_fader_assign_post(input_ch);
+    ui_routing_apply_ch_fader_assign_post(arg.audio_input_source);
 }
 
-static void midi_program_apply_return(uint8_t input_ch)
+static void midi_program_apply_return(midi_program_arg_t arg)
 {
-    const uint8_t return_assign = ui_routing_apply_return_source(input_ch);
+    const UI_RoutingSource_t return_source = ui_routing_apply_return_source(arg.routing_source);
 
-    ui_pot_control_apply_return_outputs(return_assign);
+    ui_pot_control_apply_return_outputs(return_source);
 }
 
-static void midi_program_apply_hp_out(uint8_t source)
+static void midi_program_apply_hp_out(midi_program_arg_t arg)
 {
-    ui_routing_apply_hp_out_source(source);
+    ui_routing_apply_hp_out_source(arg.hp_source);
 }
 
-static void midi_program_apply_input_mode(uint8_t arg)
+static void midi_program_apply_input_mode(midi_program_arg_t arg)
 {
-    const uint8_t input_ch = (arg >> 4) & 0x0FU;
-    const uint8_t mode     = arg & 0x0FU;
-
-    if (mode <= UI_INPUT_MODE_SYNTH)
+    if (arg.input_mode.mode <= UI_INPUT_MODE_SYNTH)
     {
-        ui_routing_apply_input_mode(input_ch, (UI_InputMode_t) mode);
+        ui_routing_apply_input_mode(arg.input_mode.input_source, arg.input_mode.mode);
         ui_control_reapply_ch_fader_outputs();
     }
 }
 
-static void midi_program_apply_ch_fader_aux_assignment(uint8_t arg)
+static void midi_program_apply_ch_fader_aux_assignment(midi_program_arg_t arg)
 {
-    const uint8_t sensor_idx = (arg >> 4) & 0x0FU;
-    const uint8_t assign     = arg & 0x0FU;
+    const uint8_t sensor_idx = arg.aux_assign.sensor_idx;
+    const uint8_t assign     = arg.aux_assign.aux_assign;
 
     if (sensor_idx == 2U)
     {
@@ -344,16 +406,16 @@ static void midi_program_apply_ch_fader_aux_assignment(uint8_t arg)
                       (ui_ch_fader_get_aux_assign(3U) == UI_CH_FADER_AUX_ASSIGN_A) ? 'A' : 'B');
 }
 
-static void midi_program_apply_timecode_synth_ratio_set(uint8_t arg)
+static void midi_program_apply_timecode_synth_ratio_set(midi_program_arg_t arg)
 {
-    timecode_synth_set_ratio_set((TimecodeOscillatorRatioSet_t) arg);
-    SEGGER_RTT_printf(0, "SYNTH ratio set: %u\r\n", (unsigned) arg);
+    timecode_synth_set_ratio_set(arg.ratio_set);
+    SEGGER_RTT_printf(0, "SYNTH ratio set: %u\r\n", (unsigned) arg.ratio_set);
 }
 
-static void midi_program_apply_timecode_synth_warp_algorithm(uint8_t arg)
+static void midi_program_apply_timecode_synth_warp_algorithm(midi_program_arg_t arg)
 {
-    timecode_synth_set_warp_algorithm((TimecodeOscillatorWarpAlgorithm_t) arg);
-    SEGGER_RTT_printf(0, "SYNTH warp algorithm: %u\r\n", (unsigned) arg);
+    timecode_synth_set_warp_algorithm(arg.warp_algorithm);
+    SEGGER_RTT_printf(0, "SYNTH warp algorithm: %u\r\n", (unsigned) arg.warp_algorithm);
 }
 
 static bool dispatch_midi_program_change(uint8_t channel, uint8_t program)
@@ -363,63 +425,63 @@ static bool dispatch_midi_program_change(uint8_t channel, uint8_t program)
         return false;
     }
 
-    if (program == MIDI_PC_CURVE_EDIT_MODE_OFF)
+    if (program == UI_MIDI_PROGRAM_CURVE_EDIT_MODE_OFF)
     {
         s_ui.curve_edit_mode = false;
         SEGGER_RTT_printf(0, "Curve edit mode OFF (PC%u)\r\n", (unsigned) program);
         return true;
     }
 
-    if (program == MIDI_PC_CURVE_EDIT_MODE_ON)
+    if (program == UI_MIDI_PROGRAM_CURVE_EDIT_MODE_ON)
     {
         s_ui.curve_edit_mode = true;
         SEGGER_RTT_printf(0, "Curve edit mode ON (PC%u)\r\n", (unsigned) program);
         return true;
     }
 
-    if (program == MIDI_PC_MUX_OUTPUT_CC)
+    if (program == UI_MIDI_PROGRAM_MUX_OUTPUT_CC)
     {
         s_ui.mag_out_as_note = false;
         SEGGER_RTT_printf(0, "Mag/pot_mag output mode: CC (PC%u)\r\n", (unsigned) program);
         return true;
     }
 
-    if (program == MIDI_PC_MUX_OUTPUT_NOTE)
+    if (program == UI_MIDI_PROGRAM_MUX_OUTPUT_NOTE)
     {
         s_ui.mag_out_as_note = true;
         SEGGER_RTT_printf(0, "Mag/pot_mag output mode: Note (PC%u)\r\n", (unsigned) program);
         return true;
     }
 
-    if (program == MIDI_PC_ARM_UF2_BOOTLOADER)
+    if (program == UI_MIDI_PROGRAM_ARM_UF2_BOOTLOADER)
     {
-        ui_uf2_control_arm(MIDI_PC_ARM_UF2_BOOTLOADER);
+        ui_uf2_control_arm(UI_MIDI_PROGRAM_ARM_UF2_BOOTLOADER);
         return true;
     }
 
-    if (program == MIDI_PC_CANCEL_UF2_BOOTLOADER)
+    if (program == UI_MIDI_PROGRAM_CANCEL_UF2_BOOTLOADER)
     {
         ui_uf2_control_cancel("cancelled by PC125 Ch15");
         return true;
     }
 
-    if ((program == CH_FADER_REVERSE_A_OFF) || (program == CH_FADER_REVERSE_A_ON))
+    if ((program == UI_MIDI_PROGRAM_CH_FADER_REVERSE_A_OFF) || (program == UI_MIDI_PROGRAM_CH_FADER_REVERSE_A_ON))
     {
-        ui_ch_fader_set_reverse(0U, (program == CH_FADER_REVERSE_A_ON));
+        ui_ch_fader_set_reverse(0U, (program == UI_MIDI_PROGRAM_CH_FADER_REVERSE_A_ON));
         ui_control_reapply_ch_fader_outputs();
         SEGGER_RTT_printf(0, "Channel fader A Reverse: %s (PC%u)\r\n", ui_control_is_ch_fader_reverse_a_enabled() ? "ON" : "OFF", (unsigned) program);
         return true;
     }
 
-    if ((program == CH_FADER_REVERSE_B_OFF) || (program == CH_FADER_REVERSE_B_ON))
+    if ((program == UI_MIDI_PROGRAM_CH_FADER_REVERSE_B_OFF) || (program == UI_MIDI_PROGRAM_CH_FADER_REVERSE_B_ON))
     {
-        ui_ch_fader_set_reverse(1U, (program == CH_FADER_REVERSE_B_ON));
+        ui_ch_fader_set_reverse(1U, (program == UI_MIDI_PROGRAM_CH_FADER_REVERSE_B_ON));
         ui_control_reapply_ch_fader_outputs();
         SEGGER_RTT_printf(0, "Channel fader B Reverse: %s (PC%u)\r\n", ui_control_is_ch_fader_reverse_b_enabled() ? "ON" : "OFF", (unsigned) program);
         return true;
     }
 
-    if (program == MIDI_PC_REQUEST_EEPROM_DUMP)
+    if (program == UI_MIDI_PROGRAM_REQUEST_EEPROM_DUMP)
     {
         EEPROM_DeviceConfig_t cfg;
 
@@ -430,7 +492,7 @@ static bool dispatch_midi_program_change(uint8_t channel, uint8_t program)
         return true;
     }
 
-    if (program == MIDI_PC_SAVE_EEPROM)
+    if (program == UI_MIDI_PROGRAM_SAVE_EEPROM)
     {
         EEPROM_DeviceConfig_t cfg;
 
@@ -448,46 +510,86 @@ static bool dispatch_midi_program_change(uint8_t channel, uint8_t program)
     }
 
     static const midi_program_cmd_t commands[] = {
-        {CH1_LINE,             midi_program_set_input_type, (uint8_t) ((INPUT_CH1 << 4) | INPUT_TYPE_LINE) },
-        {CH1_PHONO,            midi_program_set_input_type, (uint8_t) ((INPUT_CH1 << 4) | INPUT_TYPE_PHONO)},
-        {CH2_LINE,             midi_program_set_input_type, (uint8_t) ((INPUT_CH2 << 4) | INPUT_TYPE_LINE) },
-        {CH2_PHONO,            midi_program_set_input_type, (uint8_t) ((INPUT_CH2 << 4) | INPUT_TYPE_PHONO)},
-        {CH_FADER_ASSIGN_A_CH1,      midi_program_apply_ch_fader_a,     INPUT_CH1                                      },
-        {CH_FADER_ASSIGN_A_CH2,      midi_program_apply_ch_fader_a,     INPUT_CH2                                      },
-        {CH_FADER_ASSIGN_A_USB12,    midi_program_apply_ch_fader_a,     INPUT_USB12                                    },
-        {CH_FADER_ASSIGN_A_USB34,    midi_program_apply_ch_fader_a,     INPUT_USB34                                    },
-        {CH_FADER_ASSIGN_B_CH1,      midi_program_apply_ch_fader_b,     INPUT_CH1                                      },
-        {CH_FADER_ASSIGN_B_CH2,      midi_program_apply_ch_fader_b,     INPUT_CH2                                      },
-        {CH_FADER_ASSIGN_B_USB12,    midi_program_apply_ch_fader_b,     INPUT_USB12                                    },
-        {CH_FADER_ASSIGN_B_USB34,    midi_program_apply_ch_fader_b,     INPUT_USB34                                    },
-        {CH_FADER_ASSIGN_POST_CH1,   midi_program_apply_ch_fader_post,  INPUT_CH1                                      },
-        {CH_FADER_ASSIGN_POST_CH2,   midi_program_apply_ch_fader_post,  INPUT_CH2                                      },
-        {CH_FADER_ASSIGN_POST_USB12, midi_program_apply_ch_fader_post,  INPUT_USB12                                    },
-        {CH_FADER_ASSIGN_POST_USB34, midi_program_apply_ch_fader_post,  INPUT_USB34                                    },
-        {CH1_MODE_DISABLE,     midi_program_apply_input_mode, (uint8_t) ((INPUT_CH1 << 4) | UI_INPUT_MODE_DISABLED)},
-        {CH1_MODE_DVS,         midi_program_apply_input_mode, (uint8_t) ((INPUT_CH1 << 4) | UI_INPUT_MODE_DVS)     },
-        {CH1_MODE_SYNTH,       midi_program_apply_input_mode, (uint8_t) ((INPUT_CH1 << 4) | UI_INPUT_MODE_SYNTH)   },
-        {CH2_MODE_DISABLE,     midi_program_apply_input_mode, (uint8_t) ((INPUT_CH2 << 4) | UI_INPUT_MODE_DISABLED)},
-        {CH2_MODE_DVS,         midi_program_apply_input_mode, (uint8_t) ((INPUT_CH2 << 4) | UI_INPUT_MODE_DVS)     },
-        {CH2_MODE_SYNTH,       midi_program_apply_input_mode, (uint8_t) ((INPUT_CH2 << 4) | UI_INPUT_MODE_SYNTH)   },
-        {RETURN_CH_USB12,      midi_program_apply_return,   INPUT_USB12                                    },
-        {RETURN_CH_USB34,      midi_program_apply_return,   INPUT_USB34                                    },
-        {RETURN_CH_NONE,       midi_program_apply_return,   INPUT_SRC_NONE                                 },
-        {HP_OUT_CH_FADER_A,          midi_program_apply_hp_out,   CUE_SEL_CH_FADER_A                                   },
-        {HP_OUT_CH_FADER_B,          midi_program_apply_hp_out,   CUE_SEL_CH_FADER_B                                   },
-        {HP_OUT_THRU,          midi_program_apply_hp_out,   CUE_SEL_THRU                                   },
-        {HP_OUT_MASTER,        midi_program_apply_hp_out,   CUE_SEL_MST                                    },
-        {CH_FADER_AUX_SENSOR2_TO_A,  midi_program_apply_ch_fader_aux_assignment, (uint8_t) ((2U << 4) | UI_CH_FADER_AUX_ASSIGN_A)},
-        {CH_FADER_AUX_SENSOR2_TO_B,  midi_program_apply_ch_fader_aux_assignment, (uint8_t) ((2U << 4) | UI_CH_FADER_AUX_ASSIGN_B)},
-        {CH_FADER_AUX_SENSOR3_TO_A,  midi_program_apply_ch_fader_aux_assignment, (uint8_t) ((3U << 4) | UI_CH_FADER_AUX_ASSIGN_A)},
-        {CH_FADER_AUX_SENSOR3_TO_B,  midi_program_apply_ch_fader_aux_assignment, (uint8_t) ((3U << 4) | UI_CH_FADER_AUX_ASSIGN_B)},
-        {SYNTH_RATIO_OCTAVE,         midi_program_apply_timecode_synth_ratio_set, TIMECODE_RATIO_OCTAVE                  },
-        {SYNTH_RATIO_HARMONIC,       midi_program_apply_timecode_synth_ratio_set, TIMECODE_RATIO_HARMONIC                },
-        {SYNTH_RATIO_CHORD,          midi_program_apply_timecode_synth_ratio_set, TIMECODE_RATIO_CHORD                   },
-        {SYNTH_WARP_CLEAN,           midi_program_apply_timecode_synth_warp_algorithm, TIMECODE_WARP_CLEAN                },
-        {SYNTH_WARP_CROSSFOLD,       midi_program_apply_timecode_synth_warp_algorithm, TIMECODE_WARP_CROSSFOLD            },
-        {SYNTH_WARP_RING_MOD,        midi_program_apply_timecode_synth_warp_algorithm, TIMECODE_WARP_RING_MOD             },
-        {SYNTH_WARP_COMPARATOR,      midi_program_apply_timecode_synth_warp_algorithm, TIMECODE_WARP_COMPARATOR           },
+        {UI_MIDI_PROGRAM_CH1_LINE, midi_program_set_input_type,
+         {.input_type = {.input_source = AUDIO_INPUT_SOURCE_CH1, .input_type = INPUT_TYPE_LINE}}},
+        {UI_MIDI_PROGRAM_CH1_PHONO, midi_program_set_input_type,
+         {.input_type = {.input_source = AUDIO_INPUT_SOURCE_CH1, .input_type = INPUT_TYPE_PHONO}}},
+        {UI_MIDI_PROGRAM_CH2_LINE, midi_program_set_input_type,
+         {.input_type = {.input_source = AUDIO_INPUT_SOURCE_CH2, .input_type = INPUT_TYPE_LINE}}},
+        {UI_MIDI_PROGRAM_CH2_PHONO, midi_program_set_input_type,
+         {.input_type = {.input_source = AUDIO_INPUT_SOURCE_CH2, .input_type = INPUT_TYPE_PHONO}}},
+        {UI_MIDI_PROGRAM_CH_FADER_ASSIGN_A_CH1, midi_program_apply_ch_fader_a,
+         {.audio_input_source = AUDIO_INPUT_SOURCE_CH1}},
+        {UI_MIDI_PROGRAM_CH_FADER_ASSIGN_A_CH2, midi_program_apply_ch_fader_a,
+         {.audio_input_source = AUDIO_INPUT_SOURCE_CH2}},
+        {UI_MIDI_PROGRAM_CH_FADER_ASSIGN_A_USB12, midi_program_apply_ch_fader_a,
+         {.audio_input_source = AUDIO_INPUT_SOURCE_USB12}},
+        {UI_MIDI_PROGRAM_CH_FADER_ASSIGN_A_USB34, midi_program_apply_ch_fader_a,
+         {.audio_input_source = AUDIO_INPUT_SOURCE_USB34}},
+        {UI_MIDI_PROGRAM_CH_FADER_ASSIGN_B_CH1, midi_program_apply_ch_fader_b,
+         {.audio_input_source = AUDIO_INPUT_SOURCE_CH1}},
+        {UI_MIDI_PROGRAM_CH_FADER_ASSIGN_B_CH2, midi_program_apply_ch_fader_b,
+         {.audio_input_source = AUDIO_INPUT_SOURCE_CH2}},
+        {UI_MIDI_PROGRAM_CH_FADER_ASSIGN_B_USB12, midi_program_apply_ch_fader_b,
+         {.audio_input_source = AUDIO_INPUT_SOURCE_USB12}},
+        {UI_MIDI_PROGRAM_CH_FADER_ASSIGN_B_USB34, midi_program_apply_ch_fader_b,
+         {.audio_input_source = AUDIO_INPUT_SOURCE_USB34}},
+        {UI_MIDI_PROGRAM_CH_FADER_ASSIGN_POST_CH1, midi_program_apply_ch_fader_post,
+         {.audio_input_source = AUDIO_INPUT_SOURCE_CH1}},
+        {UI_MIDI_PROGRAM_CH_FADER_ASSIGN_POST_CH2, midi_program_apply_ch_fader_post,
+         {.audio_input_source = AUDIO_INPUT_SOURCE_CH2}},
+        {UI_MIDI_PROGRAM_CH_FADER_ASSIGN_POST_USB12, midi_program_apply_ch_fader_post,
+         {.audio_input_source = AUDIO_INPUT_SOURCE_USB12}},
+        {UI_MIDI_PROGRAM_CH_FADER_ASSIGN_POST_USB34, midi_program_apply_ch_fader_post,
+         {.audio_input_source = AUDIO_INPUT_SOURCE_USB34}},
+        {UI_MIDI_PROGRAM_CH1_MODE_DISABLE, midi_program_apply_input_mode,
+         {.input_mode = {.input_source = AUDIO_INPUT_SOURCE_CH1, .mode = UI_INPUT_MODE_DISABLED}}},
+        {UI_MIDI_PROGRAM_CH1_MODE_DVS, midi_program_apply_input_mode,
+         {.input_mode = {.input_source = AUDIO_INPUT_SOURCE_CH1, .mode = UI_INPUT_MODE_DVS}}},
+        {UI_MIDI_PROGRAM_CH1_MODE_SYNTH, midi_program_apply_input_mode,
+         {.input_mode = {.input_source = AUDIO_INPUT_SOURCE_CH1, .mode = UI_INPUT_MODE_SYNTH}}},
+        {UI_MIDI_PROGRAM_CH2_MODE_DISABLE, midi_program_apply_input_mode,
+         {.input_mode = {.input_source = AUDIO_INPUT_SOURCE_CH2, .mode = UI_INPUT_MODE_DISABLED}}},
+        {UI_MIDI_PROGRAM_CH2_MODE_DVS, midi_program_apply_input_mode,
+         {.input_mode = {.input_source = AUDIO_INPUT_SOURCE_CH2, .mode = UI_INPUT_MODE_DVS}}},
+        {UI_MIDI_PROGRAM_CH2_MODE_SYNTH, midi_program_apply_input_mode,
+         {.input_mode = {.input_source = AUDIO_INPUT_SOURCE_CH2, .mode = UI_INPUT_MODE_SYNTH}}},
+        {UI_MIDI_PROGRAM_RETURN_CH_USB12, midi_program_apply_return,
+         {.routing_source = UI_ROUTING_SOURCE_USB12}},
+        {UI_MIDI_PROGRAM_RETURN_CH_USB34, midi_program_apply_return,
+         {.routing_source = UI_ROUTING_SOURCE_USB34}},
+        {UI_MIDI_PROGRAM_RETURN_CH_NONE, midi_program_apply_return,
+         {.routing_source = UI_ROUTING_SOURCE_NONE}},
+        {UI_MIDI_PROGRAM_HP_OUT_CH_FADER_A, midi_program_apply_hp_out,
+         {.hp_source = HP_SOURCE_CH_FADER_A}},
+        {UI_MIDI_PROGRAM_HP_OUT_CH_FADER_B, midi_program_apply_hp_out,
+         {.hp_source = HP_SOURCE_CH_FADER_B}},
+        {UI_MIDI_PROGRAM_HP_OUT_THRU, midi_program_apply_hp_out,
+         {.hp_source = HP_SOURCE_THRU}},
+        {UI_MIDI_PROGRAM_HP_OUT_MASTER, midi_program_apply_hp_out,
+         {.hp_source = HP_SOURCE_MASTER}},
+        {UI_MIDI_PROGRAM_CH_FADER_AUX_SENSOR2_TO_A, midi_program_apply_ch_fader_aux_assignment,
+         {.aux_assign = {.sensor_idx = 2U, .aux_assign = UI_CH_FADER_AUX_ASSIGN_A}}},
+        {UI_MIDI_PROGRAM_CH_FADER_AUX_SENSOR2_TO_B, midi_program_apply_ch_fader_aux_assignment,
+         {.aux_assign = {.sensor_idx = 2U, .aux_assign = UI_CH_FADER_AUX_ASSIGN_B}}},
+        {UI_MIDI_PROGRAM_CH_FADER_AUX_SENSOR3_TO_A, midi_program_apply_ch_fader_aux_assignment,
+         {.aux_assign = {.sensor_idx = 3U, .aux_assign = UI_CH_FADER_AUX_ASSIGN_A}}},
+        {UI_MIDI_PROGRAM_CH_FADER_AUX_SENSOR3_TO_B, midi_program_apply_ch_fader_aux_assignment,
+         {.aux_assign = {.sensor_idx = 3U, .aux_assign = UI_CH_FADER_AUX_ASSIGN_B}}},
+        {UI_MIDI_PROGRAM_SYNTH_RATIO_OCTAVE, midi_program_apply_timecode_synth_ratio_set,
+         {.ratio_set = TIMECODE_RATIO_OCTAVE}},
+        {UI_MIDI_PROGRAM_SYNTH_RATIO_HARMONIC, midi_program_apply_timecode_synth_ratio_set,
+         {.ratio_set = TIMECODE_RATIO_HARMONIC}},
+        {UI_MIDI_PROGRAM_SYNTH_RATIO_CHORD, midi_program_apply_timecode_synth_ratio_set,
+         {.ratio_set = TIMECODE_RATIO_CHORD}},
+        {UI_MIDI_PROGRAM_SYNTH_WARP_CLEAN, midi_program_apply_timecode_synth_warp_algorithm,
+         {.warp_algorithm = TIMECODE_WARP_CLEAN}},
+        {UI_MIDI_PROGRAM_SYNTH_WARP_CROSSFOLD, midi_program_apply_timecode_synth_warp_algorithm,
+         {.warp_algorithm = TIMECODE_WARP_CROSSFOLD}},
+        {UI_MIDI_PROGRAM_SYNTH_WARP_RING_MOD, midi_program_apply_timecode_synth_warp_algorithm,
+         {.warp_algorithm = TIMECODE_WARP_RING_MOD}},
+        {UI_MIDI_PROGRAM_SYNTH_WARP_COMPARATOR, midi_program_apply_timecode_synth_warp_algorithm,
+         {.warp_algorithm = TIMECODE_WARP_COMPARATOR}},
     };
 
     for (uint32_t i = 0; i < TU_ARRAY_SIZE(commands); i++)
@@ -704,34 +806,36 @@ bool ui_control_validate_persist_state(const UI_ControlPersistState_t* state)
 
 bool ui_control_apply_persist_state(const UI_ControlPersistState_t* state)
 {
-    uint8_t input_ch_a;
-    uint8_t input_ch_b;
-    uint8_t input_ch_post;
-    uint8_t input_ch_return;
+    AudioInputSource_t audio_input_source_a;
+    AudioInputSource_t audio_input_source_b;
+    AudioInputSource_t audio_input_source_post;
 
     if (!ui_control_validate_persist_state(state))
     {
         return false;
     }
 
-    if (!ui_routing_assign_to_input_ch(state->current_ch_fader_a_assign, &input_ch_a) ||
-        !ui_routing_assign_to_input_ch(state->current_ch_fader_b_assign, &input_ch_b) ||
-        !ui_routing_assign_to_input_ch(state->current_ch_fader_post_assign, &input_ch_post) ||
-        !ui_routing_assign_to_return_input_ch(state->current_return_assign, &input_ch_return))
+    if (!ui_routing_source_to_audio_input_source(
+            (UI_RoutingSource_t) state->current_ch_fader_a_assign, &audio_input_source_a) ||
+        !ui_routing_source_to_audio_input_source(
+            (UI_RoutingSource_t) state->current_ch_fader_b_assign, &audio_input_source_b) ||
+        !ui_routing_source_to_audio_input_source(
+            (UI_RoutingSource_t) state->current_ch_fader_post_assign, &audio_input_source_post))
     {
         return false;
     }
 
-    ui_routing_apply_input_type(INPUT_CH1, state->current_ch1_input_type);
-    ui_routing_apply_input_type(INPUT_CH2, state->current_ch2_input_type);
-    ui_routing_apply_ch_fader_assign_a(input_ch_a);
-    ui_routing_apply_ch_fader_assign_b(input_ch_b);
-    ui_routing_apply_ch_fader_assign_post(input_ch_post);
-    ui_pot_control_apply_return_outputs(ui_routing_apply_return_source(input_ch_return));
-    ui_routing_apply_hp_out_source(state->current_hp_out_source);
-    ui_routing_apply_input_mode(INPUT_CH1, (UI_InputMode_t) state->current_ch1_input_mode);
+    ui_routing_apply_input_type(AUDIO_INPUT_SOURCE_CH1, state->current_ch1_input_type);
+    ui_routing_apply_input_type(AUDIO_INPUT_SOURCE_CH2, state->current_ch2_input_type);
+    ui_routing_apply_ch_fader_assign_a(audio_input_source_a);
+    ui_routing_apply_ch_fader_assign_b(audio_input_source_b);
+    ui_routing_apply_ch_fader_assign_post(audio_input_source_post);
+    ui_pot_control_apply_return_outputs(
+        ui_routing_apply_return_source((UI_RoutingSource_t) state->current_return_assign));
+    ui_routing_apply_hp_out_source((HpSource_t) state->current_hp_out_source);
+    ui_routing_apply_input_mode(AUDIO_INPUT_SOURCE_CH1, (UI_InputMode_t) state->current_ch1_input_mode);
     ui_control_reapply_ch_fader_outputs();
-    ui_routing_apply_input_mode(INPUT_CH2, (UI_InputMode_t) state->current_ch2_input_mode);
+    ui_routing_apply_input_mode(AUDIO_INPUT_SOURCE_CH2, (UI_InputMode_t) state->current_ch2_input_mode);
     ui_control_reapply_ch_fader_outputs();
     ui_ch_fader_apply_dvs_delay(state->ch_fader_dvs_delay_ms);
     (void) ui_ch_fader_apply_aux_assignments(state->sensor2_aux_fade_down_assign,

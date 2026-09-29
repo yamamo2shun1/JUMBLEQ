@@ -183,7 +183,7 @@ typedef struct
     uint16_t count;
     uint8_t target_position;
     float target_value;
-    uint8_t input_assign;
+    UI_RoutingSource_t input_assign;
     bool delay_enabled;
     bool context_valid;
     bool target_valid;
@@ -191,23 +191,23 @@ typedef struct
 
 static ch_fader_dsp_state_t s_ch_fader_dsp[CH_FADER_PAIR_COUNT];
 
-static uint8_t get_ch_fader_dsp_assign(const ch_fader_pair_runtime_t* pair)
+static UI_RoutingSource_t get_ch_fader_dsp_assign(const ch_fader_pair_runtime_t* pair)
 {
     return ui_routing_get_ch_fader_assign((pair->prev_idx == CH_FADER_PAIR_A) ? 0U : 1U);
 }
 
-static bool ch_fader_assign_uses_dvs(uint8_t assign)
+static bool ch_fader_assign_uses_dvs(UI_RoutingSource_t routing_source)
 {
-    switch (assign)
+    switch (routing_source)
     {
-    case INPUT_SRC_CH1_LN:
-    case INPUT_SRC_CH1_PN:
-    case INPUT_SRC_USB12:  // PC return for Ch. 1 DVS, including direct USB routing.
-        return ui_routing_get_input_mode(INPUT_CH1) == UI_INPUT_MODE_DVS;
-    case INPUT_SRC_CH2_LN:
-    case INPUT_SRC_CH2_PN:
-    case INPUT_SRC_USB34:  // PC return for Ch. 2 DVS, including direct USB routing.
-        return ui_routing_get_input_mode(INPUT_CH2) == UI_INPUT_MODE_DVS;
+    case UI_ROUTING_SOURCE_CH1_LINE:
+    case UI_ROUTING_SOURCE_CH1_PHONO:
+    case UI_ROUTING_SOURCE_USB12:  // PC return for Ch. 1 DVS, including direct USB routing.
+        return ui_routing_get_input_mode(AUDIO_INPUT_SOURCE_CH1) == UI_INPUT_MODE_DVS;
+    case UI_ROUTING_SOURCE_CH2_LINE:
+    case UI_ROUTING_SOURCE_CH2_PHONO:
+    case UI_ROUTING_SOURCE_USB34:  // PC return for Ch. 2 DVS, including direct USB routing.
+        return ui_routing_get_input_mode(AUDIO_INPUT_SOURCE_CH2) == UI_INPUT_MODE_DVS;
     default:
         return false;
     }

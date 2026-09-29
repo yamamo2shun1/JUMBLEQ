@@ -17,11 +17,11 @@ typedef struct
 {
     uint8_t current_ch1_input_type;
     uint8_t current_ch2_input_type;
-    uint8_t current_ch_fader_a_assign;
-    uint8_t current_ch_fader_b_assign;
-    uint8_t current_ch_fader_post_assign;
-    uint8_t current_return_assign;
-    uint8_t current_hp_out_source;
+    UI_RoutingSource_t current_ch_fader_a_assign;
+    UI_RoutingSource_t current_ch_fader_b_assign;
+    UI_RoutingSource_t current_ch_fader_post_assign;
+    UI_RoutingSource_t current_return_assign;
+    HpSource_t current_hp_out_source;
     uint8_t current_ch1_input_mode;
     uint8_t current_ch2_input_mode;
 } ui_routing_state_t;
@@ -29,71 +29,78 @@ typedef struct
 static ui_routing_state_t s_routing = {
     .current_ch1_input_type = INPUT_TYPE_LINE,
     .current_ch2_input_type = INPUT_TYPE_LINE,
-    .current_ch_fader_a_assign     = INPUT_SRC_CH1_LN,
-    .current_ch_fader_b_assign     = INPUT_SRC_CH2_LN,
-    .current_ch_fader_post_assign  = INPUT_SRC_USB12,
-    .current_return_assign  = INPUT_SRC_USB34,
-    .current_hp_out_source  = CUE_SEL_MST,
+    .current_ch_fader_a_assign     = UI_ROUTING_SOURCE_CH1_LINE,
+    .current_ch_fader_b_assign     = UI_ROUTING_SOURCE_CH2_LINE,
+    .current_ch_fader_post_assign  = UI_ROUTING_SOURCE_USB12,
+    .current_return_assign  = UI_ROUTING_SOURCE_USB34,
+    .current_hp_out_source  = HP_SOURCE_MASTER,
     .current_ch1_input_mode = UI_INPUT_MODE_DISABLED,
     .current_ch2_input_mode = UI_INPUT_MODE_DISABLED,
 };
 
-static uint8_t input_src_from_channel_type(uint8_t input_ch, uint8_t input_type)
+static UI_RoutingSource_t input_src_from_channel_type(AudioInputSource_t audio_input_source,
+                                                      uint8_t input_type)
 {
-    switch (input_ch)
+    switch (audio_input_source)
     {
-    case INPUT_CH1:
-        return (input_type == INPUT_TYPE_PHONO) ? INPUT_SRC_CH1_PN : INPUT_SRC_CH1_LN;
-    case INPUT_CH2:
-        return (input_type == INPUT_TYPE_PHONO) ? INPUT_SRC_CH2_PN : INPUT_SRC_CH2_LN;
-    case INPUT_USB12:
-        return INPUT_SRC_USB12;
-    case INPUT_USB34:
-        return INPUT_SRC_USB34;
+    case AUDIO_INPUT_SOURCE_CH1:
+        return (input_type == INPUT_TYPE_PHONO) ? UI_ROUTING_SOURCE_CH1_PHONO
+                                                : UI_ROUTING_SOURCE_CH1_LINE;
+    case AUDIO_INPUT_SOURCE_CH2:
+        return (input_type == INPUT_TYPE_PHONO) ? UI_ROUTING_SOURCE_CH2_PHONO
+                                                : UI_ROUTING_SOURCE_CH2_LINE;
+    case AUDIO_INPUT_SOURCE_USB12:
+        return UI_ROUTING_SOURCE_USB12;
+    case AUDIO_INPUT_SOURCE_USB34:
+        return UI_ROUTING_SOURCE_USB34;
     default:
-        return INPUT_SRC_NONE;
+        return UI_ROUTING_SOURCE_NONE;
     }
 }
 
-static uint8_t current_input_src_from_channel(uint8_t input_ch)
+static UI_RoutingSource_t current_input_src_from_channel(AudioInputSource_t audio_input_source)
 {
-    switch (input_ch)
+    switch (audio_input_source)
     {
-    case INPUT_CH1:
-        return input_src_from_channel_type(INPUT_CH1, s_routing.current_ch1_input_type);
-    case INPUT_CH2:
-        return input_src_from_channel_type(INPUT_CH2, s_routing.current_ch2_input_type);
-    case INPUT_USB12:
-        return INPUT_SRC_USB12;
-    case INPUT_USB34:
-        return INPUT_SRC_USB34;
+    case AUDIO_INPUT_SOURCE_CH1:
+        return input_src_from_channel_type(AUDIO_INPUT_SOURCE_CH1, s_routing.current_ch1_input_type);
+    case AUDIO_INPUT_SOURCE_CH2:
+        return input_src_from_channel_type(AUDIO_INPUT_SOURCE_CH2, s_routing.current_ch2_input_type);
+    case AUDIO_INPUT_SOURCE_USB12:
+        return UI_ROUTING_SOURCE_USB12;
+    case AUDIO_INPUT_SOURCE_USB34:
+        return UI_ROUTING_SOURCE_USB34;
     default:
-        return INPUT_SRC_NONE;
+        return UI_ROUTING_SOURCE_NONE;
     }
 }
 
-static void replace_assign_for_input_channel(uint8_t* assign, uint8_t input_ch, uint8_t new_src)
+static void replace_assign_for_input_channel(UI_RoutingSource_t* routing_source,
+                                             AudioInputSource_t audio_input_source,
+                                             UI_RoutingSource_t new_source)
 {
-    const uint8_t ln_src = input_src_from_channel_type(input_ch, INPUT_TYPE_LINE);
-    const uint8_t pn_src = input_src_from_channel_type(input_ch, INPUT_TYPE_PHONO);
+    const UI_RoutingSource_t line_source =
+        input_src_from_channel_type(audio_input_source, INPUT_TYPE_LINE);
+    const UI_RoutingSource_t phono_source =
+        input_src_from_channel_type(audio_input_source, INPUT_TYPE_PHONO);
 
-    if (*assign == ln_src || *assign == pn_src)
+    if ((*routing_source == line_source) || (*routing_source == phono_source))
     {
-        *assign = new_src;
+        *routing_source = new_source;
     }
 }
 
-static void apply_mic_gain_amp_setting(uint8_t input_ch, uint8_t input_type)
+static void apply_mic_gain_amp_setting(AudioInputSource_t audio_input_source, uint8_t input_type)
 {
     uint8_t codec_ch;
     uint8_t gain_db;
 
-    switch (input_ch)
+    switch (audio_input_source)
     {
-    case INPUT_CH1:
+    case AUDIO_INPUT_SOURCE_CH1:
         codec_ch = AK4619_MIC_GAIN_CH1;
         break;
-    case INPUT_CH2:
+    case AUDIO_INPUT_SOURCE_CH2:
         codec_ch = AK4619_MIC_GAIN_CH2;
         break;
     default:
@@ -115,30 +122,35 @@ static void apply_mic_gain_amp_setting(uint8_t input_ch, uint8_t input_type)
     AUDIO_Mic_Gain_AMP_Setting_Channel(codec_ch, gain_db);
 }
 
-void ui_routing_apply_input_type(uint8_t input_ch, uint8_t input_type)
+void ui_routing_apply_input_type(AudioInputSource_t audio_input_source, uint8_t input_type)
 {
-    const uint8_t new_src = input_src_from_channel_type(input_ch, input_type);
+    const UI_RoutingSource_t new_source =
+        input_src_from_channel_type(audio_input_source, input_type);
 
-    select_input_type(input_ch, input_type);
-    apply_mic_gain_amp_setting(input_ch, input_type);
+    select_input_type(audio_input_source, input_type);
+    apply_mic_gain_amp_setting(audio_input_source, input_type);
 
-    if (input_ch == INPUT_CH1)
+    if (audio_input_source == AUDIO_INPUT_SOURCE_CH1)
     {
         s_routing.current_ch1_input_type = input_type;
     }
-    else if (input_ch == INPUT_CH2)
+    else if (audio_input_source == AUDIO_INPUT_SOURCE_CH2)
     {
         s_routing.current_ch2_input_type = input_type;
     }
 
-    replace_assign_for_input_channel(&s_routing.current_ch_fader_a_assign, input_ch, new_src);
-    replace_assign_for_input_channel(&s_routing.current_ch_fader_b_assign, input_ch, new_src);
-    replace_assign_for_input_channel(&s_routing.current_ch_fader_post_assign, input_ch, new_src);
+    replace_assign_for_input_channel(&s_routing.current_ch_fader_a_assign,
+                                     audio_input_source, new_source);
+    replace_assign_for_input_channel(&s_routing.current_ch_fader_b_assign,
+                                     audio_input_source, new_source);
+    replace_assign_for_input_channel(&s_routing.current_ch_fader_post_assign,
+                                     audio_input_source, new_source);
 }
 
-static bool is_usb_assign(uint8_t assign)
+static bool is_usb_assign(UI_RoutingSource_t routing_source)
 {
-    return (assign == INPUT_SRC_USB12) || (assign == INPUT_SRC_USB34);
+    return (routing_source == UI_ROUTING_SOURCE_USB12) ||
+           (routing_source == UI_ROUTING_SOURCE_USB34);
 }
 
 static bool input_mode_uses_insert(uint8_t mode)
@@ -146,145 +158,151 @@ static bool input_mode_uses_insert(uint8_t mode)
     return (mode == UI_INPUT_MODE_DVS) || (mode == UI_INPUT_MODE_SYNTH);
 }
 
-static void apply_send_source_selection(uint8_t input_ch)
+static void apply_send_source_selection(AudioInputSource_t audio_input_source)
 {
-    if (input_ch == INPUT_CH1)
+    if (audio_input_source == AUDIO_INPUT_SOURCE_CH1)
     {
-        const bool select_insert = input_mode_uses_insert(s_routing.current_ch1_input_mode) || is_usb_assign(s_routing.current_ch_fader_a_assign);
-        select_send_source(INPUT_CH1, select_insert);
+        const bool select_insert =
+            input_mode_uses_insert(s_routing.current_ch1_input_mode) ||
+            is_usb_assign(s_routing.current_ch_fader_a_assign);
+        select_send_source(AUDIO_INPUT_SOURCE_CH1, select_insert);
     }
-    else if (input_ch == INPUT_CH2)
+    else if (audio_input_source == AUDIO_INPUT_SOURCE_CH2)
     {
-        const bool select_insert = input_mode_uses_insert(s_routing.current_ch2_input_mode) || is_usb_assign(s_routing.current_ch_fader_b_assign);
-        select_send_source(INPUT_CH2, select_insert);
+        const bool select_insert =
+            input_mode_uses_insert(s_routing.current_ch2_input_mode) ||
+            is_usb_assign(s_routing.current_ch_fader_b_assign);
+        select_send_source(AUDIO_INPUT_SOURCE_CH2, select_insert);
     }
 }
 
-void ui_routing_apply_ch_fader_assign_a(uint8_t input_ch)
+void ui_routing_apply_ch_fader_assign_a(AudioInputSource_t audio_input_source)
 {
-    select_ch_fader_assign_a_source(input_ch);
-    s_routing.current_ch_fader_a_assign = current_input_src_from_channel(input_ch);
-    apply_send_source_selection(INPUT_CH1);
+    select_ch_fader_assign_a_source(audio_input_source);
+    s_routing.current_ch_fader_a_assign = current_input_src_from_channel(audio_input_source);
+    apply_send_source_selection(AUDIO_INPUT_SOURCE_CH1);
 }
 
-void ui_routing_apply_ch_fader_assign_b(uint8_t input_ch)
+void ui_routing_apply_ch_fader_assign_b(AudioInputSource_t audio_input_source)
 {
-    select_ch_fader_assign_b_source(input_ch);
-    s_routing.current_ch_fader_b_assign = current_input_src_from_channel(input_ch);
-    apply_send_source_selection(INPUT_CH2);
+    select_ch_fader_assign_b_source(audio_input_source);
+    s_routing.current_ch_fader_b_assign = current_input_src_from_channel(audio_input_source);
+    apply_send_source_selection(AUDIO_INPUT_SOURCE_CH2);
 }
 
-void ui_routing_apply_ch_fader_assign_post(uint8_t input_ch)
+void ui_routing_apply_ch_fader_assign_post(AudioInputSource_t audio_input_source)
 {
-    select_ch_fader_assign_post_source(input_ch);
-    s_routing.current_ch_fader_post_assign = current_input_src_from_channel(input_ch);
+    select_ch_fader_assign_post_source(audio_input_source);
+    s_routing.current_ch_fader_post_assign = current_input_src_from_channel(audio_input_source);
 }
 
-void ui_routing_apply_hp_out_source(uint8_t source)
+void ui_routing_apply_hp_out_source(HpSource_t hp_source)
 {
-    if (source > CUE_SEL_MST)
+    if (hp_source > HP_SOURCE_MASTER)
     {
         return;
     }
 
-    select_hp_out_source(source);
-    s_routing.current_hp_out_source = source;
+    select_hp_out_source(hp_source);
+    s_routing.current_hp_out_source = hp_source;
 }
 
-void ui_routing_apply_input_mode(uint8_t input_ch, UI_InputMode_t mode)
+void ui_routing_apply_input_mode(AudioInputSource_t audio_input_source, UI_InputMode_t mode)
 {
     const bool enable_insert = input_mode_uses_insert((uint8_t) mode);
 
-    set_input_insert_enabled(input_ch, enable_insert);
-    if (input_ch == INPUT_CH1)
+    set_input_insert_enabled(audio_input_source, enable_insert);
+    if (audio_input_source == AUDIO_INPUT_SOURCE_CH1)
     {
         s_routing.current_ch1_input_mode = (uint8_t) mode;
     }
-    else if (input_ch == INPUT_CH2)
+    else if (audio_input_source == AUDIO_INPUT_SOURCE_CH2)
     {
         s_routing.current_ch2_input_mode = (uint8_t) mode;
     }
-    apply_send_source_selection(input_ch);
+    apply_send_source_selection(audio_input_source);
 }
 
-uint8_t ui_routing_apply_return_source(uint8_t input_ch)
+static bool routing_source_to_return_audio_input_source(UI_RoutingSource_t routing_source,
+                                                       AudioInputSource_t* audio_input_source)
 {
-    if ((input_ch != INPUT_USB12) && (input_ch != INPUT_USB34))
+    if (audio_input_source == NULL)
     {
-        s_routing.current_return_assign = INPUT_SRC_NONE;
+        return false;
+    }
+
+    switch (routing_source)
+    {
+    case UI_ROUTING_SOURCE_USB12:
+        *audio_input_source = AUDIO_INPUT_SOURCE_USB12;
+        return true;
+    case UI_ROUTING_SOURCE_USB34:
+        *audio_input_source = AUDIO_INPUT_SOURCE_USB34;
+        return true;
+    default:
+        return false;
+    }
+}
+
+UI_RoutingSource_t ui_routing_apply_return_source(UI_RoutingSource_t routing_source)
+{
+    AudioInputSource_t audio_input_source;
+
+    if (!routing_source_to_return_audio_input_source(routing_source, &audio_input_source))
+    {
+        s_routing.current_return_assign = UI_ROUTING_SOURCE_NONE;
         mute_input_from_return();
-        return INPUT_SRC_NONE;
+        return UI_ROUTING_SOURCE_NONE;
     }
 
-    select_return_ch_source(input_ch);
-    s_routing.current_return_assign = current_input_src_from_channel(input_ch);
-    return s_routing.current_return_assign;
+    select_return_ch_source(audio_input_source);
+    s_routing.current_return_assign = routing_source;
+    return routing_source;
 }
 
-bool ui_routing_assign_to_input_ch(uint8_t assign, uint8_t* input_ch)
+bool ui_routing_source_to_audio_input_source(UI_RoutingSource_t routing_source,
+                                             AudioInputSource_t* audio_input_source)
 {
-    if (input_ch == NULL)
+    if (audio_input_source == NULL)
     {
         return false;
     }
 
-    switch (assign)
+    switch (routing_source)
     {
-    case INPUT_SRC_CH1_LN:
-    case INPUT_SRC_CH1_PN:
-        *input_ch = INPUT_CH1;
+    case UI_ROUTING_SOURCE_CH1_LINE:
+    case UI_ROUTING_SOURCE_CH1_PHONO:
+        *audio_input_source = AUDIO_INPUT_SOURCE_CH1;
         return true;
-    case INPUT_SRC_CH2_LN:
-    case INPUT_SRC_CH2_PN:
-        *input_ch = INPUT_CH2;
+    case UI_ROUTING_SOURCE_CH2_LINE:
+    case UI_ROUTING_SOURCE_CH2_PHONO:
+        *audio_input_source = AUDIO_INPUT_SOURCE_CH2;
         return true;
-    case INPUT_SRC_USB12:
-        *input_ch = INPUT_USB12;
+    case UI_ROUTING_SOURCE_USB12:
+        *audio_input_source = AUDIO_INPUT_SOURCE_USB12;
         return true;
-    case INPUT_SRC_USB34:
-        *input_ch = INPUT_USB34;
+    case UI_ROUTING_SOURCE_USB34:
+        *audio_input_source = AUDIO_INPUT_SOURCE_USB34;
         return true;
     default:
         return false;
     }
 }
 
-bool ui_routing_assign_to_return_input_ch(uint8_t assign, uint8_t* input_ch)
-{
-    if (input_ch == NULL)
-    {
-        return false;
-    }
-
-    switch (assign)
-    {
-    case INPUT_SRC_USB12:
-        *input_ch = INPUT_USB12;
-        return true;
-    case INPUT_SRC_USB34:
-        *input_ch = INPUT_USB34;
-        return true;
-    case INPUT_SRC_NONE:
-        *input_ch = INPUT_SRC_NONE;
-        return true;
-    default:
-        return false;
-    }
-}
-
-uint8_t ui_routing_get_ch_fader_assign(uint8_t pair_idx)
+UI_RoutingSource_t ui_routing_get_ch_fader_assign(uint8_t pair_idx)
 {
     return (pair_idx == 0U) ? s_routing.current_ch_fader_a_assign
                             : s_routing.current_ch_fader_b_assign;
 }
 
-uint8_t ui_routing_get_input_mode(uint8_t input_ch)
+UI_InputMode_t ui_routing_get_input_mode(AudioInputSource_t audio_input_source)
 {
-    return (input_ch == INPUT_CH1) ? s_routing.current_ch1_input_mode
-                                   : s_routing.current_ch2_input_mode;
+    return (audio_input_source == AUDIO_INPUT_SOURCE_CH1)
+               ? (UI_InputMode_t) s_routing.current_ch1_input_mode
+               : (UI_InputMode_t) s_routing.current_ch2_input_mode;
 }
 
-uint8_t ui_routing_get_return_assign(void)
+UI_RoutingSource_t ui_routing_get_return_assign(void)
 {
     return s_routing.current_return_assign;
 }
@@ -299,15 +317,15 @@ static char* get_current_input_typeA_str(void)
 {
     switch (s_routing.current_ch_fader_a_assign)
     {
-    case INPUT_SRC_CH1_LN:
-    case INPUT_SRC_CH2_LN:
+    case UI_ROUTING_SOURCE_CH1_LINE:
+    case UI_ROUTING_SOURCE_CH2_LINE:
         return "[line]";
-    case INPUT_SRC_CH1_PN:
-    case INPUT_SRC_CH2_PN:
+    case UI_ROUTING_SOURCE_CH1_PHONO:
+    case UI_ROUTING_SOURCE_CH2_PHONO:
         return "[phono]";
-    case INPUT_SRC_USB12:
+    case UI_ROUTING_SOURCE_USB12:
         return "[1/2]";
-    case INPUT_SRC_USB34:
+    case UI_ROUTING_SOURCE_USB34:
         return "[3/4]";
     default:
         return "[]";
@@ -318,15 +336,15 @@ static char* get_current_input_typeB_str(void)
 {
     switch (s_routing.current_ch_fader_b_assign)
     {
-    case INPUT_SRC_CH1_LN:
-    case INPUT_SRC_CH2_LN:
+    case UI_ROUTING_SOURCE_CH1_LINE:
+    case UI_ROUTING_SOURCE_CH2_LINE:
         return " [line]";
-    case INPUT_SRC_CH1_PN:
-    case INPUT_SRC_CH2_PN:
+    case UI_ROUTING_SOURCE_CH1_PHONO:
+    case UI_ROUTING_SOURCE_CH2_PHONO:
         return "[phono]";
-    case INPUT_SRC_USB12:
+    case UI_ROUTING_SOURCE_USB12:
         return "  [1/2]";
-    case INPUT_SRC_USB34:
+    case UI_ROUTING_SOURCE_USB34:
         return "  [3/4]";
     default:
         return "     []";
@@ -337,14 +355,14 @@ static char* get_current_input_srcA_str(void)
 {
     switch (s_routing.current_ch_fader_a_assign)
     {
-    case INPUT_SRC_CH1_LN:
-    case INPUT_SRC_CH1_PN:
+    case UI_ROUTING_SOURCE_CH1_LINE:
+    case UI_ROUTING_SOURCE_CH1_PHONO:
         return "A:Ch1";
-    case INPUT_SRC_CH2_LN:
-    case INPUT_SRC_CH2_PN:
+    case UI_ROUTING_SOURCE_CH2_LINE:
+    case UI_ROUTING_SOURCE_CH2_PHONO:
         return "A:Ch2";
-    case INPUT_SRC_USB12:
-    case INPUT_SRC_USB34:
+    case UI_ROUTING_SOURCE_USB12:
+    case UI_ROUTING_SOURCE_USB34:
         return "A:USB";
     default:
         return "A:";
@@ -355,14 +373,14 @@ static char* get_current_input_srcB_str(void)
 {
     switch (s_routing.current_ch_fader_b_assign)
     {
-    case INPUT_SRC_CH1_LN:
-    case INPUT_SRC_CH1_PN:
+    case UI_ROUTING_SOURCE_CH1_LINE:
+    case UI_ROUTING_SOURCE_CH1_PHONO:
         return "B:Ch1";
-    case INPUT_SRC_CH2_LN:
-    case INPUT_SRC_CH2_PN:
+    case UI_ROUTING_SOURCE_CH2_LINE:
+    case UI_ROUTING_SOURCE_CH2_PHONO:
         return "B:Ch2";
-    case INPUT_SRC_USB12:
-    case INPUT_SRC_USB34:
+    case UI_ROUTING_SOURCE_USB12:
+    case UI_ROUTING_SOURCE_USB34:
         return "B:USB";
     default:
         return "B:";
@@ -373,17 +391,17 @@ static char* get_current_input_srcP_str(void)
 {
     switch (s_routing.current_ch_fader_post_assign)
     {
-    case INPUT_SRC_CH1_LN:
+    case UI_ROUTING_SOURCE_CH1_LINE:
         return "THRU:Ch1[line]";
-    case INPUT_SRC_CH1_PN:
+    case UI_ROUTING_SOURCE_CH1_PHONO:
         return "THRU:Ch1[phono]";
-    case INPUT_SRC_CH2_LN:
+    case UI_ROUTING_SOURCE_CH2_LINE:
         return "THRU:Ch2[line]";
-    case INPUT_SRC_CH2_PN:
+    case UI_ROUTING_SOURCE_CH2_PHONO:
         return "THRU:Ch2[phono]";
-    case INPUT_SRC_USB12:
+    case UI_ROUTING_SOURCE_USB12:
         return "THRU:USB[1/2]";
-    case INPUT_SRC_USB34:
+    case UI_ROUTING_SOURCE_USB34:
         return "THRU:USB[3/4]";
     default:
         return "THRU:";
@@ -394,11 +412,11 @@ static char* get_current_return_src_str(void)
 {
     switch (s_routing.current_return_assign)
     {
-    case INPUT_SRC_USB12:
+    case UI_ROUTING_SOURCE_USB12:
         return "U12";
-    case INPUT_SRC_USB34:
+    case UI_ROUTING_SOURCE_USB34:
         return "U34";
-    case INPUT_SRC_NONE:
+    case UI_ROUTING_SOURCE_NONE:
         return "OFF";
     default:
         return "U--";
@@ -409,13 +427,13 @@ static char* get_current_hp_out_src_str(void)
 {
     switch (s_routing.current_hp_out_source)
     {
-    case CUE_SEL_CH_FADER_A:
+    case HP_SOURCE_CH_FADER_A:
         return "A";
-    case CUE_SEL_CH_FADER_B:
+    case HP_SOURCE_CH_FADER_B:
         return "B";
-    case CUE_SEL_THRU:
+    case HP_SOURCE_THRU:
         return "T";
-    case CUE_SEL_MST:
+    case HP_SOURCE_MASTER:
         return "M";
     default:
         return "?";
@@ -426,13 +444,13 @@ static uint8_t get_current_input_srcA_channel(void)
 {
     switch (s_routing.current_ch_fader_a_assign)
     {
-    case INPUT_SRC_CH1_LN:
-    case INPUT_SRC_CH1_PN:
-    case INPUT_SRC_USB12:
+    case UI_ROUTING_SOURCE_CH1_LINE:
+    case UI_ROUTING_SOURCE_CH1_PHONO:
+    case UI_ROUTING_SOURCE_USB12:
         return 1U;
-    case INPUT_SRC_CH2_LN:
-    case INPUT_SRC_CH2_PN:
-    case INPUT_SRC_USB34:
+    case UI_ROUTING_SOURCE_CH2_LINE:
+    case UI_ROUTING_SOURCE_CH2_PHONO:
+    case UI_ROUTING_SOURCE_USB34:
         return 2U;
     default:
         return 0U;
@@ -443,13 +461,13 @@ static uint8_t get_current_input_srcB_channel(void)
 {
     switch (s_routing.current_ch_fader_b_assign)
     {
-    case INPUT_SRC_CH1_LN:
-    case INPUT_SRC_CH1_PN:
-    case INPUT_SRC_USB12:
+    case UI_ROUTING_SOURCE_CH1_LINE:
+    case UI_ROUTING_SOURCE_CH1_PHONO:
+    case UI_ROUTING_SOURCE_USB12:
         return 1U;
-    case INPUT_SRC_CH2_LN:
-    case INPUT_SRC_CH2_PN:
-    case INPUT_SRC_USB34:
+    case UI_ROUTING_SOURCE_CH2_LINE:
+    case UI_ROUTING_SOURCE_CH2_PHONO:
+    case UI_ROUTING_SOURCE_USB34:
         return 2U;
     default:
         return 0U;
@@ -478,7 +496,7 @@ UI_InputMode_t get_current_ch2_input_mode(void)
 
 static bool get_current_return_enabled(void)
 {
-    return s_routing.current_return_assign != INPUT_SRC_NONE;
+    return s_routing.current_return_assign != UI_ROUTING_SOURCE_NONE;
 }
 
 bool ui_routing_validate_persist(const UI_ControlPersistState_t* state)
@@ -488,24 +506,32 @@ bool ui_routing_validate_persist(const UI_ControlPersistState_t* state)
         return false;
     }
 
-    uint8_t input_ch_a;
-    uint8_t input_ch_b;
-    uint8_t input_ch_post;
-    uint8_t input_ch_return;
+    AudioInputSource_t audio_input_source_a;
+    AudioInputSource_t audio_input_source_b;
+    AudioInputSource_t audio_input_source_post;
 
     if ((state->current_ch1_input_type > INPUT_TYPE_PHONO) ||
         (state->current_ch2_input_type > INPUT_TYPE_PHONO) ||
-        (state->current_hp_out_source > CUE_SEL_MST) ||
+        (state->current_hp_out_source > HP_SOURCE_MASTER) ||
         (state->current_ch1_input_mode > UI_INPUT_MODE_SYNTH) ||
         (state->current_ch2_input_mode > UI_INPUT_MODE_SYNTH))
     {
         return false;
     }
 
-    if (!ui_routing_assign_to_input_ch(state->current_ch_fader_a_assign, &input_ch_a) ||
-        !ui_routing_assign_to_input_ch(state->current_ch_fader_b_assign, &input_ch_b) ||
-        !ui_routing_assign_to_input_ch(state->current_ch_fader_post_assign, &input_ch_post) ||
-        !ui_routing_assign_to_return_input_ch(state->current_return_assign, &input_ch_return))
+    // ReturnはUI_ROUTING_SOURCE_USB12/USB34/NONEのいずれかだけを許可する。
+    if ((state->current_return_assign < UI_ROUTING_SOURCE_USB12) ||
+        (state->current_return_assign > UI_ROUTING_SOURCE_NONE))
+    {
+        return false;
+    }
+
+    if (!ui_routing_source_to_audio_input_source(
+            (UI_RoutingSource_t) state->current_ch_fader_a_assign, &audio_input_source_a) ||
+        !ui_routing_source_to_audio_input_source(
+            (UI_RoutingSource_t) state->current_ch_fader_b_assign, &audio_input_source_b) ||
+        !ui_routing_source_to_audio_input_source(
+            (UI_RoutingSource_t) state->current_ch_fader_post_assign, &audio_input_source_post))
     {
         return false;
     }
@@ -535,11 +561,11 @@ void ui_routing_reset(void)
 {
     s_routing.current_ch1_input_type = INPUT_TYPE_LINE;
     s_routing.current_ch2_input_type = INPUT_TYPE_LINE;
-    s_routing.current_ch_fader_a_assign     = INPUT_SRC_CH1_LN;
-    s_routing.current_ch_fader_b_assign     = INPUT_SRC_CH2_LN;
-    s_routing.current_ch_fader_post_assign  = INPUT_SRC_USB12;
-    s_routing.current_return_assign  = INPUT_SRC_USB34;
-    s_routing.current_hp_out_source  = CUE_SEL_MST;
+    s_routing.current_ch_fader_a_assign     = UI_ROUTING_SOURCE_CH1_LINE;
+    s_routing.current_ch_fader_b_assign     = UI_ROUTING_SOURCE_CH2_LINE;
+    s_routing.current_ch_fader_post_assign  = UI_ROUTING_SOURCE_USB12;
+    s_routing.current_return_assign  = UI_ROUTING_SOURCE_USB34;
+    s_routing.current_hp_out_source  = HP_SOURCE_MASTER;
     s_routing.current_ch1_input_mode = UI_INPUT_MODE_DISABLED;
     s_routing.current_ch2_input_mode = UI_INPUT_MODE_DISABLED;
 }
