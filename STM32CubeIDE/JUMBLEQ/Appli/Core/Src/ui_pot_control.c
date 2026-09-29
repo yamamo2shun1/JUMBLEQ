@@ -149,19 +149,19 @@ static void emit_mag_output(uint8_t cc_number, uint8_t note_number, uint8_t valu
     }
 }
 
-static void apply_dry_wet_value(uint16_t value, uint8_t return_assign)
+static void apply_dry_wet_value(uint16_t value, UI_RoutingSource_t return_source)
 {
-    switch (return_assign)
+    switch (return_source)
     {
-    case INPUT_SRC_USB12:
+    case UI_ROUTING_SOURCE_USB12:
         control_dryA_out_gain(value);
         control_dryB_out_gain(0U);
         break;
-    case INPUT_SRC_USB34:
+    case UI_ROUTING_SOURCE_USB34:
         control_dryA_out_gain(0U);
         control_dryB_out_gain(value);
         break;
-    case INPUT_SRC_NONE:
+    case UI_ROUTING_SOURCE_NONE:
     default:
         // A zero Dry/Wet value maps to unity dry and zero wet.
         control_dryA_out_gain(0U);
@@ -172,13 +172,13 @@ static void apply_dry_wet_value(uint16_t value, uint8_t return_assign)
     control_wet_out_gain(value);
 }
 
-void ui_pot_control_apply_return_outputs(uint8_t return_assign)
+void ui_pot_control_apply_return_outputs(UI_RoutingSource_t return_source)
 {
-    if (return_assign != INPUT_SRC_NONE)
+    if (return_source != UI_ROUTING_SOURCE_NONE)
     {
         control_input_from_return_gain(s_pot.pot_val[POT_CH_RETURN_IN]);
     }
-    apply_dry_wet_value(s_pot.pot_val[POT_CH_DRY_WET], return_assign);
+    apply_dry_wet_value(s_pot.pot_val[POT_CH_DRY_WET], return_source);
 }
 
 static void set_pot_mux_channel(uint8_t channel)
@@ -213,7 +213,7 @@ static void set_pot_mux_channel(uint8_t channel)
     HAL_GPIO_WritePin(S3_GPIO_Port, S3_Pin, mux_bits[channel][3]);
 }
 
-static void apply_pot_value(uint8_t channel, uint16_t value, bool synth_mode_active, bool output_as_note, uint8_t return_assign)
+static void apply_pot_value(uint8_t channel, uint16_t value, bool synth_mode_active, bool output_as_note, UI_RoutingSource_t return_source)
 {
     switch (channel)
     {
@@ -265,10 +265,10 @@ static void apply_pot_value(uint8_t channel, uint16_t value, bool synth_mode_act
         control_ch2_out_gain(value);
         break;
     case POT_CH_DRY_WET:
-        apply_dry_wet_value(value, return_assign);
+        apply_dry_wet_value(value, return_source);
         break;
     case POT_CH_RETURN_IN:
-        if (return_assign == INPUT_SRC_NONE)
+        if (return_source == UI_ROUTING_SOURCE_NONE)
         {
             mute_input_from_return();
         }
@@ -422,7 +422,7 @@ static bool should_apply_pot_hysteresis(uint8_t channel, uint16_t raw_avg, uint1
 void ui_pot_control_process(const uint32_t adc_samples[ADC_NUM],
                             bool synth_mode_active,
                             bool output_as_note,
-                            uint8_t return_assign)
+                            UI_RoutingSource_t return_source)
 {
     if (s_pot.pot_ch_counter < POT_CH_SEL_WAIT)
     {
@@ -480,7 +480,7 @@ void ui_pot_control_process(const uint32_t adc_samples[ADC_NUM],
                 if (should_apply_pot_hysteresis(ch, (uint16_t) (raw_sum / sample_count), &stabilized_value))
                 {
                     s_pot.pot_val[ch] = stabilized_value;
-                    apply_pot_value(ch, stabilized_value, synth_mode_active, output_as_note, return_assign);
+                    apply_pot_value(ch, stabilized_value, synth_mode_active, output_as_note, return_source);
                 }
             }
         }
@@ -528,7 +528,7 @@ void ui_pot_control_process(const uint32_t adc_samples[ADC_NUM],
                     if (diff >= 1U)
                     {
                         s_pot.pot_mag_state[idx] = filtered;
-                        apply_pot_value(ch, filtered, synth_mode_active, output_as_note, return_assign);
+                        apply_pot_value(ch, filtered, synth_mode_active, output_as_note, return_source);
                     }
                 }
             }

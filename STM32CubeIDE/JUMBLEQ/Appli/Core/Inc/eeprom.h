@@ -20,6 +20,9 @@ extern "C" {
 
 typedef struct
 {
+    // 保存値の値ドメイン: current_*_input_typeはINPUT_TYPE_*、current_*_assignと
+    // current_return_assignはUI_ROUTING_SOURCE_*、current_hp_out_sourceは
+    // HP_SOURCE_*、current_*_input_modeはUI_INPUT_MODE_*。
     uint8_t current_ch1_input_type;
     uint8_t current_ch2_input_type;
     uint8_t current_ch_fader_a_assign;

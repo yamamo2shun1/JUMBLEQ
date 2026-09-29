@@ -128,11 +128,11 @@ void EEPROM_ConfigSetDefaults(EEPROM_DeviceConfig_t* cfg)
     memset(cfg, 0, sizeof(*cfg));
     cfg->current_ch1_input_type = 0U; /* INPUT_TYPE_LINE */
     cfg->current_ch2_input_type = 0U; /* INPUT_TYPE_LINE */
-    cfg->current_ch_fader_a_assign     = 0U; /* INPUT_SRC_CH1_LN */
-    cfg->current_ch_fader_b_assign     = 2U; /* INPUT_SRC_CH2_LN */
-    cfg->current_ch_fader_post_assign  = 4U; /* INPUT_SRC_USB12 */
-    cfg->current_return_assign  = 5U; /* INPUT_SRC_USB34 */
-    cfg->current_hp_out_source  = CUE_SEL_MST;
+    cfg->current_ch_fader_a_assign     = 0U; /* UI_ROUTING_SOURCE_CH1_LINE */
+    cfg->current_ch_fader_b_assign     = 2U; /* UI_ROUTING_SOURCE_CH2_LINE */
+    cfg->current_ch_fader_post_assign  = 4U; /* UI_ROUTING_SOURCE_USB12 */
+    cfg->current_return_assign  = 5U; /* UI_ROUTING_SOURCE_USB34 */
+    cfg->current_hp_out_source  = HP_SOURCE_MASTER;
     cfg->current_ch1_input_mode = UI_INPUT_MODE_DISABLED;
     cfg->current_ch2_input_mode = UI_INPUT_MODE_DISABLED;
     cfg->ch_fader_dvs_delay_ms  = UI_CH_FADER_DVS_DELAY_DEFAULT_MS;

@@ -12,6 +12,7 @@
 #include <stdint.h>
 
 #include "ui_adc_control_internal.h"
+#include "ui_routing_control_internal.h"
 
 // start_adc()のMUX初期化直後に、初期スキャンchannelを設定する。
 void ui_pot_control_set_initial_channel(void);
@@ -20,10 +21,10 @@ void ui_pot_control_set_initial_channel(void);
 void ui_pot_control_process(const uint32_t adc_samples[ADC_NUM],
                             bool synth_mode_active,
                             bool output_as_note,
-                            uint8_t return_assign);
+                            UI_RoutingSource_t return_source);
 
 // Return source変更後のReturn gainとDry/Wet再適用。
-void ui_pot_control_apply_return_outputs(uint8_t return_assign);
+void ui_pot_control_apply_return_outputs(UI_RoutingSource_t return_source);
 
 // 起動時の初期状態へ戻す。
 void ui_pot_control_reset(void);

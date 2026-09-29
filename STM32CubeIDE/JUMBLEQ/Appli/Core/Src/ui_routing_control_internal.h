@@ -11,24 +11,26 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "adau1466.h"
 #include "ui_control.h"
 #include "ui_persist_internal.h"
 
-enum
+// UI/EEPROMで使う入力source ID。値は保存互換のため変更しない。
+typedef enum
 {
-    INPUT_SRC_CH1_LN = 0,
-    INPUT_SRC_CH1_PN,
-    INPUT_SRC_CH2_LN,
-    INPUT_SRC_CH2_PN,
-    INPUT_SRC_USB12,
-    INPUT_SRC_USB34,
-    INPUT_SRC_NONE,
-};
+    UI_ROUTING_SOURCE_CH1_LINE = 0,
+    UI_ROUTING_SOURCE_CH1_PHONO = 1,
+    UI_ROUTING_SOURCE_CH2_LINE = 2,
+    UI_ROUTING_SOURCE_CH2_PHONO = 3,
+    UI_ROUTING_SOURCE_USB12 = 4,
+    UI_ROUTING_SOURCE_USB34 = 5,
+    UI_ROUTING_SOURCE_NONE = 6,
+} UI_RoutingSource_t;
 
 // read-only view for pot/ch_fader.
-uint8_t ui_routing_get_ch_fader_assign(uint8_t pair_idx);  // 0:A, 1:B
-uint8_t ui_routing_get_input_mode(uint8_t input_ch);
-uint8_t ui_routing_get_return_assign(void);
+UI_RoutingSource_t ui_routing_get_ch_fader_assign(uint8_t pair_idx);  // 0:A, 1:B
+UI_InputMode_t ui_routing_get_input_mode(AudioInputSource_t audio_input_source);
+UI_RoutingSource_t ui_routing_get_return_assign(void);
 bool ui_routing_is_synth_mode_active(void);
 
 // Audio Task向けInput Mode getter（定義はui_routing_control.c）。
@@ -39,18 +41,18 @@ UI_InputMode_t get_current_ch2_input_mode(void);
 bool ui_routing_validate_persist(const UI_ControlPersistState_t* state);
 void ui_routing_capture_persist(UI_ControlPersistState_t* state);
 
-// assign値からDSP入力channelへの変換（validate成功後にfacadeが使用）。
-bool ui_routing_assign_to_input_ch(uint8_t assign, uint8_t* input_ch);
-bool ui_routing_assign_to_return_input_ch(uint8_t assign, uint8_t* input_ch);
+// UI_ROUTING_SOURCE値からDSP入力sourceへの変換（validate成功後にfacadeが使用）。
+bool ui_routing_source_to_audio_input_source(UI_RoutingSource_t routing_source,
+                                             AudioInputSource_t* audio_input_source);
 
 // facadeが既存順序で呼ぶ適用API。
-void ui_routing_apply_input_type(uint8_t input_ch, uint8_t input_type);
-void ui_routing_apply_ch_fader_assign_a(uint8_t input_ch);
-void ui_routing_apply_ch_fader_assign_b(uint8_t input_ch);
-void ui_routing_apply_ch_fader_assign_post(uint8_t input_ch);
-uint8_t ui_routing_apply_return_source(uint8_t input_ch);  // 適用後のreturn assignを返す
-void ui_routing_apply_hp_out_source(uint8_t source);
-void ui_routing_apply_input_mode(uint8_t input_ch, UI_InputMode_t mode);
+void ui_routing_apply_input_type(AudioInputSource_t audio_input_source, uint8_t input_type);
+void ui_routing_apply_ch_fader_assign_a(AudioInputSource_t audio_input_source);
+void ui_routing_apply_ch_fader_assign_b(AudioInputSource_t audio_input_source);
+void ui_routing_apply_ch_fader_assign_post(AudioInputSource_t audio_input_source);
+UI_RoutingSource_t ui_routing_apply_return_source(UI_RoutingSource_t routing_source);  // 適用後のreturn sourceを返す
+void ui_routing_apply_hp_out_source(HpSource_t hp_source);
+void ui_routing_apply_input_mode(AudioInputSource_t audio_input_source, UI_InputMode_t mode);
 
 void ui_routing_reset(void);
 
