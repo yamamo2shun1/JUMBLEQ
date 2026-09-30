@@ -39,8 +39,8 @@ bool ui_ch_fader_set_curve_width_from_cc(uint8_t pair_idx, uint8_t cc_value);
 void ui_ch_fader_set_reverse(uint8_t pair_idx, bool enabled);
 void ui_ch_fader_mark_curve_dirty(void);
 
-bool ui_ch_fader_validate_persist(const UI_ControlPersistState_t* state);
-void ui_ch_fader_capture_persist(UI_ControlPersistState_t* state);
+bool ui_ch_fader_validate_persist(const ui_persist_state_t* state);
+void ui_ch_fader_capture_persist(ui_persist_state_t* state);
 
 void ui_ch_fader_reset(void);
 
@@ -52,8 +52,8 @@ typedef struct
     uint8_t dvs_delay_ms;
     bool reverse_a;
     bool reverse_b;
-} UI_ChFaderDisplayState_t;
+} ui_ch_fader_display_state_t;
 
-void ui_ch_fader_capture_display_state(UI_ChFaderDisplayState_t* state);
+void ui_ch_fader_capture_display_state(ui_ch_fader_display_state_t* state);
 
 #endif /* UI_CH_FADER_INTERNAL_H_ */

@@ -89,7 +89,7 @@ typedef struct
     uint32_t capacity_words;
     volatile uint32_t write_index_words;
     volatile uint32_t read_index_words;
-} AudioRingBuffer_t;
+} audio_transport_ring_buffer_t;
 
 _Static_assert((AUDIO_RING_CAPACITY_WORDS & (AUDIO_RING_CAPACITY_WORDS - 1U)) == 0U,
                "Audio ring buffer size must be a power of two");
@@ -125,21 +125,21 @@ int32_t s_tx_ring_storage[AUDIO_RING_CAPACITY_WORDS] = {0};
 static __attribute__((section("noncacheable_buffer"), aligned(32)))
 int32_t s_rx_ring_storage[AUDIO_RING_CAPACITY_WORDS] = {0};
 
-static AudioRingBuffer_t s_tx_ring = {
+static audio_transport_ring_buffer_t s_tx_ring = {
     .data           = s_tx_ring_storage,
     .capacity_words = AUDIO_RING_CAPACITY_WORDS,
 };
-static AudioRingBuffer_t s_rx_ring = {
+static audio_transport_ring_buffer_t s_rx_ring = {
     .data           = s_rx_ring_storage,
     .capacity_words = AUDIO_RING_CAPACITY_WORDS,
 };
 
-static inline int32_t audio_ring_used_words(const AudioRingBuffer_t* ring)
+static inline int32_t audio_ring_used_words(const audio_transport_ring_buffer_t* ring)
 {
     return (int32_t) (ring->write_index_words - ring->read_index_words);
 }
 
-static inline uint32_t audio_ring_offset(const AudioRingBuffer_t* ring,
+static inline uint32_t audio_ring_offset(const audio_transport_ring_buffer_t* ring,
                                          uint32_t absolute_word_index)
 {
     return absolute_word_index & (ring->capacity_words - 1U);
@@ -147,7 +147,7 @@ static inline uint32_t audio_ring_offset(const AudioRingBuffer_t* ring,
 
 // リング折り返しを考慮して1 frame（4 word）を読み出す。
 // absolute_word_indexはframe境界（4の倍数）を指すこと。
-static inline void audio_ring_load_frame(const AudioRingBuffer_t* ring,
+static inline void audio_ring_load_frame(const audio_transport_ring_buffer_t* ring,
                                          uint32_t absolute_word_index,
                                          int32_t* frame)
 {
@@ -157,19 +157,19 @@ static inline void audio_ring_load_frame(const AudioRingBuffer_t* ring,
     }
 }
 
-static inline void audio_ring_discard_all(AudioRingBuffer_t* ring)
+static inline void audio_ring_discard_all(audio_transport_ring_buffer_t* ring)
 {
     ring->read_index_words = ring->write_index_words;
 }
 
-static inline void audio_ring_reset_indices(AudioRingBuffer_t* ring,
+static inline void audio_ring_reset_indices(audio_transport_ring_buffer_t* ring,
                                             uint32_t prefill_words)
 {
     ring->read_index_words  = 0U;
     ring->write_index_words = prefill_words;
 }
 
-static void audio_ring_clear_storage(AudioRingBuffer_t* ring)
+static void audio_ring_clear_storage(audio_transport_ring_buffer_t* ring)
 {
     memset(ring->data, 0, ring->capacity_words * sizeof(ring->data[0]));
 }
@@ -187,7 +187,7 @@ typedef struct
     // 復旧・レート変更で経路を再構築した世代。古い世代の遅延イベントを
     // 通常搬送へ混入させないために使用する。
     uint32_t latest_generation;
-} DmaAudioEventState_t;
+} audio_transport_dma_event_state_t;
 
 typedef struct
 {
@@ -195,13 +195,13 @@ typedef struct
     uint32_t cycle;
     uint32_t dropped_events;
     uint32_t generation;
-} DmaAudioEventSnapshot_t;
+} audio_transport_dma_event_snapshot_t;
 
-static volatile DmaAudioEventState_t s_tx_dma_event = {0};
-static volatile DmaAudioEventState_t s_rx_dma_event = {0};
+static volatile audio_transport_dma_event_state_t s_tx_dma_event = {0};
+static volatile audio_transport_dma_event_state_t s_rx_dma_event = {0};
 static volatile uint32_t s_dma_event_generation = 0u;
 
-static inline uint32_t dma_audio_event_publish_from_isr(volatile DmaAudioEventState_t* state,
+static inline uint32_t dma_audio_event_publish_from_isr(volatile audio_transport_dma_event_state_t* state,
                                                         uint32_t event)
 {
     const bool pending = state->produced_sequence != state->consumed_sequence;
@@ -216,8 +216,8 @@ static inline uint32_t dma_audio_event_publish_from_isr(volatile DmaAudioEventSt
     return overwritten_event;
 }
 
-static bool dma_audio_event_take_latest(volatile DmaAudioEventState_t* state,
-                                        DmaAudioEventSnapshot_t* snapshot)
+static bool dma_audio_event_take_latest(volatile audio_transport_dma_event_state_t* state,
+                                        audio_transport_dma_event_snapshot_t* snapshot)
 {
     const uint32_t primask = __get_PRIMASK();
     __disable_irq();
@@ -245,7 +245,7 @@ static bool dma_audio_event_take_latest(volatile DmaAudioEventState_t* state,
     return true;
 }
 
-static inline void dma_audio_event_reset_locked(volatile DmaAudioEventState_t* state)
+static inline void dma_audio_event_reset_locked(volatile audio_transport_dma_event_state_t* state)
 {
     state->consumed_sequence = state->produced_sequence;
     state->latest_event      = DMA_AUDIO_EVENT_NONE;
@@ -253,7 +253,7 @@ static inline void dma_audio_event_reset_locked(volatile DmaAudioEventState_t* s
     state->dropped_events    = 0u;
 }
 
-static void dma_audio_event_reset(volatile DmaAudioEventState_t* state)
+static void dma_audio_event_reset(volatile audio_transport_dma_event_state_t* state)
 {
     const uint32_t primask = __get_PRIMASK();
     __disable_irq();
@@ -304,9 +304,9 @@ typedef struct
     uint32_t dma_error_code;
     uint32_t sai_error_code;
     uint32_t sai_status_flags;
-} RecoveryRequestState_t;
+} audio_transport_recovery_request_state_t;
 
-static volatile RecoveryRequestState_t s_recovery_request = {0};
+static volatile audio_transport_recovery_request_state_t s_recovery_request = {0};
 
 // ISR context. 診断・要求の記録とTask通知だけを行い、停止・再初期化はしない。
 static void recovery_request_publish_from_isr(uint32_t cause_bit,
@@ -332,7 +332,7 @@ static void recovery_request_publish_from_isr(uint32_t cause_bit,
     audio_transport_notify_from_isr();
 }
 
-bool audio_transport_take_recovery_request(AudioRecoveryRequest_t* request)
+bool audio_transport_take_recovery_request(audio_transport_recovery_request_t* request)
 {
     const uint32_t primask = __get_PRIMASK();
     __disable_irq();
@@ -420,14 +420,14 @@ static void audio_tx_playback_state_reset(void)
     s_tx_last_correction_tick = 0u;
 }
 
-__attribute__((section("noncacheable_buffer"), aligned(32))) int32_t usb_capture_buf[CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ / 4] = {0};
-__attribute__((section("noncacheable_buffer"), aligned(32))) int32_t usb_playback_buf[CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ / 4] = {0};
+static __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t s_usb_capture_buf[CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ / 4] = {0};
+static __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t s_usb_playback_buf[CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ / 4] = {0};
 
 __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t sai_tx_dma_buf[SAI_TX_DMA_BUF_WORDS] = {0};
 __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t sai_rx_dma_buf[SAI_RX_DMA_BUF_WORDS]  = {0};
 
 // USB OUT FIFOから最後に読み出したbyte数（tud_audio_n_readの結果）
-uint16_t s_usb_out_read_bytes;
+static uint16_t s_usb_out_read_bytes;
 
 static void fill_tx_half(uint32_t dst_half_offset_words);
 static void fill_rx_half(uint32_t src_half_offset_words, bool streaming);
@@ -706,7 +706,7 @@ uint32_t audio_transport_recovery_request_sequence(void)
 // StateをREADYへ戻す（次のHAL_SAI_Initが生成MspInitをスキップできる状態）。
 // MSP資源とSAI設定は維持する（DeInitしない）。
 // 戻り値はSAI/GPDMA停止完了確認の成否。falseの場合は呼出側が再構築を行わない。
-static bool audio_transport_stop_sai_paths(AudioTransportFailure_t* failure)
+static bool audio_transport_stop_sai_paths(audio_transport_failure_t* failure)
 {
     bool stopped = true;
 
@@ -762,7 +762,7 @@ static HAL_StatusTypeDef audio_transport_init_dma_channel(DMA_HandleTypeDef* hdm
     return HAL_DMA_ConfigChannelAttributes(hdma, DMA_CHANNEL_NPRIV);
 }
 
-static bool audio_transport_reinit_dma_channels(AudioTransportFailure_t* failure)
+static bool audio_transport_reinit_dma_channels(audio_transport_failure_t* failure)
 {
     (void) HAL_DMA_DeInit(&handle_GPDMA1_Channel2);
     (void) HAL_DMA_DeInit(&handle_GPDMA1_Channel3);
@@ -795,12 +795,12 @@ void audio_transport_reset_buffers(void)
 {
     for (uint16_t i = 0; i < CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ / 4; i++)
     {
-        usb_capture_buf[i] = 0;
+        s_usb_capture_buf[i] = 0;
     }
 
     for (uint16_t i = 0; i < CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ / 4; i++)
     {
-        usb_playback_buf[i] = 0;
+        s_usb_playback_buf[i] = 0;
     }
 
     audio_ring_clear_storage(&s_tx_ring);
@@ -865,7 +865,7 @@ void audio_transport_start(void)
 // g_audio_tx_diagnosticsは原因調査のため保持する（明示リセットは呼出側で行う）。
 // 戻り値はSAI/GPDMA停止完了確認の成否。falseの場合は転送停止を確認できていないため、
 // 参照バッファの消去・再利用を行わない。failureへ失敗した操作とHAL結果を格納する。
-bool audio_transport_stop_and_clear_paths(AudioTransportFailure_t* failure)
+bool audio_transport_stop_and_clear_paths(audio_transport_failure_t* failure)
 {
     if (!audio_transport_stop_sai_paths(failure))
     {
@@ -895,15 +895,15 @@ bool audio_transport_stop_and_clear_paths(AudioTransportFailure_t* failure)
     audio_ring_clear_storage(&s_rx_ring);
     memset(sai_tx_dma_buf, 0, sizeof(sai_tx_dma_buf));
     memset(sai_rx_dma_buf, 0, sizeof(sai_rx_dma_buf));
-    memset(usb_playback_buf, 0, sizeof(usb_playback_buf));
-    memset(usb_capture_buf, 0, sizeof(usb_capture_buf));
+    memset(s_usb_playback_buf, 0, sizeof(s_usb_playback_buf));
+    memset(s_usb_capture_buf, 0, sizeof(s_usb_capture_buf));
     __DSB();
 
     return true;
 }
 
 bool audio_transport_reset_for_sample_rate(uint32_t sample_rate_hz,
-                                           AudioTransportFailure_t* failure)
+                                           audio_transport_failure_t* failure)
 {
     if (!audio_transport_stop_and_clear_paths(failure))
     {
@@ -930,7 +930,7 @@ bool audio_transport_reset_for_sample_rate(uint32_t sample_rate_hz,
 // DMA channel再構築とTX開始。失敗時は両経路を停止してfalse。
 // READY状態からのHAL_SAI_Init（MspInitをスキップ）によりMSP資源を維持したまま
 // SAI設定とErrorCodeを再初期化し、DMAリンクを再実行して再始動する。
-bool audio_transport_rebuild_and_start_tx(AudioTransportFailure_t* failure)
+bool audio_transport_rebuild_and_start_tx(audio_transport_failure_t* failure)
 {
     /* Re-init DMA channels (linked-list mode) */
     if (!audio_transport_reinit_dma_channels(failure))
@@ -979,7 +979,7 @@ bool audio_transport_rebuild_and_start_tx(AudioTransportFailure_t* failure)
 }
 
 // TX同期待ち後のRX開始。失敗時は両経路を停止（MSP維持）してfalse。
-bool audio_transport_start_rx_after_tx_sync(AudioTransportFailure_t* failure)
+bool audio_transport_start_rx_after_tx_sync(audio_transport_failure_t* failure)
 {
     /* Configure and link DMA for SAI1 RX */
     HAL_StatusTypeDef rx_status = audio_transport_start_rx_path();
@@ -1019,7 +1019,7 @@ void audio_transport_clear_usb_fifos(void)
     s_usb_out_read_bytes = 0u;
 }
 
-void audio_transport_request_stream(AudioTransportStream_t stream, bool enabled)
+void audio_transport_request_stream(audio_transport_stream_t stream, bool enabled)
 {
     const uint32_t stream_bit = (stream == AUDIO_TRANSPORT_STREAM_OUT) ?
                                     AUDIO_STREAM_OUT_BIT :
@@ -1225,7 +1225,7 @@ static void copy_usb_out_to_tx_ring(void)
 
     for (uint32_t i = 0; i < received_words; i++)
     {
-        s_tx_ring.data[audio_ring_offset(&s_tx_ring, s_tx_ring.write_index_words)] = usb_playback_buf[i];
+        s_tx_ring.data[audio_ring_offset(&s_tx_ring, s_tx_ring.write_index_words)] = s_usb_playback_buf[i];
         s_tx_ring.write_index_words++;
     }
 
@@ -1605,7 +1605,7 @@ static uint32_t audio_dma_half_deadline_cycles(uint32_t half_words, uint32_t sam
 
 static void copy_tx_ring_to_sai_dma(uint32_t sample_rate_hz)
 {
-    DmaAudioEventSnapshot_t event;
+    audio_transport_dma_event_snapshot_t event;
     if (!dma_audio_event_take_latest(&s_tx_dma_event, &event))
     {
         return;
@@ -1734,7 +1734,7 @@ static void fill_rx_half(uint32_t src_half_offset_words, bool streaming)
 
 static void copy_sai_rx_dma_to_rx_ring(uint32_t sample_rate_hz)
 {
-    DmaAudioEventSnapshot_t event;
+    audio_transport_dma_event_snapshot_t event;
     if (!dma_audio_event_take_latest(&s_rx_dma_event, &event))
     {
         return;
@@ -1917,15 +1917,15 @@ static uint16_t audio_out_read_budget_bytes(void)
     }
 
     uint32_t bytes = (uint32_t) budget_words * sizeof(int32_t);
-    if (bytes > sizeof(usb_playback_buf))
+    if (bytes > sizeof(s_usb_playback_buf))
     {
-        bytes = sizeof(usb_playback_buf);
+        bytes = sizeof(s_usb_playback_buf);
     }
     return (uint16_t) bytes;
 }
 
 // レート未確定・失敗期間のUSB OUT残存FIFOを読み捨てる。リングへは積まず、
-// usb_playback_bufは転送用の一時領域としてのみ使用する。Audio Task context only。
+// s_usb_playback_bufは転送用の一時領域としてのみ使用する。Audio Task context only。
 static void audio_transport_discard_usb_out(void)
 {
     s_usb_out_read_bytes = 0u;
@@ -1938,10 +1938,10 @@ static void audio_transport_discard_usb_out(void)
     uint16_t available_bytes = tud_audio_n_available(AUDIO_FUNC_ID);
     while (available_bytes > 0u)
     {
-        const uint16_t chunk_bytes = (available_bytes > (uint16_t) sizeof(usb_playback_buf)) ?
-                                         (uint16_t) sizeof(usb_playback_buf) :
+        const uint16_t chunk_bytes = (available_bytes > (uint16_t) sizeof(s_usb_playback_buf)) ?
+                                         (uint16_t) sizeof(s_usb_playback_buf) :
                                          available_bytes;
-        const uint16_t read_bytes = tud_audio_n_read(AUDIO_FUNC_ID, usb_playback_buf, chunk_bytes);
+        const uint16_t read_bytes = tud_audio_n_read(AUDIO_FUNC_ID, s_usb_playback_buf, chunk_bytes);
         if (read_bytes == 0u)
         {
             break;
@@ -1997,8 +1997,8 @@ static void copy_rx_ring_to_usb_in(uint32_t sample_rate_hz)
     // 24bit in 32bit slot: SAI(2ch) -> USB(4ch) 変換
     const uint32_t usb_bytes = frames * AUDIO_USB_FRAME_CHANNELS * sizeof(int32_t);  // 4ch分
 
-    // 安全: usb_capture_buf が足りない想定なら絶対に書かない
-    if (usb_bytes > sizeof(usb_capture_buf))
+    // 安全: s_usb_capture_buf が足りない想定なら絶対に書かない
+    if (usb_bytes > sizeof(s_usb_capture_buf))
         return;
 
     const bool send_ch1_to_usb = !timecode_synth_is_channel_enabled(0u);
@@ -2011,14 +2011,14 @@ static void copy_rx_ring_to_usb_in(uint32_t sample_rate_hz)
         uint32_t r1_offset_words = audio_ring_offset(&s_rx_ring, frame_start_word_index + 1U);
         uint32_t l2_offset_words = audio_ring_offset(&s_rx_ring, frame_start_word_index + 2U);
         uint32_t r2_offset_words = audio_ring_offset(&s_rx_ring, frame_start_word_index + 3U);
-        usb_capture_buf[f * AUDIO_USB_FRAME_CHANNELS + 0] = send_ch1_to_usb ? s_rx_ring.data[l1_offset_words] : 0;  // L1
-        usb_capture_buf[f * AUDIO_USB_FRAME_CHANNELS + 1] = send_ch1_to_usb ? s_rx_ring.data[r1_offset_words] : 0;  // R1
-        usb_capture_buf[f * AUDIO_USB_FRAME_CHANNELS + 2] = send_ch2_to_usb ? s_rx_ring.data[l2_offset_words] : 0;  // L2
-        usb_capture_buf[f * AUDIO_USB_FRAME_CHANNELS + 3] = send_ch2_to_usb ? s_rx_ring.data[r2_offset_words] : 0;  // R2
+        s_usb_capture_buf[f * AUDIO_USB_FRAME_CHANNELS + 0] = send_ch1_to_usb ? s_rx_ring.data[l1_offset_words] : 0;  // L1
+        s_usb_capture_buf[f * AUDIO_USB_FRAME_CHANNELS + 1] = send_ch1_to_usb ? s_rx_ring.data[r1_offset_words] : 0;  // R1
+        s_usb_capture_buf[f * AUDIO_USB_FRAME_CHANNELS + 2] = send_ch2_to_usb ? s_rx_ring.data[l2_offset_words] : 0;  // L2
+        s_usb_capture_buf[f * AUDIO_USB_FRAME_CHANNELS + 3] = send_ch2_to_usb ? s_rx_ring.data[r2_offset_words] : 0;  // R2
     }
 
     // ISRコンテキストから呼ばれるので通常版を使用
-    uint16_t written_bytes = tud_audio_n_write(AUDIO_FUNC_ID, usb_capture_buf, (uint16_t) usb_bytes);
+    uint16_t written_bytes = tud_audio_n_write(AUDIO_FUNC_ID, s_usb_capture_buf, (uint16_t) usb_bytes);
 
 #if AUDIO_DIAG_LOG
     audio_diagnostics_record_usb_in_write(written_bytes, (uint16_t) usb_bytes);
@@ -2175,14 +2175,14 @@ void audio_transport_service(uint32_t sample_rate_hz)
         uint16_t budget_bytes = audio_out_read_budget_bytes();
         uint16_t available_bytes = tud_audio_n_available(AUDIO_FUNC_ID);
         uint16_t to_read_bytes = (available_bytes < budget_bytes) ? available_bytes : budget_bytes;
-        if (to_read_bytes > sizeof(usb_playback_buf))
+        if (to_read_bytes > sizeof(s_usb_playback_buf))
         {
-            to_read_bytes = (uint16_t) sizeof(usb_playback_buf);
+            to_read_bytes = (uint16_t) sizeof(s_usb_playback_buf);
         }
 
         if (to_read_bytes > 0U)
         {
-            s_usb_out_read_bytes = tud_audio_n_read(AUDIO_FUNC_ID, usb_playback_buf, to_read_bytes);
+            s_usb_out_read_bytes = tud_audio_n_read(AUDIO_FUNC_ID, s_usb_playback_buf, to_read_bytes);
         }
         else
         {

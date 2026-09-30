@@ -19,21 +19,21 @@ typedef enum
     UI_UF2_TRANSITION_CLEARING_DISPLAYS,
     UI_UF2_TRANSITION_CANCELLED,
     UI_UF2_TRANSITION_TIMED_OUT,
-} UI_Uf2TransitionState_t;
+} ui_control_uf2_transition_state_t;
 
 typedef enum
 {
     UI_INPUT_MODE_DISABLED = 0,
     UI_INPUT_MODE_DVS,
     UI_INPUT_MODE_SYNTH,
-} UI_InputMode_t;
+} ui_control_input_mode_t;
 
 // OLED表示用の1フレーム分の状態。値のコピーであり、UI内部状態への
 // pointerやEEPROM用UI_ControlPersistState_tとは兼用しない。
 typedef struct
 {
     bool curve_edit_mode;
-    UI_Uf2TransitionState_t uf2_transition_state;
+    ui_control_uf2_transition_state_t uf2_transition_state;
     uint8_t uf2_seconds_remaining;
 
     uint32_t sample_rate_hz;
@@ -61,13 +61,13 @@ typedef struct
     const char* hp_source_text;
 
     bool input_source_a_mode_visible;
-    UI_InputMode_t input_source_a_mode;
+    ui_control_input_mode_t input_source_a_mode;
     bool input_source_b_mode_visible;
-    UI_InputMode_t input_source_b_mode;
-} UI_DisplaySnapshot_t;
+    ui_control_input_mode_t input_source_b_mode;
+} ui_control_display_snapshot_t;
 
 // OLED Task専用。1回の呼出で一貫した時点の表示状態を取得する。
-bool ui_control_get_display_snapshot(UI_DisplaySnapshot_t* snapshot);
+bool ui_control_get_display_snapshot(ui_control_display_snapshot_t* snapshot);
 void ui_control_notify_uf2_displays_cleared(void);
 float ui_control_evaluate_ch_fader_curve_preview(uint8_t cc_value, float normalized_preview_position);
 

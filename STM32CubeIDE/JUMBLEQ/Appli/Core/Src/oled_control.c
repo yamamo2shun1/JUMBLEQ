@@ -20,9 +20,9 @@
 static void draw_sub_headphones_icon(uint8_t x, uint8_t y);
 static void draw_main_headphones_icon(uint8_t x, uint8_t y);
 static void draw_main_ch_fader_curve_preview(uint8_t x, uint8_t y, uint8_t width, uint8_t height, uint8_t cc_value);
-static void draw_main_uf2_transition(UI_Uf2TransitionState_t state, uint8_t seconds_remaining);
+static void draw_main_uf2_transition(ui_control_uf2_transition_state_t state, uint8_t seconds_remaining);
 
-static void draw_main_uf2_transition(UI_Uf2TransitionState_t state, uint8_t seconds_remaining)
+static void draw_main_uf2_transition(ui_control_uf2_transition_state_t state, uint8_t seconds_remaining)
 {
     char timeout_line[20];
     const char* instruction = "";
@@ -136,7 +136,7 @@ static void update_sub_text_block(char* prev, size_t prev_size, const char* text
     merge_dirty_pages(dirty, dirty_start_page, dirty_end_page, page_start, page_end);
 }
 
-static const char* input_mode_badge(UI_InputMode_t mode)
+static const char* input_mode_badge(ui_control_input_mode_t mode)
 {
     if (mode == UI_INPUT_MODE_DVS)
     {
@@ -149,7 +149,7 @@ static const char* input_mode_badge(UI_InputMode_t mode)
     return "[ ]";
 }
 
-static void update_sub_input_mode_badge(bool show, UI_InputMode_t mode, uint8_t x, uint8_t y, bool* prev_show, UI_InputMode_t* prev_mode, bool* dirty, uint8_t* dirty_start_page, uint8_t* dirty_end_page)
+static void update_sub_input_mode_badge(bool show, ui_control_input_mode_t mode, uint8_t x, uint8_t y, bool* prev_show, ui_control_input_mode_t* prev_mode, bool* dirty, uint8_t* dirty_start_page, uint8_t* dirty_end_page)
 {
     if ((*prev_show == show) && (!show || (*prev_mode == mode)))
     {
@@ -209,12 +209,12 @@ static void update_sub_reverse_indicators(bool reverse_a, bool reverse_b, bool* 
     }
 }
 
-static void update_sub_bottom_status(char* prev_srcP, size_t prev_srcP_size, char* prev_hp_src, size_t prev_hp_src_size, const char* srcP, const char* hp_src, bool* dirty, uint8_t* dirty_start_page, uint8_t* dirty_end_page)
+static void update_sub_bottom_status(char* prev_src_p, size_t prev_src_p_size, char* prev_hp_src, size_t prev_hp_src_size, const char* src_p, const char* hp_src, bool* dirty, uint8_t* dirty_start_page, uint8_t* dirty_end_page)
 {
-    const bool srcP_changed   = (strcmp(prev_srcP, srcP) != 0);
+    const bool src_p_changed   = (strcmp(prev_src_p, src_p) != 0);
     const bool hp_src_changed = (strcmp(prev_hp_src, hp_src) != 0);
 
-    if (!srcP_changed && !hp_src_changed)
+    if (!src_p_changed && !hp_src_changed)
     {
         return;
     }
@@ -222,12 +222,12 @@ static void update_sub_bottom_status(char* prev_srcP, size_t prev_srcP_size, cha
     // Treat the bottom row as one unit so overlapping redraw regions never erase the HP label.
     sub_oled_FillRectangle(0, 50, 127, 59, Black);
     sub_oled_SetCursor(1, 50);
-    sub_oled_WriteString((char*) srcP, Font_7x10, White);
+    sub_oled_WriteString((char*) src_p, Font_7x10, White);
     draw_sub_headphones_icon(103, 50);
     sub_oled_SetCursor(120, 51);
     sub_oled_WriteString((char*) hp_src, Font_7x10, White);
 
-    snprintf(prev_srcP, prev_srcP_size, "%s", srcP);
+    snprintf(prev_src_p, prev_src_p_size, "%s", src_p);
     snprintf(prev_hp_src, prev_hp_src_size, "%s", hp_src);
     merge_dirty_pages(dirty, dirty_start_page, dirty_end_page, 6, 7);
 }
@@ -261,7 +261,7 @@ static uint16_t oled_text_width_px(SSD1306_Font_t const* font, const char* text)
     return width;
 }
 
-static const unsigned char headphones_icon_16x10[] = {
+static const unsigned char s_headphones_icon_16x10[] = {
     0x03, 0xC0, // 00000011 11000000
     0x0E, 0x70, // 00001110 01110000
     0x18, 0x18, // 00011000 00011000
@@ -276,12 +276,12 @@ static const unsigned char headphones_icon_16x10[] = {
 
 static void draw_sub_headphones_icon(uint8_t x, uint8_t y)
 {
-    sub_oled_DrawBitmap(x, y, headphones_icon_16x10, 16, 10, White);
+    sub_oled_DrawBitmap(x, y, s_headphones_icon_16x10, 16, 10, White);
 }
 
 static void draw_main_headphones_icon(uint8_t x, uint8_t y)
 {
-    main_oled_DrawBitmap(x, y, headphones_icon_16x10, 16, 10, White);
+    main_oled_DrawBitmap(x, y, s_headphones_icon_16x10, 16, 10, White);
 }
 static bool wait_main_oled_ready(uint32_t timeout_ms)
 {
@@ -331,7 +331,7 @@ void oled_show_init_status(const char* text)
 
 void oled_update_task(void)
 {
-    UI_DisplaySnapshot_t snapshot;
+    ui_control_display_snapshot_t snapshot;
 
     if (!ui_control_get_display_snapshot(&snapshot))
     {
@@ -339,35 +339,35 @@ void oled_update_task(void)
     }
 
     static bool prev_curve_edit_mode = false;
-    static UI_Uf2TransitionState_t prev_uf2_transition_state = UI_UF2_TRANSITION_IDLE;
+    static ui_control_uf2_transition_state_t prev_uf2_transition_state = UI_UF2_TRANSITION_IDLE;
     static uint8_t prev_uf2_seconds_remaining = 0xFFU;
 
-    char line1_sr[8];
+    char line1_sample_rate[8];
     char line1_ch2[32];
     char line2_ch1[32];
-    char line3_sr[32];
+    char line3_return[32];
     char line3_hp[8];
     char line_edit_mode[20];
     char line_edit_a[20];
     char line_edit_b[20];
-    static char prev_line1_sr[8]        = {0};
+    static char prev_line1_sample_rate[8]        = {0};
     static char prev_line1_ch2[32]      = {0};
     static char prev_line2_ch1[32]      = {0};
-    static char prev_line3_sr[32]       = {0};
+    static char prev_line3_return[32]       = {0};
     static char prev_line3_hp[8]        = {0};
     static char prev_line_edit_mode[20] = {0};
     static char prev_line_edit_a[20]    = {0};
     static char prev_line_edit_b[20]    = {0};
-    static char prev_srcA[32]           = {0};
-    static char prev_srcB[32]           = {0};
-    static char prev_typeA[32]          = {0};
-    static char prev_typeB[32]          = {0};
-    static char prev_srcP[32]           = {0};
+    static char prev_src_a[32]           = {0};
+    static char prev_src_b[32]           = {0};
+    static char prev_type_a[32]          = {0};
+    static char prev_type_b[32]          = {0};
+    static char prev_src_p[32]           = {0};
     static char prev_hp_src[8]          = {0};
-    static bool prev_modeA_show         = false;
-    static UI_InputMode_t prev_modeA    = UI_INPUT_MODE_DISABLED;
-    static bool prev_modeB_show         = false;
-    static UI_InputMode_t prev_modeB    = UI_INPUT_MODE_DISABLED;
+    static bool prev_mode_a_show         = false;
+    static ui_control_input_mode_t prev_mode_a    = UI_INPUT_MODE_DISABLED;
+    static bool prev_mode_b_show         = false;
+    static ui_control_input_mode_t prev_mode_b    = UI_INPUT_MODE_DISABLED;
     static bool prev_reverse_a          = false;
     static bool prev_reverse_b          = false;
     static bool sub_initialized         = false;
@@ -406,24 +406,24 @@ void oled_update_task(void)
     if (prev_uf2_transition_state != UI_UF2_TRANSITION_IDLE)
     {
         main_oled_Fill(Black);
-        memset(prev_line1_sr, 0, sizeof(prev_line1_sr));
+        memset(prev_line1_sample_rate, 0, sizeof(prev_line1_sample_rate));
         memset(prev_line1_ch2, 0, sizeof(prev_line1_ch2));
         memset(prev_line2_ch1, 0, sizeof(prev_line2_ch1));
-        memset(prev_line3_sr, 0, sizeof(prev_line3_sr));
+        memset(prev_line3_return, 0, sizeof(prev_line3_return));
         memset(prev_line3_hp, 0, sizeof(prev_line3_hp));
         memset(prev_line_edit_mode, 0, sizeof(prev_line_edit_mode));
         memset(prev_line_edit_a, 0, sizeof(prev_line_edit_a));
         memset(prev_line_edit_b, 0, sizeof(prev_line_edit_b));
-        memset(prev_srcA, 0, sizeof(prev_srcA));
-        memset(prev_srcB, 0, sizeof(prev_srcB));
-        memset(prev_typeA, 0, sizeof(prev_typeA));
-        memset(prev_typeB, 0, sizeof(prev_typeB));
-        memset(prev_srcP, 0, sizeof(prev_srcP));
+        memset(prev_src_a, 0, sizeof(prev_src_a));
+        memset(prev_src_b, 0, sizeof(prev_src_b));
+        memset(prev_type_a, 0, sizeof(prev_type_a));
+        memset(prev_type_b, 0, sizeof(prev_type_b));
+        memset(prev_src_p, 0, sizeof(prev_src_p));
         memset(prev_hp_src, 0, sizeof(prev_hp_src));
-        prev_modeA_show               = false;
-        prev_modeA                    = UI_INPUT_MODE_DISABLED;
-        prev_modeB_show               = false;
-        prev_modeB                    = UI_INPUT_MODE_DISABLED;
+        prev_mode_a_show               = false;
+        prev_mode_a                    = UI_INPUT_MODE_DISABLED;
+        prev_mode_b_show               = false;
+        prev_mode_b                    = UI_INPUT_MODE_DISABLED;
         prev_reverse_a                = false;
         prev_reverse_b                = false;
         sub_initialized               = false;
@@ -438,10 +438,10 @@ void oled_update_task(void)
     if (snapshot.curve_edit_mode != prev_curve_edit_mode)
     {
         main_oled_Fill(Black);
-        memset(prev_line1_sr, 0, sizeof(prev_line1_sr));
+        memset(prev_line1_sample_rate, 0, sizeof(prev_line1_sample_rate));
         memset(prev_line1_ch2, 0, sizeof(prev_line1_ch2));
         memset(prev_line2_ch1, 0, sizeof(prev_line2_ch1));
-        memset(prev_line3_sr, 0, sizeof(prev_line3_sr));
+        memset(prev_line3_return, 0, sizeof(prev_line3_return));
         memset(prev_line3_hp, 0, sizeof(prev_line3_hp));
         memset(prev_line_edit_mode, 0, sizeof(prev_line_edit_mode));
         memset(prev_line_edit_a, 0, sizeof(prev_line_edit_a));
@@ -457,24 +457,24 @@ void oled_update_task(void)
         bool main_redraw = dirty;
         const uint32_t sample_rate_hz = snapshot.sample_rate_hz;
         const char* return_src = nonnull_str(snapshot.return_source_text);
-        snprintf(line1_sr, sizeof(line1_sr), "%luk", (unsigned long) (sample_rate_hz / 1000U));
+        snprintf(line1_sample_rate, sizeof(line1_sample_rate), "%luk", (unsigned long) (sample_rate_hz / 1000U));
         snprintf(line1_ch2, sizeof(line1_ch2), "1:%3d 2:%3d", snapshot.ch1_output_db, snapshot.ch2_output_db);
         // MAIN OLED shows both Out and In as CH1 and CH2.
         snprintf(line2_ch1, sizeof(line2_ch1), "    IN 1:%3d 2:%3d", snapshot.ch1_input_db, snapshot.ch2_input_db);
         if (snapshot.return_enabled)
         {
-            snprintf(line3_sr, sizeof(line3_sr), "RTN|%-3s:%3d ", return_src, snapshot.return_db);
+            snprintf(line3_return, sizeof(line3_return), "RTN|%-3s:%3d ", return_src, snapshot.return_db);
         }
         else
         {
-            snprintf(line3_sr, sizeof(line3_sr), "RTN|%-3s:--- ", return_src);
+            snprintf(line3_return, sizeof(line3_return), "RTN|%-3s:--- ", return_src);
         }
         snprintf(line3_hp, sizeof(line3_hp), ":%3d", snapshot.hp_output_db);
 
-        if ((strcmp(prev_line1_sr, line1_sr) != 0) ||
+        if ((strcmp(prev_line1_sample_rate, line1_sample_rate) != 0) ||
             (strcmp(prev_line1_ch2, line1_ch2) != 0) ||
             (strcmp(prev_line2_ch1, line2_ch1) != 0) ||
-            (strcmp(prev_line3_sr, line3_sr) != 0) ||
+            (strcmp(prev_line3_return, line3_return) != 0) ||
             (strcmp(prev_line3_hp, line3_hp) != 0))
         {
             main_redraw = true;
@@ -491,11 +491,11 @@ void oled_update_task(void)
 
             main_oled_Fill(Black);
             main_oled_SetCursor(0, 0);
-            main_oled_WriteString(line1_sr, Font_7x10, White);
-            line1_out_x  = (uint8_t) ((int16_t) oled_text_width_px(&Font_7x10, line1_sr)
+            main_oled_WriteString(line1_sample_rate, Font_7x10, White);
+            line1_out_x  = (uint8_t) ((int16_t) oled_text_width_px(&Font_7x10, line1_sample_rate)
                                      + (int16_t) oled_text_width_px(&Font_7x10, " ")
                                      + line1_out_offset);
-            line1_gain_x = (uint8_t) (oled_text_width_px(&Font_7x10, line1_sr) + oled_text_width_px(&Font_7x10, " OUT"));
+            line1_gain_x = (uint8_t) (oled_text_width_px(&Font_7x10, line1_sample_rate) + oled_text_width_px(&Font_7x10, " OUT"));
             main_oled_SetCursor(line1_out_x, 0);
             main_oled_WriteString("OUT", Font_7x10, White);
             main_oled_SetCursor(line1_gain_x, 0);
@@ -503,17 +503,17 @@ void oled_update_task(void)
             main_oled_SetCursor(0, 10);
             main_oled_WriteString(line2_ch1, Font_7x10, White);
             main_oled_SetCursor(0, 22);
-            main_oled_WriteString(line3_sr, Font_7x10, White);
-            hp_icon_x = (uint8_t) ((int16_t) oled_text_width_px(&Font_7x10, line3_sr) + hp_block_offset);
+            main_oled_WriteString(line3_return, Font_7x10, White);
+            hp_icon_x = (uint8_t) ((int16_t) oled_text_width_px(&Font_7x10, line3_return) + hp_block_offset);
             draw_main_headphones_icon(hp_icon_x, 22);
             hp_text_x = (uint8_t) (hp_icon_x + 16U);
             main_oled_SetCursor(hp_text_x, 22);
             main_oled_WriteString(line3_hp, Font_7x10, White);
 
-            snprintf(prev_line1_sr, sizeof(prev_line1_sr), "%s", line1_sr);
+            snprintf(prev_line1_sample_rate, sizeof(prev_line1_sample_rate), "%s", line1_sample_rate);
             snprintf(prev_line1_ch2, sizeof(prev_line1_ch2), "%s", line1_ch2);
             snprintf(prev_line2_ch1, sizeof(prev_line2_ch1), "%s", line2_ch1);
-            snprintf(prev_line3_sr, sizeof(prev_line3_sr), "%s", line3_sr);
+            snprintf(prev_line3_return, sizeof(prev_line3_return), "%s", line3_return);
             snprintf(prev_line3_hp, sizeof(prev_line3_hp), "%s", line3_hp);
 
             dirty            = true;
@@ -575,12 +575,12 @@ void oled_update_task(void)
         main_oled_UpdateScreenPages(dirty_start_page, dirty_end_page);
     }
 
-    const char* srcA  = nonnull_str(snapshot.input_source_a_text);
-    const char* srcB  = nonnull_str(snapshot.input_source_b_text);
-    const char* typeA = nonnull_str(snapshot.input_type_a_text);
-    const char* typeB = nonnull_str(snapshot.input_type_b_text);
-    const char* srcP  = nonnull_str(snapshot.thru_source_text);
-    const char* hpSrc = nonnull_str(snapshot.hp_source_text);
+    const char* src_a  = nonnull_str(snapshot.input_source_a_text);
+    const char* src_b  = nonnull_str(snapshot.input_source_b_text);
+    const char* type_a = nonnull_str(snapshot.input_type_a_text);
+    const char* type_b = nonnull_str(snapshot.input_type_b_text);
+    const char* src_p  = nonnull_str(snapshot.thru_source_text);
+    const char* hp_src = nonnull_str(snapshot.hp_source_text);
 
     bool sub_dirty               = false;
     uint8_t sub_dirty_start_page = 0xFF;
@@ -602,11 +602,11 @@ void oled_update_task(void)
         sub_initialized      = true;
     }
 
-    update_sub_text_block(prev_srcA, sizeof(prev_srcA), srcA, 0, 5, 34, 14, 1, 5, 0, 1, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
-    update_sub_text_block(prev_srcB, sizeof(prev_srcB), srcB, 93, 5, 127, 14, 93, 5, 0, 1, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
-    update_sub_text_block(prev_typeA, sizeof(prev_typeA), typeA, 0, 30, 55, 39, 1, 30, 3, 4, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
-    update_sub_text_block(prev_typeB, sizeof(prev_typeB), typeB, 73, 30, 127, 39, 77, 30, 3, 4, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
-    update_sub_bottom_status(prev_srcP, sizeof(prev_srcP), prev_hp_src, sizeof(prev_hp_src), srcP, hpSrc, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
+    update_sub_text_block(prev_src_a, sizeof(prev_src_a), src_a, 0, 5, 34, 14, 1, 5, 0, 1, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
+    update_sub_text_block(prev_src_b, sizeof(prev_src_b), src_b, 93, 5, 127, 14, 93, 5, 0, 1, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
+    update_sub_text_block(prev_type_a, sizeof(prev_type_a), type_a, 0, 30, 55, 39, 1, 30, 3, 4, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
+    update_sub_text_block(prev_type_b, sizeof(prev_type_b), type_b, 73, 30, 127, 39, 77, 30, 3, 4, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
+    update_sub_bottom_status(prev_src_p, sizeof(prev_src_p), prev_hp_src, sizeof(prev_hp_src), src_p, hp_src, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
     update_sub_reverse_indicators(snapshot.ch_fader_reverse_a,
                                   snapshot.ch_fader_reverse_b,
                                   &prev_reverse_a,
@@ -615,13 +615,13 @@ void oled_update_task(void)
                                   &sub_dirty_start_page,
                                   &sub_dirty_end_page);
 
-    bool srcA_show_mode = snapshot.input_source_a_mode_visible;
-    UI_InputMode_t srcA_mode = snapshot.input_source_a_mode;
-    update_sub_input_mode_badge(srcA_show_mode, srcA_mode, 35, 5, &prev_modeA_show, &prev_modeA, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
+    bool src_a_show_mode = snapshot.input_source_a_mode_visible;
+    ui_control_input_mode_t src_a_mode = snapshot.input_source_a_mode;
+    update_sub_input_mode_badge(src_a_show_mode, src_a_mode, 35, 5, &prev_mode_a_show, &prev_mode_a, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
 
-    bool srcB_show_mode = snapshot.input_source_b_mode_visible;
-    UI_InputMode_t srcB_mode = snapshot.input_source_b_mode;
-    update_sub_input_mode_badge(srcB_show_mode, srcB_mode, 72, 5, &prev_modeB_show, &prev_modeB, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
+    bool src_b_show_mode = snapshot.input_source_b_mode_visible;
+    ui_control_input_mode_t src_b_mode = snapshot.input_source_b_mode;
+    update_sub_input_mode_badge(src_b_show_mode, src_b_mode, 72, 5, &prev_mode_b_show, &prev_mode_b, &sub_dirty, &sub_dirty_start_page, &sub_dirty_end_page);
 
     if (sub_dirty)
     {

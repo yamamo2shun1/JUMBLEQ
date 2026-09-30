@@ -7,7 +7,7 @@
 
 #include "eeprom.h"
 
-static HAL_StatusTypeDef EEPROM_CheckRange(uint16_t mem_addr, uint16_t len)
+static HAL_StatusTypeDef eeprom_check_range(uint16_t mem_addr, uint16_t len)
 {
     uint32_t end_addr = (uint32_t) mem_addr + (uint32_t) len;
 
@@ -64,7 +64,7 @@ HAL_StatusTypeDef EEPROM_Read(I2C_HandleTypeDef* hi2c, uint16_t mem_addr, uint8_
         return HAL_OK;
     }
 
-    if (EEPROM_CheckRange(mem_addr, len) != HAL_OK)
+    if (eeprom_check_range(mem_addr, len) != HAL_OK)
     {
         return HAL_ERROR;
     }
@@ -89,7 +89,7 @@ HAL_StatusTypeDef EEPROM_Write(I2C_HandleTypeDef* hi2c, uint16_t mem_addr, const
         return HAL_OK;
     }
 
-    if (EEPROM_CheckRange(mem_addr, len) != HAL_OK)
+    if (eeprom_check_range(mem_addr, len) != HAL_OK)
     {
         return HAL_ERROR;
     }

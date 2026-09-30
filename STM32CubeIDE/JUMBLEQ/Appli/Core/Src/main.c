@@ -71,7 +71,7 @@ int __io_putchar(uint8_t ch)
     return ITM_SendChar(ch);
 }
 
-static void DWT_Init(void)
+static void dwt_init(void)
 {
     /* Enable DWT cycle counter for timing measurements */
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
@@ -122,7 +122,7 @@ int main(void)
   /* USER CODE END Init */
 
   /* USER CODE BEGIN SysInit */
-    DWT_Init();
+    dwt_init();
 
   /* USER CODE END SysInit */
 

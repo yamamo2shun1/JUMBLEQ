@@ -70,7 +70,7 @@ typedef enum
     UI_MIDI_PROGRAM_CANCEL_UF2_BOOTLOADER = 125,
     UI_MIDI_PROGRAM_REQUEST_EEPROM_DUMP = 126,
     UI_MIDI_PROGRAM_SAVE_EEPROM = 127,
-} UI_MidiProgram_t;
+} ui_control_midi_program_t;
 
 // Runtime DSP parameter update switch for A/B diagnosis.
 // 0: disable ui_control_task() DSP writes (noise root-cause test mode)
@@ -78,9 +78,9 @@ typedef enum
 #define ENABLE_DSP_RUNTIME_CONTROL 1
 
 // persist: UI facadeがsnapshotを集約/検証/適用する。
-void ui_control_get_persist_state(UI_ControlPersistState_t* state);
-bool ui_control_validate_persist_state(const UI_ControlPersistState_t* state);
-bool ui_control_apply_persist_state(const UI_ControlPersistState_t* state);
+void ui_control_get_persist_state(ui_persist_state_t* state);
+bool ui_control_validate_persist_state(const ui_persist_state_t* state);
+bool ui_control_apply_persist_state(const ui_persist_state_t* state);
 
 void ui_control_reset_state(void);
 

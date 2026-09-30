@@ -8,7 +8,7 @@
 #include "main.h"
 #include "ui_midi_control_internal.h"
 
-bool ui_midi_control_read(UiMidiEvent_t* event)
+bool ui_midi_control_read(ui_midi_control_event_t* event)
 {
     if (!tud_midi_available())
     {

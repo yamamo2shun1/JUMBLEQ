@@ -31,11 +31,11 @@
 #define SAVE_BLINK_INTERVAL_MS 100U
 #define SAVE_BLINK_TOGGLE_COUNT 6U
 
-__attribute__((section("noncacheable_buffer"), aligned(32))) uint8_t led_buf[DMA_BUF_SIZE] = {0};
+static __attribute__((section("noncacheable_buffer"), aligned(32))) uint8_t s_led_buf[DMA_BUF_SIZE] = {0};
 
-uint8_t grb[LED_NUMS][RGB] = {0};
+static uint8_t s_led_grb[LED_NUMS][RGB] = {0};
 
-volatile bool is_color_update = false;
+static volatile bool s_is_color_update = false;
 static volatile uint8_t s_save_blink_remaining = 0U;
 static uint32_t s_save_blink_last_ms = 0U;
 
@@ -76,7 +76,7 @@ static const float s_ch_fader_blink_peak_level = 80.0f;
 
 void led_update_color_state(void)
 {
-    is_color_update = true;
+    s_is_color_update = true;
 }
 
 void led_notify_save_success(void)
@@ -89,14 +89,14 @@ void led_reset_buffer(void)
 {
     for (int i = 0; i < DMA_BUF_SIZE; i++)
     {
-        led_buf[i] = 0x00;
+        s_led_buf[i] = 0x00;
     }
 
     for (int k = 0; k < LED_NUMS; k++)
     {
         for (int j = 0; j < RGB; j++)
         {
-            grb[k][j] = 0x00;
+            s_led_grb[k][j] = 0x00;
         }
     }
 }
@@ -109,11 +109,11 @@ void led_tx_blinking_task(void)
     static uint32_t start_ms = 0;
 
     // Blink every interval ms
-    if (HAL_GetTick() - start_ms < get_tx_blink_interval_ms())
+    if (HAL_GetTick() - start_ms < audio_usb_control_get_tx_blink_interval_ms())
     {
         return;
     }
-    start_ms += get_tx_blink_interval_ms();
+    start_ms += audio_usb_control_get_tx_blink_interval_ms();
 
     HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
 }
@@ -123,27 +123,27 @@ void led_rx_blinking_task(void)
     static uint32_t start_ms = 0;
 
     // Blink every interval ms
-    if (HAL_GetTick() - start_ms < get_rx_blink_interval_ms())
+    if (HAL_GetTick() - start_ms < audio_usb_control_get_rx_blink_interval_ms())
     {
         return;
     }
-    start_ms += get_rx_blink_interval_ms();
+    start_ms += audio_usb_control_get_rx_blink_interval_ms();
 
     HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
 }
 
 void led_set_color(uint8_t index, uint8_t red, uint8_t green, uint8_t blue)
 {
-    grb[index][0] = green;
-    grb[index][1] = red;
-    grb[index][2] = blue;
+    s_led_grb[index][0] = green;
+    s_led_grb[index][1] = red;
+    s_led_grb[index][2] = blue;
 }
 
 void led_layer_color(uint8_t index, uint8_t red, uint8_t green, uint8_t blue)
 {
-    grb[index][0] |= green;
-    grb[index][1] |= red;
-    grb[index][2] |= blue;
+    s_led_grb[index][0] |= green;
+    s_led_grb[index][1] |= red;
+    s_led_grb[index][2] |= blue;
 }
 
 void led_renew_buffer(void)
@@ -154,15 +154,15 @@ void led_renew_buffer(void)
         {
             for (int i = 0; i < COL_BITS; i++)
             {
-                const uint8_t val = grb[k][j];
+                const uint8_t val = s_led_grb[k][j];
 
-                led_buf[WL_LED_BIT_LEN * k + COL_BITS * j + i] = ((val >> ((COL_BITS - 1) - i)) & 0x01) ? WL_LED_ONE : WL_LED_ZERO;
+                s_led_buf[WL_LED_BIT_LEN * k + COL_BITS * j + i] = ((val >> ((COL_BITS - 1) - i)) & 0x01) ? WL_LED_ONE : WL_LED_ZERO;
             }
         }
     }
-    led_buf[DMA_BUF_SIZE - 1] = 0x00;
+    s_led_buf[DMA_BUF_SIZE - 1] = 0x00;
 
-    HAL_TIM_PWM_Start_DMA(&htim1, TIM_CHANNEL_3, (uint32_t*) led_buf, DMA_BUF_SIZE);
+    HAL_TIM_PWM_Start_DMA(&htim1, TIM_CHANNEL_3, (uint32_t*) s_led_buf, DMA_BUF_SIZE);
 }
 
 // 読出し成功時はtrueを返す。SPI失敗と無効sampleではdBへ変換せずfalseを返し、
@@ -313,11 +313,11 @@ void led_rgb_task(void)
         }
     }
 
-    if (is_color_update)
+    if (s_is_color_update)
     {
         HAL_GPIO_TogglePin(LED0_GPIO_Port, LED0_Pin);
 
-        is_color_update = false;
+        s_is_color_update = false;
     }
 }
 

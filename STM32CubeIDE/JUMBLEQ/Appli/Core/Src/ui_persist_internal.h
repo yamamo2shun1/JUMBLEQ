@@ -39,7 +39,7 @@ typedef struct
     bool mag_out_as_note;
     float current_ch_fader_curve_width_a;
     float current_ch_fader_curve_width_b;
-} UI_ControlPersistState_t;
+} ui_persist_state_t;
 
 /* Legacy EEPROM representation: Configurator 50% -> MIDI CC64 -> width 0.30771654. */
 #define UI_CH_FADER_CURVE_WIDTH_A_DEFAULT (0.30771654f)

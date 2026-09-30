@@ -18,16 +18,16 @@ extern DMA_QListTypeDef List_HPDMA1_Channel0;
 
 __attribute__((section("noncacheable_buffer"), aligned(32))) uint32_t adc_val[ADC_NUM] = {0};
 
-static volatile bool is_adc_complete  = false;
+static volatile bool s_is_adc_complete  = false;
 
 bool ui_adc_control_is_complete(void)
 {
-    return is_adc_complete;
+    return s_is_adc_complete;
 }
 
 void ui_adc_control_clear_complete(void)
 {
-    is_adc_complete = false;
+    s_is_adc_complete = false;
 }
 
 const uint32_t* ui_adc_control_samples(void)
@@ -42,19 +42,19 @@ void ui_adc_control_reset(void)
         adc_val[i] = 0;
     }
 
-    is_adc_complete = false;
+    s_is_adc_complete = false;
 }
 
 void ui_adc_control_dma_cplt(DMA_HandleTypeDef* hdma)
 {
     (void) hdma;
-    is_adc_complete = true;
+    s_is_adc_complete = true;
     __DSB();
 }
 
 void ui_adc_control_set_complete(bool complete)
 {
-    is_adc_complete = complete;
+    s_is_adc_complete = complete;
     __DMB();
 }
 

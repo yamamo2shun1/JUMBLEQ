@@ -16,7 +16,7 @@ typedef enum
     AUDIO_RATE_STATE_READY = 0,
     AUDIO_RATE_STATE_SWITCHING,
     AUDIO_RATE_STATE_FAILED,
-} AudioRateState_t;
+} audio_control_rate_state_t;
 
 // レート切り替え要求の処理結果。FAILEDでは同じレート要求でも全手順をやり直す。
 typedef enum
@@ -24,7 +24,7 @@ typedef enum
     AUDIO_RATE_SWITCH_NO_CHANGE = 0,
     AUDIO_RATE_SWITCH_SUCCESS,
     AUDIO_RATE_SWITCH_FAILED,
-} AudioRateSwitchResult_t;
+} audio_control_rate_switch_result_t;
 
 // 要求・適用・状態の一貫したsnapshot。USB/UI向けの参照はすべてこれを使う。
 typedef struct
@@ -34,8 +34,8 @@ typedef struct
     uint32_t applied_hz;          // 最後に切り替え全体が成功した値（履歴）
     uint32_t applied_sequence;    // 適用が確定した要求sequence
     bool applied_hz_valid;        // 現在もその設定を信用できるか
-    AudioRateState_t state;
-} AudioRateSnapshot_t;
+    audio_control_rate_state_t state;
+} audio_control_rate_snapshot_t;
 
 // UAC2 clock SET_CUR entry point. The USB control module validates the
 // requested rate against its supported list and hands the request over here.
@@ -44,7 +44,7 @@ typedef struct
 void audio_control_request_sample_rate(uint32_t sample_rate_hz);
 
 // 要求・適用・状態を短い排他でまとめて取得する。
-void audio_control_get_rate_snapshot(AudioRateSnapshot_t* snapshot);
+void audio_control_get_rate_snapshot(audio_control_rate_snapshot_t* snapshot);
 
 // CLK_VALID用。最新要求と適用状態が整合し、全手順が成功した場合だけtrue。
 bool audio_control_clock_valid(void);

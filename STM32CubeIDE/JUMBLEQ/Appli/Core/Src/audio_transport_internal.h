@@ -38,7 +38,7 @@ typedef enum
 {
     AUDIO_TRANSPORT_STREAM_OUT = 0,
     AUDIO_TRANSPORT_STREAM_IN,
-} AudioTransportStream_t;
+} audio_transport_stream_t;
 
 // UAC2 function id shared by the control plane (feedback) and the transport
 // (tud_audio_n_* data path calls).
@@ -56,7 +56,7 @@ void audio_transport_notify_task(void);
 
 // Publishes a UAC2 interface alt setting change. This only records the request
 // (and wakes the Audio Task); the applied stream state is owned by the task.
-void audio_transport_request_stream(AudioTransportStream_t stream, bool enabled);
+void audio_transport_request_stream(audio_transport_stream_t stream, bool enabled);
 
 // Applies pending stream requests. Audio Task context only. Returns true when
 // a request was consumed so the facade can refresh the LED blink intervals.
@@ -72,7 +72,7 @@ void audio_transport_reset_buffers(void);
 // start_sai() のSAI/GPDMA開始シーケンス（TX開始→500ms→LED→RX開始）。
 void audio_transport_start(void);
 
-// 停止・再構築プリミティブの失敗内容は diagnostics 側の AudioTransportFailure_t を使う。
+// 停止・再構築プリミティブの失敗内容は diagnostics 側の audio_transport_failure_t を使う。
 // 呼出側はゼロ初期化して渡し、失敗した操作とHAL結果を診断へ引き継ぐ。
 
 // サンプルレート変更の停止・バッファ消去部。SAI/GPDMA停止を確認できた場合のみ
@@ -80,7 +80,7 @@ void audio_transport_start(void);
 // → __DSB() を行いtrueを返す。停止未確認なら参照バッファへ触れずfalseを返す。
 // 再開は audio_transport_rebuild_and_start_tx() から行う。
 bool audio_transport_reset_for_sample_rate(uint32_t sample_rate_hz,
-                                           AudioTransportFailure_t* failure);
+                                           audio_transport_failure_t* failure);
 
 // Audio Taskから呼ぶデータ搬送サービス（USB OUT読み出し、ring/SAIコピー、
 // USB IN書き込み）。DMA half処理をTinyUSB FIFO操作より先に行う。
@@ -95,7 +95,7 @@ typedef struct
     uint32_t dma_error_code;
     uint32_t sai_error_code;
     uint32_t sai_status_flags;
-} AudioRecoveryRequest_t;
+} audio_transport_recovery_request_t;
 
 // ISRがpublishする復旧原因bitmask。
 enum
@@ -109,7 +109,7 @@ enum
 // Audio Task context only. 未acknowledgeの復旧要求があればsnapshotを返してtrue。
 // snapshotはpending payloadを切り離して返すため、以後に届いたエラーは新しい
 // payloadとして蓄積される。復旧・再構築の成功時にacknowledgeと組み合わせて使う。
-bool audio_transport_take_recovery_request(AudioRecoveryRequest_t* request);
+bool audio_transport_take_recovery_request(audio_transport_recovery_request_t* request);
 
 // Audio Task context only. sequence以前に受理した要求を完了扱いにする。
 // snapshot以後にpublishされた新しいエラーはpendingのまま残る。
@@ -128,13 +128,13 @@ bool audio_transport_sai_error_isr(SAI_HandleTypeDef* hsai);
 // 再実行させない。
 // 戻り値はSAI/GPDMA停止完了確認の成否。falseの場合は参照バッファを消去・再利用せず、
 // 呼出側は再構築を行わないこと。failureへ失敗した操作とHAL結果を格納する。
-bool audio_transport_stop_and_clear_paths(AudioTransportFailure_t* failure);
+bool audio_transport_stop_and_clear_paths(audio_transport_failure_t* failure);
 
 // DMA channel再構築とTXリングprefill・TX開始。Audio Task context only。
 // READY状態からのHAL_SAI_Init（MspInitをスキップ）によりMSP資源を維持したまま
 // SAI設定とErrorCodeを再初期化し、DMAリンクを再実行して再始動する。
 // 失敗時は両経路を停止してfalseを返し、failureへ失敗した操作とHAL結果を格納する。
-bool audio_transport_rebuild_and_start_tx(AudioTransportFailure_t* failure);
+bool audio_transport_rebuild_and_start_tx(audio_transport_failure_t* failure);
 
 // DMA転送停止の確認。HAL_DMA_Abortの結果がHAL_OK、または未開始/停止済みを示す
 // HAL_DMA_ERROR_NO_XFERの場合だけtrueを返す。falseは転送が停止したと確認できず、
@@ -148,7 +148,7 @@ uint32_t audio_transport_recovery_request_sequence(void);
 // TX同期待ち後のRX開始。Audio Task context only。成功時は現在レートの
 // USB IN FIFO目標を再適用する。失敗時は両経路を停止（MSP維持）してfalseを返し、
 // failureへ失敗した操作とHAL結果を格納する。
-bool audio_transport_start_rx_after_tx_sync(AudioTransportFailure_t* failure);
+bool audio_transport_start_rx_after_tx_sync(audio_transport_failure_t* failure);
 
 // TinyUSBのIN/OUT FIFOに残る切り替え期間中のデータを公開APIで破棄する。
 // TinyUSBが内部で使用しているバッファには触れない。Audio Task context only。

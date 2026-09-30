@@ -63,17 +63,17 @@ typedef struct
     uint8_t pot_mag_candidate[4];
     uint8_t pot_mag_stable_count[4];
     uint8_t pot_mag_state[4];
-} ui_pot_state_t;
+} ui_pot_control_state_t;
 
-static ui_pot_state_t s_pot;
+static ui_pot_control_state_t s_pot;
 
 static uint8_t s_note_peak_vel[128];
 static uint32_t s_note_scan_start_ms[128];
 static bool s_note_is_on[128];
 static bool s_note_scan_active[128];
 
-static const uint8_t POT_MAG_CH_FIRST = POT_CH_MAG0;
-static const uint8_t POT_MAG_CH_LAST  = POT_CH_MAG3;
+static const uint8_t s_pot_mag_ch_first = POT_CH_MAG0;
+static const uint8_t s_pot_mag_ch_last  = POT_CH_MAG3;
 
 static void clear_note_edge_state(uint8_t note)
 {
@@ -149,7 +149,7 @@ static void emit_mag_output(uint8_t cc_number, uint8_t note_number, uint8_t valu
     }
 }
 
-static void apply_dry_wet_value(uint16_t value, UI_RoutingSource_t return_source)
+static void apply_dry_wet_value(uint16_t value, ui_routing_source_t return_source)
 {
     switch (return_source)
     {
@@ -172,7 +172,7 @@ static void apply_dry_wet_value(uint16_t value, UI_RoutingSource_t return_source
     adau1466_control_wet_out_gain(value);
 }
 
-void ui_pot_control_apply_return_outputs(UI_RoutingSource_t return_source)
+void ui_pot_control_apply_return_outputs(ui_routing_source_t return_source)
 {
     if (return_source != UI_ROUTING_SOURCE_NONE)
     {
@@ -213,7 +213,7 @@ static void set_pot_mux_channel(uint8_t channel)
     HAL_GPIO_WritePin(S3_GPIO_Port, S3_Pin, mux_bits[channel][3]);
 }
 
-static void apply_pot_value(uint8_t channel, uint16_t value, bool synth_mode_active, bool output_as_note, UI_RoutingSource_t return_source)
+static void apply_pot_value(uint8_t channel, uint16_t value, bool synth_mode_active, bool output_as_note, ui_routing_source_t return_source)
 {
     switch (channel)
     {
@@ -285,7 +285,7 @@ static void apply_pot_value(uint8_t channel, uint16_t value, bool synth_mode_act
     case POT_CH_MAG2:
     case POT_CH_MAG3:
         emit_mag_output(channel,
-                        (uint8_t) (68U + (channel - POT_MAG_CH_FIRST)),
+                        (uint8_t) (68U + (channel - s_pot_mag_ch_first)),
                         (uint8_t) value,
                         output_as_note);
         break;
@@ -296,12 +296,12 @@ static void apply_pot_value(uint8_t channel, uint16_t value, bool synth_mode_act
 
 static bool is_pot_mag_channel(uint8_t channel)
 {
-    return (channel >= POT_MAG_CH_FIRST) && (channel <= POT_MAG_CH_LAST);
+    return (channel >= s_pot_mag_ch_first) && (channel <= s_pot_mag_ch_last);
 }
 
 static uint8_t pot_mag_index(uint8_t channel)
 {
-    return (uint8_t) (channel - POT_MAG_CH_FIRST);
+    return (uint8_t) (channel - s_pot_mag_ch_first);
 }
 
 static bool is_pot_hysteresis_channel(uint8_t channel)
@@ -422,7 +422,7 @@ static bool should_apply_pot_hysteresis(uint8_t channel, uint16_t raw_avg, uint1
 void ui_pot_control_process(const uint32_t adc_samples[ADC_NUM],
                             bool synth_mode_active,
                             bool output_as_note,
-                            UI_RoutingSource_t return_source)
+                            ui_routing_source_t return_source)
 {
     if (s_pot.pot_ch_counter < POT_CH_SEL_WAIT)
     {
@@ -591,7 +591,7 @@ void ui_pot_control_reset(void)
 }
 
 // OLED表示用: 6個のpot生値(ADC値)を軽量コピーする。scheduler停止区間専用。
-void ui_pot_control_capture_display_state(UI_PotDisplayState_t* state)
+void ui_pot_control_capture_display_state(ui_pot_control_display_state_t* state)
 {
     if (state == NULL)
     {

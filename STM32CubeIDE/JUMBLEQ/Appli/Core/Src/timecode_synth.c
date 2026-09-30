@@ -30,10 +30,10 @@ typedef struct
     uint32_t read_index;
     volatile uint32_t overflow_frames;
     volatile uint32_t underrun_frames;
-} TimecodeSynthFifo_t;
+} timecode_synth_fifo_t;
 
-static TimecodeOscillator_t s_oscillator[TIMECODE_SYNTH_CHANNEL_COUNT];
-static TimecodeSynthFifo_t s_fifo[TIMECODE_SYNTH_CHANNEL_COUNT];
+static timecode_oscillator_t s_oscillator[TIMECODE_SYNTH_CHANNEL_COUNT];
+static timecode_synth_fifo_t s_fifo[TIMECODE_SYNTH_CHANNEL_COUNT];
 static int32_t s_process_block[TIMECODE_SYNTH_CHANNEL_COUNT]
                               [TIMECODE_SYNTH_PROCESS_BLOCK_FRAMES];
 static bool s_channel_enabled[TIMECODE_SYNTH_CHANNEL_COUNT] = {false, false};
@@ -111,14 +111,14 @@ static void apply_pending_controls(void)
 
     for (uint32_t channel = 0u; channel < TIMECODE_SYNTH_CHANNEL_COUNT; channel++)
     {
-        TimecodeOscillatorParameters_t parameters =
+        timecode_oscillator_parameters_t parameters =
             *timecode_oscillator_get_parameters(&s_oscillator[channel]);
         parameters.root_hz        = root_hz;
         parameters.morph          = morph;
         parameters.slope          = slope;
         parameters.smooth_fold    = smooth_fold;
-        parameters.ratio_set      = (TimecodeOscillatorRatioSet_t) ratio_set;
-        parameters.warp_algorithm = (TimecodeOscillatorWarpAlgorithm_t) warp_algorithm;
+        parameters.ratio_set      = (timecode_oscillator_ratio_set_t) ratio_set;
+        parameters.warp_algorithm = (timecode_oscillator_warp_algorithm_t) warp_algorithm;
         parameters.warp_amount    = warp_amount;
         timecode_oscillator_set_parameters(&s_oscillator[channel], &parameters);
     }
@@ -126,14 +126,14 @@ static void apply_pending_controls(void)
     s_applied_revision = revision_after;
 }
 
-static void fifo_reset(TimecodeSynthFifo_t* fifo)
+static void fifo_reset(timecode_synth_fifo_t* fifo)
 {
     fifo->write_index = 0u;
     fifo->read_index  = 0u;
     memset(fifo->samples, 0, sizeof(fifo->samples));
 }
 
-static uint32_t fifo_used(TimecodeSynthFifo_t* fifo)
+static uint32_t fifo_used(timecode_synth_fifo_t* fifo)
 {
     uint32_t used = fifo->write_index - fifo->read_index;
     if (used > TIMECODE_SYNTH_FIFO_FRAMES)
@@ -144,7 +144,7 @@ static uint32_t fifo_used(TimecodeSynthFifo_t* fifo)
     return used;
 }
 
-static void fifo_push(TimecodeSynthFifo_t* fifo, const int32_t* samples, uint32_t frame_count)
+static void fifo_push(timecode_synth_fifo_t* fifo, const int32_t* samples, uint32_t frame_count)
 {
     if (frame_count > TIMECODE_SYNTH_FIFO_FRAMES)
     {
@@ -168,7 +168,7 @@ static void fifo_push(TimecodeSynthFifo_t* fifo, const int32_t* samples, uint32_
     }
 }
 
-static int32_t fifo_pop(TimecodeSynthFifo_t* fifo)
+static int32_t fifo_pop(timecode_synth_fifo_t* fifo)
 {
     if (fifo_used(fifo) == 0u)
     {
@@ -323,7 +323,7 @@ void timecode_synth_render_output(int32_t* output,
 #endif
 }
 
-void timecode_synth_set_control(TimecodeSynthControl_t control, uint8_t value)
+void timecode_synth_set_control(timecode_synth_control_t control, uint8_t value)
 {
 #if ENABLE_TIMECODE_OSCILLATOR
     if ((uint32_t) control >= TIMECODE_SYNTH_CONTROL_COUNT)
@@ -349,7 +349,7 @@ void timecode_synth_set_control(TimecodeSynthControl_t control, uint8_t value)
 #endif
 }
 
-void timecode_synth_set_ratio_set(TimecodeOscillatorRatioSet_t ratio_set)
+void timecode_synth_set_ratio_set(timecode_oscillator_ratio_set_t ratio_set)
 {
 #if ENABLE_TIMECODE_OSCILLATOR
     if ((uint32_t) ratio_set > TIMECODE_RATIO_CHORD || s_ratio_set == (uint8_t) ratio_set)
@@ -365,7 +365,7 @@ void timecode_synth_set_ratio_set(TimecodeOscillatorRatioSet_t ratio_set)
 #endif
 }
 
-void timecode_synth_set_warp_algorithm(TimecodeOscillatorWarpAlgorithm_t warp_algorithm)
+void timecode_synth_set_warp_algorithm(timecode_oscillator_warp_algorithm_t warp_algorithm)
 {
 #if ENABLE_TIMECODE_OSCILLATOR
     if ((uint32_t) warp_algorithm > TIMECODE_WARP_COMPARATOR ||
@@ -382,19 +382,19 @@ void timecode_synth_set_warp_algorithm(TimecodeOscillatorWarpAlgorithm_t warp_al
 #endif
 }
 
-TimecodeOscillatorRatioSet_t timecode_synth_get_ratio_set(void)
+timecode_oscillator_ratio_set_t timecode_synth_get_ratio_set(void)
 {
 #if ENABLE_TIMECODE_OSCILLATOR
-    return (TimecodeOscillatorRatioSet_t) s_ratio_set;
+    return (timecode_oscillator_ratio_set_t) s_ratio_set;
 #else
     return TIMECODE_RATIO_OCTAVE;
 #endif
 }
 
-TimecodeOscillatorWarpAlgorithm_t timecode_synth_get_warp_algorithm(void)
+timecode_oscillator_warp_algorithm_t timecode_synth_get_warp_algorithm(void)
 {
 #if ENABLE_TIMECODE_OSCILLATOR
-    return (TimecodeOscillatorWarpAlgorithm_t) s_warp_algorithm;
+    return (timecode_oscillator_warp_algorithm_t) s_warp_algorithm;
 #else
     return TIMECODE_WARP_CROSSFOLD;
 #endif

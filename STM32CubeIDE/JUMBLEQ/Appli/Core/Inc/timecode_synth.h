@@ -32,7 +32,7 @@ typedef enum
     TIMECODE_SYNTH_CONTROL_SMOOTH_FOLD,
     TIMECODE_SYNTH_CONTROL_WARP_AMOUNT,
     TIMECODE_SYNTH_CONTROL_COUNT,
-} TimecodeSynthControl_t;
+} timecode_synth_control_t;
 
 void timecode_synth_init(uint32_t sample_rate_hz);
 void timecode_synth_reset_for_sample_rate(uint32_t sample_rate_hz);
@@ -50,10 +50,10 @@ void timecode_synth_render_output(int32_t* output,
                                   uint32_t frame_stride_words,
                                   uint32_t frame_count);
 
-void timecode_synth_set_control(TimecodeSynthControl_t control, uint8_t value);
-void timecode_synth_set_ratio_set(TimecodeOscillatorRatioSet_t ratio_set);
-void timecode_synth_set_warp_algorithm(TimecodeOscillatorWarpAlgorithm_t warp_algorithm);
-TimecodeOscillatorRatioSet_t timecode_synth_get_ratio_set(void);
-TimecodeOscillatorWarpAlgorithm_t timecode_synth_get_warp_algorithm(void);
+void timecode_synth_set_control(timecode_synth_control_t control, uint8_t value);
+void timecode_synth_set_ratio_set(timecode_oscillator_ratio_set_t ratio_set);
+void timecode_synth_set_warp_algorithm(timecode_oscillator_warp_algorithm_t warp_algorithm);
+timecode_oscillator_ratio_set_t timecode_synth_get_ratio_set(void);
+timecode_oscillator_warp_algorithm_t timecode_synth_get_warp_algorithm(void);
 
 #endif /* INC_TIMECODE_SYNTH_H_ */

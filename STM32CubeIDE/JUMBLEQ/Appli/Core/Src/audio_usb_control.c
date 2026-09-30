@@ -25,7 +25,7 @@
 #endif
 #include "tusb.h"
 
-#define N_SAMPLE_RATES TU_ARRAY_SIZE(sample_rates)
+#define N_SAMPLE_RATES TU_ARRAY_SIZE(s_sample_rates)
 
 enum
 {
@@ -50,8 +50,8 @@ _Static_assert((VOLUME_CTRL_50_DB % VOLUME_CTRL_RESOLUTION_DB) == 0,
                "volume control min must align with the resolution");
 
 // Audio controls
-static volatile uint32_t tx_blink_interval_ms = BLINK_NOT_MOUNTED;
-static volatile uint32_t rx_blink_interval_ms = BLINK_NOT_MOUNTED;
+static volatile uint32_t s_tx_blink_interval_ms = BLINK_NOT_MOUNTED;
+static volatile uint32_t s_rx_blink_interval_ms = BLINK_NOT_MOUNTED;
 
 #if CFG_TUD_AUDIO_ENABLE_EP_OUT && CFG_TUD_AUDIO_ENABLE_FEEDBACK_EP
 // アプリ側feedback計算の状態。TinyUSBのFIFO_COUNT方式と同じ平滑化・目標水位・
@@ -65,16 +65,16 @@ typedef struct
     uint32_t min_value;        // 許容下限(16.16)
     uint32_t max_value;        // 許容上限(16.16)
     uint32_t fifo_lvl_avg;     // 平滑化したFIFO水位(16.16)
-} audio_usb_feedback_state_t;
+} audio_usb_control_feedback_state_t;
 
-static audio_usb_feedback_state_t s_feedback = {0};
+static audio_usb_control_feedback_state_t s_feedback = {0};
 #endif
 
-const uint32_t sample_rates[] = {48000, 96000};
+static const uint32_t s_sample_rates[] = {48000, 96000};
 
 // Current states
-int8_t mute[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX + 1];     // +1 for master channel 0
-int16_t volume[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX + 1];  // +1 for master channel 0
+static int8_t s_mute[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX + 1];     // +1 for master channel 0
+static int16_t s_volume[CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX + 1];  // +1 for master channel 0
 
 // ---- Feature Unit（音量・ミュート）の非同期適用 ----
 // USB callbackは要求値とdirty bitの記録だけを行い、DSP適用は専用Taskが行う。
@@ -103,7 +103,7 @@ static const osThreadAttr_t s_feature_task_attributes = {
     .priority   = (osPriority_t) osPriorityNormal,
 };
 
-volatile AudioUsbFeatureDiagnostics_t g_audio_usb_feature_diagnostics = {0};
+volatile audio_usb_feature_diagnostics_t g_audio_usb_feature_diagnostics = {0};
 
 // チャンネルのdirty bit。Master(ch0)は全チャンネルを対象にする。
 static uint8_t audio_usb_feature_channel_bit(uint8_t channel)
@@ -147,7 +147,7 @@ static void audio_usb_feature_store_mute(uint8_t channel, int8_t value)
     const uint32_t primask = __get_PRIMASK();
     __disable_irq();
 
-    mute[channel] = value;
+    s_mute[channel] = value;
     const uint8_t dirty_bit = audio_usb_feature_channel_bit(channel);
     if ((s_feature_dirty_mask & dirty_bit) != 0U)
     {
@@ -163,7 +163,7 @@ static void audio_usb_feature_store_volume(uint8_t channel, int16_t value)
     const uint32_t primask = __get_PRIMASK();
     __disable_irq();
 
-    volume[channel] = value;
+    s_volume[channel] = value;
     const uint8_t dirty_bit = audio_usb_feature_channel_bit(channel);
     if ((s_feature_dirty_mask & dirty_bit) != 0U)
     {
@@ -289,8 +289,8 @@ static void audio_usb_control_feature_service(void)
         s_feature_dirty_mask = 0U;
         for (uint32_t i = 0U; i <= CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX; i++)
         {
-            mute_snapshot[i]   = mute[i];
-            volume_snapshot[i] = volume[i];
+            mute_snapshot[i]   = s_mute[i];
+            volume_snapshot[i] = s_volume[i];
         }
     }
 
@@ -336,24 +336,24 @@ void audio_usb_control_feature_task_start(void)
 
 void audio_usb_control_set_tx_stream_blink(bool streaming)
 {
-    tx_blink_interval_ms = streaming ? BLINK_STREAMING :
+    s_tx_blink_interval_ms = streaming ? BLINK_STREAMING :
                                         (tud_mounted() ? BLINK_MOUNTED : BLINK_NOT_MOUNTED);
 }
 
 void audio_usb_control_set_rx_stream_blink(bool streaming)
 {
-    rx_blink_interval_ms = streaming ? BLINK_STREAMING :
+    s_rx_blink_interval_ms = streaming ? BLINK_STREAMING :
                                         (tud_mounted() ? BLINK_MOUNTED : BLINK_NOT_MOUNTED);
 }
 
-uint32_t get_tx_blink_interval_ms(void)
+uint32_t audio_usb_control_get_tx_blink_interval_ms(void)
 {
-    return tx_blink_interval_ms;
+    return s_tx_blink_interval_ms;
 }
 
-uint32_t get_rx_blink_interval_ms(void)
+uint32_t audio_usb_control_get_rx_blink_interval_ms(void)
 {
-    return rx_blink_interval_ms;
+    return s_rx_blink_interval_ms;
 }
 
 #if CFG_TUD_AUDIO_ENABLE_EP_OUT && CFG_TUD_AUDIO_ENABLE_FEEDBACK_EP
@@ -477,12 +477,12 @@ void tud_mount_cb(void)
                       "[AUD][USB-EVENT] tick=%lu event=mount\r\n",
                       (unsigned long) HAL_GetTick());
 #endif
-    tx_blink_interval_ms = BLINK_MOUNTED;
-    rx_blink_interval_ms = BLINK_MOUNTED;
+    s_tx_blink_interval_ms = BLINK_MOUNTED;
+    s_rx_blink_interval_ms = BLINK_MOUNTED;
 
 #if CFG_TUD_AUDIO_ENABLE_EP_OUT && CFG_TUD_AUDIO_ENABLE_FEEDBACK_EP
     // 初回のSET_INTERFACEでfeedback送信が予約されるため、その前に公称値を設定する。
-    AudioRateSnapshot_t rate_snapshot;
+    audio_control_rate_snapshot_t rate_snapshot;
     audio_control_get_rate_snapshot(&rate_snapshot);
     audio_usb_control_feedback_reset(rate_snapshot.requested_hz);
 #endif
@@ -496,8 +496,8 @@ void tud_umount_cb(void)
                       "[AUD][USB-EVENT] tick=%lu event=unmount\r\n",
                       (unsigned long) HAL_GetTick());
 #endif
-    tx_blink_interval_ms = BLINK_NOT_MOUNTED;
-    rx_blink_interval_ms = BLINK_NOT_MOUNTED;
+    s_tx_blink_interval_ms = BLINK_NOT_MOUNTED;
+    s_rx_blink_interval_ms = BLINK_NOT_MOUNTED;
     audio_transport_request_stream(AUDIO_TRANSPORT_STREAM_OUT, false);
     audio_transport_request_stream(AUDIO_TRANSPORT_STREAM_IN, false);
 }
@@ -515,8 +515,8 @@ void tud_suspend_cb(bool remote_wakeup_en)
 #else
     (void) remote_wakeup_en;
 #endif
-    tx_blink_interval_ms = BLINK_SUSPENDED;
-    rx_blink_interval_ms = BLINK_SUSPENDED;
+    s_tx_blink_interval_ms = BLINK_SUSPENDED;
+    s_rx_blink_interval_ms = BLINK_SUSPENDED;
 }
 
 // Invoked when usb bus is resumed
@@ -528,8 +528,8 @@ void tud_resume_cb(void)
                       (unsigned long) HAL_GetTick(),
                       tud_mounted() ? 1u : 0u);
 #endif
-    tx_blink_interval_ms = tud_mounted() ? BLINK_MOUNTED : BLINK_NOT_MOUNTED;
-    rx_blink_interval_ms = tud_mounted() ? BLINK_MOUNTED : BLINK_NOT_MOUNTED;
+    s_tx_blink_interval_ms = tud_mounted() ? BLINK_MOUNTED : BLINK_NOT_MOUNTED;
+    s_rx_blink_interval_ms = tud_mounted() ? BLINK_MOUNTED : BLINK_NOT_MOUNTED;
 }
 
 // TinyUSB has no task-context bus-reset callback. This hook runs when the DCD
@@ -584,8 +584,8 @@ static bool audio20_clock_get_request(uint8_t rhport, tusb_control_request_t con
             TU_LOG1("Clock get %d freq ranges\r\n", N_SAMPLE_RATES);
             for (uint8_t i = 0; i < N_SAMPLE_RATES; i++)
             {
-                rangef.subrange[i].bMin = (int32_t) sample_rates[i];
-                rangef.subrange[i].bMax = (int32_t) sample_rates[i];
+                rangef.subrange[i].bMin = (int32_t) s_sample_rates[i];
+                rangef.subrange[i].bMax = (int32_t) s_sample_rates[i];
                 rangef.subrange[i].bRes = 0;
                 SEGGER_RTT_printf(0,
                                   "[USB] RANGE[%u]: min=%lu max=%lu res=%lu\n",
@@ -628,7 +628,7 @@ static bool audio20_clock_set_request(uint8_t rhport, tusb_control_request_t con
         bool supported = false;
         for (uint8_t i = 0U; i < N_SAMPLE_RATES; i++)
         {
-            if (requested_sample_rate == sample_rates[i])
+            if (requested_sample_rate == s_sample_rates[i])
             {
                 supported = true;
                 break;
@@ -686,7 +686,7 @@ static bool audio20_feature_unit_get_request(uint8_t rhport, tusb_control_reques
 
     if (TU_U16_HIGH(request->wValue) == AUDIO20_FU_CTRL_MUTE && request->bRequest == AUDIO20_CS_REQ_CUR)
     {
-        audio20_control_cur_1_t mute1 = {.bCur = mute[channel]};
+        audio20_control_cur_1_t mute1 = {.bCur = s_mute[channel]};
         TU_LOG1("Get channel %u mute %d\r\n", channel, mute1.bCur);
         return tud_audio_buffer_and_schedule_control_xfer(rhport, (tusb_control_request_t const*) request, &mute1, sizeof(mute1));
     }
@@ -703,7 +703,7 @@ static bool audio20_feature_unit_get_request(uint8_t rhport, tusb_control_reques
         }
         else if (request->bRequest == AUDIO20_CS_REQ_CUR)
         {
-            audio20_control_cur_2_t cur_vol = {.bCur = tu_htole16(volume[channel])};
+            audio20_control_cur_2_t cur_vol = {.bCur = tu_htole16(s_volume[channel])};
             TU_LOG1("Get channel %u volume %d dB\r\n", channel, cur_vol.bCur / VOLUME_CTRL_RESOLUTION_DB);
             return tud_audio_buffer_and_schedule_control_xfer(rhport, (tusb_control_request_t const*) request, &cur_vol, sizeof(cur_vol));
         }
@@ -913,7 +913,7 @@ void tud_audio_feedback_params_cb(uint8_t func_id, uint8_t alt_itf, audio_feedba
 
     // TinyUSB内部の自動計算（旧レートの定数のままfeedbackを上書きし続ける）を止める。
     // feedback値はアプリ側で計算し、tud_audio_n_fb_set()で更新する。
-    AudioRateSnapshot_t rate_snapshot;
+    audio_control_rate_snapshot_t rate_snapshot;
     audio_control_get_rate_snapshot(&rate_snapshot);
 
     feedback_param->method      = AUDIO_FEEDBACK_METHOD_DISABLED;

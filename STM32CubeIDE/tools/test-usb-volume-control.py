@@ -43,12 +43,12 @@ typedef struct { int8_t bCur; } audio20_control_cur_1_t;
 typedef struct { int16_t bCur; } audio20_control_cur_2_t;
 #define audio20_control_range_2_n_t(n) struct { uint16_t wNumSubRanges; struct { int16_t bMin,bMax; uint16_t bRes; } subrange[n]; }
 typedef enum { SIGMA_SPI_RESULT_OK, SIGMA_SPI_RESULT_FAILED } sigma_spi_result_t;
-static int8_t mute[5];
-static int16_t volume[5];
+static int8_t s_mute[5];
+static int16_t s_volume[5];
 static volatile uint8_t s_feature_dirty_mask;
 static bool s_feature_backoff_active;
 static uint32_t s_feature_retry_started_tick;
-volatile AudioUsbFeatureDiagnostics_t g_audio_usb_feature_diagnostics;
+volatile audio_usb_feature_diagnostics_t g_audio_usb_feature_diagnostics;
 static uint32_t tick, irq;
 static uint32_t __get_PRIMASK(void) { return irq; }
 static void __disable_irq(void) { irq=1; }
@@ -78,7 +78,7 @@ static sigma_spi_result_t adau1466_control_input_from_usb_mute(uint8_t ch, bool 
 
 TESTS = r'''
 static void reset_state(void) {
-    memset(mute,0,sizeof mute); memset(volume,0,sizeof volume);
+    memset(s_mute,0,sizeof s_mute); memset(s_volume,0,sizeof s_volume);
     memset((void*)&g_audio_usb_feature_diagnostics,0,sizeof g_audio_usb_feature_diagnostics);
     memset(dsp_mute,0,sizeof dsp_mute); memset(dsp_gain,0,sizeof dsp_gain);
     s_feature_dirty_mask=0; s_feature_backoff_active=false; tick=0; irq=0;
@@ -128,11 +128,11 @@ int main(void) {
     /* All finite gains, silence and independent explicit mute combinations. */
     for(int m=0;m<52;m++) for(int c=0;c<52;c++) for(int mask=0;mask<4;mask++) {
         reset_state();
-        volume[0]=m==51?INT16_MIN:(int16_t)(-m*256);
-        volume[1]=c==51?INT16_MIN:(int16_t)(-c*256);
-        mute[0]=mask&1; mute[1]=(mask>>1)&1;
+        s_volume[0]=m==51?INT16_MIN:(int16_t)(-m*256);
+        s_volume[1]=c==51?INT16_MIN:(int16_t)(-c*256);
+        s_mute[0]=mask&1; s_mute[1]=(mask>>1)&1;
         bool silent=mask!=0 || m==51 || c==51;
-        audio_usb_feature_apply_channel(1,mute,volume);
+        audio_usb_feature_apply_channel(1,s_mute,s_volume);
         assert(call_count==2 && calls[0].op==(silent?'M':'G'));
         assert(dsp_mute[1]==silent);
         assert(dsp_gain[1]==-(m==51?0:m)-(c==51?0:c));

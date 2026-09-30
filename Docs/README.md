@@ -15,6 +15,7 @@ This directory contains user guides, technical reference material, and developme
 - [Hardware](./reference/hardware.md) — main components and PCB modules
 - [Signal flow](./reference/signal-flow.md) — hardware block diagram and audio routing
 - [MIDI](./reference/midi/README.md) — receive and transmit specifications
+- [Naming conventions](./reference/naming-conventions.md) — self-written Core code identifiers
 
 ## Development
 

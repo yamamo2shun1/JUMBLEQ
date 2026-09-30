@@ -21,7 +21,7 @@ typedef enum
     AUDIO_INPUT_SOURCE_USB12 = 2,
     AUDIO_INPUT_SOURCE_USB34 = 3,
     AUDIO_INPUT_SOURCE_MASTER = 4,
-} AudioInputSource_t;
+} adau1466_input_source_t;
 
 enum
 {
@@ -36,7 +36,7 @@ typedef enum
     HP_SOURCE_CH_FADER_B = 1,
     HP_SOURCE_THRU = 2,
     HP_SOURCE_MASTER = 3,
-} HpSource_t;
+} adau1466_hp_source_t;
 
 // 10-bit POTs on the muxed ADC can stop slightly short of full-scale on hardware.
 #define POT_10BIT_ADC_MAX            1023U
@@ -109,14 +109,14 @@ void adau1466_control_ch1_out_gain(const uint16_t adc_val);
 void adau1466_control_ch2_out_gain(const uint16_t adc_val);
 void adau1466_control_hp_out_gain(const uint16_t adc_val);
 
-void adau1466_select_input_type(AudioInputSource_t audio_input_source, uint8_t input_type);
-void adau1466_set_input_insert_enabled(AudioInputSource_t audio_input_source, bool enabled);
-void adau1466_select_send_source(AudioInputSource_t audio_input_source, bool select_insert);
+void adau1466_select_input_type(adau1466_input_source_t audio_input_source, uint8_t input_type);
+void adau1466_set_input_insert_enabled(adau1466_input_source_t audio_input_source, bool enabled);
+void adau1466_select_send_source(adau1466_input_source_t audio_input_source, bool select_insert);
 
-void adau1466_select_ch_fader_assign_a_source(AudioInputSource_t audio_input_source);
-void adau1466_select_ch_fader_assign_b_source(AudioInputSource_t audio_input_source);
-void adau1466_select_ch_fader_assign_post_source(AudioInputSource_t audio_input_source);
-void adau1466_select_return_ch_source(AudioInputSource_t audio_input_source);
-void adau1466_select_hp_out_source(HpSource_t hp_source);
+void adau1466_select_ch_fader_assign_a_source(adau1466_input_source_t audio_input_source);
+void adau1466_select_ch_fader_assign_b_source(adau1466_input_source_t audio_input_source);
+void adau1466_select_ch_fader_assign_post_source(adau1466_input_source_t audio_input_source);
+void adau1466_select_return_ch_source(adau1466_input_source_t audio_input_source);
+void adau1466_select_hp_out_source(adau1466_hp_source_t hp_source);
 
 #endif /* INC_ADAU1466_H_ */

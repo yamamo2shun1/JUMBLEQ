@@ -91,7 +91,7 @@ static int32_t normalized_to_s32(float sample)
     return (int32_t) (sample * 2147483647.0f);
 }
 
-static void update_derived_parameters(TimecodeOscillator_t* oscillator)
+static void update_derived_parameters(timecode_oscillator_t* oscillator)
 {
     const float sample_rate = maxf(oscillator->sample_rate_hz, 1.0f);
     const float smooth_seconds = maxf(oscillator->parameters.smooth_ms, 0.1f) * 0.001f;
@@ -110,9 +110,9 @@ static void update_derived_parameters(TimecodeOscillator_t* oscillator)
         (uint32_t) (oscillator->parameters.hold_ms * 0.001f * sample_rate + 0.5f);
 }
 
-static TimecodeOscillatorParameters_t default_parameters(void)
+static timecode_oscillator_parameters_t default_parameters(void)
 {
-    TimecodeOscillatorParameters_t parameters = {
+    timecode_oscillator_parameters_t parameters = {
         .root_hz           = 110.0f,
         .nominal_carrier_hz = 1000.0f,
         .smooth_ms         = 3.0f,
@@ -132,7 +132,7 @@ static TimecodeOscillatorParameters_t default_parameters(void)
     return parameters;
 }
 
-void timecode_oscillator_init(TimecodeOscillator_t* oscillator, uint32_t sample_rate_hz)
+void timecode_oscillator_init(timecode_oscillator_t* oscillator, uint32_t sample_rate_hz)
 {
     if (oscillator == NULL)
     {
@@ -141,19 +141,19 @@ void timecode_oscillator_init(TimecodeOscillator_t* oscillator, uint32_t sample_
 
     memset(oscillator, 0, sizeof(*oscillator));
     oscillator->sample_rate_hz = (sample_rate_hz > 0U) ? (float) sample_rate_hz : 48000.0f;
-    TimecodeOscillatorParameters_t parameters = default_parameters();
+    timecode_oscillator_parameters_t parameters = default_parameters();
     timecode_oscillator_set_parameters(oscillator, &parameters);
     timecode_oscillator_reset(oscillator);
 }
 
-void timecode_oscillator_reset(TimecodeOscillator_t* oscillator)
+void timecode_oscillator_reset(timecode_oscillator_t* oscillator)
 {
     if (oscillator == NULL)
     {
         return;
     }
 
-    const TimecodeOscillatorParameters_t parameters = oscillator->parameters;
+    const timecode_oscillator_parameters_t parameters = oscillator->parameters;
     const float sample_rate_hz = oscillator->sample_rate_hz;
     const bool enabled = oscillator->enabled;
 
@@ -168,7 +168,7 @@ void timecode_oscillator_reset(TimecodeOscillator_t* oscillator)
     update_derived_parameters(oscillator);
 }
 
-void timecode_oscillator_set_enabled(TimecodeOscillator_t* oscillator, bool enabled)
+void timecode_oscillator_set_enabled(timecode_oscillator_t* oscillator, bool enabled)
 {
     if (oscillator == NULL || oscillator->enabled == enabled)
     {
@@ -179,8 +179,8 @@ void timecode_oscillator_set_enabled(TimecodeOscillator_t* oscillator, bool enab
     timecode_oscillator_reset(oscillator);
 }
 
-void timecode_oscillator_set_parameters(TimecodeOscillator_t* oscillator,
-                                        const TimecodeOscillatorParameters_t* parameters)
+void timecode_oscillator_set_parameters(timecode_oscillator_t* oscillator,
+                                        const timecode_oscillator_parameters_t* parameters)
 {
     if (oscillator == NULL || parameters == NULL)
     {
@@ -213,17 +213,17 @@ void timecode_oscillator_set_parameters(TimecodeOscillator_t* oscillator,
     update_derived_parameters(oscillator);
 }
 
-const TimecodeOscillatorParameters_t* timecode_oscillator_get_parameters(const TimecodeOscillator_t* oscillator)
+const timecode_oscillator_parameters_t* timecode_oscillator_get_parameters(const timecode_oscillator_t* oscillator)
 {
     return (oscillator != NULL) ? &oscillator->parameters : NULL;
 }
 
-const TimecodeOscillatorDiagnostics_t* timecode_oscillator_get_diagnostics(const TimecodeOscillator_t* oscillator)
+const timecode_oscillator_diagnostics_t* timecode_oscillator_get_diagnostics(const timecode_oscillator_t* oscillator)
 {
     return (oscillator != NULL) ? &oscillator->diagnostics : NULL;
 }
 
-static void process_chunk(TimecodeOscillator_t* oscillator,
+static void process_chunk(timecode_oscillator_t* oscillator,
                           const int32_t* input_l,
                           const int32_t* input_r,
                           uint32_t input_stride_words,
@@ -437,7 +437,7 @@ static void process_chunk(TimecodeOscillator_t* oscillator,
     oscillator->diagnostics.input_level = sqrtf(maxf(oscillator->energy_smooth, 0.0f));
 }
 
-void timecode_oscillator_process_interleaved(TimecodeOscillator_t* oscillator,
+void timecode_oscillator_process_interleaved(timecode_oscillator_t* oscillator,
                                              const int32_t* input_l,
                                              const int32_t* input_r,
                                              uint32_t input_stride_words,

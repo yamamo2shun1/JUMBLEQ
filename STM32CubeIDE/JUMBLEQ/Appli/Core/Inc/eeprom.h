@@ -41,7 +41,7 @@ typedef struct
     uint8_t ch_fader_reverse_flags;
     uint8_t timecode_synth_ratio_set;
     uint8_t timecode_synth_warp_algorithm;
-} EEPROM_DeviceConfig_t;
+} eeprom_device_config_t;
 
 #define EEPROM_CONFIG_ADDR               (0x0000U)
 #define EEPROM_CONFIG_MAGIC              (0x51424D4AU) /* "JMBQ" */
@@ -56,10 +56,10 @@ HAL_StatusTypeDef EEPROM_CheckConnection(I2C_HandleTypeDef *hi2c);
 HAL_StatusTypeDef EEPROM_WaitReady(I2C_HandleTypeDef *hi2c, uint32_t timeout_ms);
 HAL_StatusTypeDef EEPROM_Read(I2C_HandleTypeDef *hi2c, uint16_t mem_addr, uint8_t *buf, uint16_t len);
 HAL_StatusTypeDef EEPROM_Write(I2C_HandleTypeDef *hi2c, uint16_t mem_addr, const uint8_t *buf, uint16_t len);
-void EEPROM_ConfigSetDefaults(EEPROM_DeviceConfig_t *cfg);
-void EEPROM_ConfigCaptureCurrent(EEPROM_DeviceConfig_t *cfg);
-HAL_StatusTypeDef EEPROM_SaveConfig(I2C_HandleTypeDef *hi2c, const EEPROM_DeviceConfig_t *cfg);
-HAL_StatusTypeDef EEPROM_LoadConfig(I2C_HandleTypeDef *hi2c, EEPROM_DeviceConfig_t *cfg);
+void EEPROM_ConfigSetDefaults(eeprom_device_config_t *cfg);
+void EEPROM_ConfigCaptureCurrent(eeprom_device_config_t *cfg);
+HAL_StatusTypeDef EEPROM_SaveConfig(I2C_HandleTypeDef *hi2c, const eeprom_device_config_t *cfg);
+HAL_StatusTypeDef EEPROM_LoadConfig(I2C_HandleTypeDef *hi2c, eeprom_device_config_t *cfg);
 
 #ifdef __cplusplus
 }
