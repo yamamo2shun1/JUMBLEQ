@@ -22,7 +22,6 @@
 #define COL_BITS       8
 #define WL_LED_BIT_LEN (RGB * COL_BITS)
 #define LED_NUMS       10
-#define LED_BUF_NUMS   WL_LED_BIT_LEN* LED_NUMS
 #define DMA_BUF_SIZE   (LED_NUMS * WL_LED_BIT_LEN + 1)
 #define WL_LED_ONE     16
 #define WL_LED_ZERO    7
@@ -38,8 +37,6 @@ static uint8_t s_led_grb[LED_NUMS][RGB] = {0};
 static volatile bool s_is_color_update = false;
 static volatile uint8_t s_save_blink_remaining = 0U;
 static uint32_t s_save_blink_last_ms = 0U;
-
-uint16_t test = 0;
 
 typedef struct
 {

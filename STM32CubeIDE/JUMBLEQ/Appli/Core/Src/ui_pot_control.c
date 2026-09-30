@@ -53,7 +53,6 @@ typedef struct
     uint8_t pot_sample_count[POT_NUM];
     uint32_t pot_val_ma[POT_NUM][POT_MA_SIZE];
     uint16_t pot_val[POT_NUM];
-    uint16_t pot_val_prev[POT_NUM][2];
     uint16_t pot_hysteresis_raw_ma[POT_HYSTERESIS_NUM][POT_MA_SIZE];
     uint16_t pot_hysteresis_last_sent[POT_HYSTERESIS_NUM];
     bool pot_hysteresis_has_last_sent[POT_HYSTERESIS_NUM];
@@ -61,7 +60,6 @@ typedef struct
     uint32_t pot_mag_offset_sum[4];
     uint16_t pot_mag_offset[4];
     uint8_t pot_mag_candidate[4];
-    uint8_t pot_mag_stable_count[4];
     uint8_t pot_mag_state[4];
 } ui_pot_control_state_t;
 
@@ -551,8 +549,6 @@ void ui_pot_control_reset(void)
         s_pot.pot_ma_index[i]    = 0;
         s_pot.pot_sample_count[i] = 0U;
         s_pot.pot_val[i]         = 0;
-        s_pot.pot_val_prev[i][0] = 0;
-        s_pot.pot_val_prev[i][1] = 0;
         for (uint16_t j = 0; j < POT_MA_SIZE; j++)
         {
             s_pot.pot_val_ma[i][j] = 0;
@@ -574,7 +570,6 @@ void ui_pot_control_reset(void)
         s_pot.pot_mag_offset_sum[i]        = 0;
         s_pot.pot_mag_offset[i]            = 0;
         s_pot.pot_mag_candidate[i]         = 0U;
-        s_pot.pot_mag_stable_count[i]      = 0U;
         s_pot.pot_mag_state[i]             = 0U;
     }
 
