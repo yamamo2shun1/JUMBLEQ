@@ -59,7 +59,7 @@ static HAL_StatusTypeDef ak4619_write_mic_gain_reg(uint8_t reg, uint8_t gain_bit
     return ak4619_write_reg(reg, value);
 }
 
-void AUDIO_Init_AK4619(uint32_t hz)
+void ak4619_init(uint32_t hz)
 {
     // AK4619 HW Reset
     HAL_GPIO_WritePin(CODEC_RESET_GPIO_Port, CODEC_RESET_Pin, 0);
@@ -160,7 +160,7 @@ void AUDIO_Init_AK4619(uint32_t hz)
     // HAL_I2C_Mem_Read(&hi2c3, (0b0010001 << 1) | 1, 0x00, I2C_MEMADD_SIZE_8BIT, rcvData, sizeof(rcvData), 10000);
 }
 
-void AUDIO_Mic_Gain_AMP_Setting_Channel(uint8_t ch, uint8_t gain_db)
+void ak4619_set_mic_amp_gain(uint8_t ch, uint8_t gain_db)
 {
     uint8_t reg;
     uint8_t gain_bits;

@@ -44,8 +44,8 @@ typedef enum
 #define POT_10BIT_DB_MAX_SNAP_START 1005U
 #define POT_10BIT_DW_MAX_SNAP_START 1005U
 
-double convert_pot2dB(uint16_t adc_val);
-int16_t convert_pot2dB_int(uint16_t adc_val);
+double adau1466_convert_pot_to_db(uint16_t adc_val);
+int16_t adau1466_convert_pot_to_db_int(uint16_t adc_val);
 
 // サンプルレート適用の失敗理由。SPI転送失敗とPLLロック待ちタイムアウトを区別する。
 // 共有SPI診断の後読みに依存せず、失敗した処理から直接返す。
@@ -78,45 +78,45 @@ typedef struct
 
 // DSPリセット・program download・初期レート適用を行う。初期レート適用の成否を返し、
 // program downloadそのものの成否は従来どおり検証しない。
-bool AUDIO_Init_ADAU1466_Checked(uint32_t hz);
+bool adau1466_init_checked(uint32_t hz);
 // 互換wrapper。初期レート適用の失敗はログのみで、戻り値を持たない。
-void AUDIO_Init_ADAU1466(uint32_t hz);
+void adau1466_init(uint32_t hz);
 // レートを適用する。失敗時はfailureへ理由（SPI失敗／PLLタイムアウト等）を返す。
-bool AUDIO_Update_ADAU1466_SampleRate_Checked(uint32_t hz, adau1466_rate_failure_t* failure);
+bool adau1466_update_sample_rate_checked(uint32_t hz, adau1466_rate_failure_t* failure);
 // 互換wrapper。失敗理由は取得できない。
-bool AUDIO_Update_ADAU1466_SampleRate(uint32_t hz);
+bool adau1466_update_sample_rate(uint32_t hz);
 
-void set_dc_inputA(float ch_fader_position);
-void set_dc_inputB(float ch_fader_position);
-void safeload_write_q8_24(uint16_t addr, uint8_t mem_page, double val);
+void adau1466_set_dc_input_a(float ch_fader_position);
+void adau1466_set_dc_input_b(float ch_fader_position);
+void adau1466_safeload_write_q8_24(uint16_t addr, uint8_t mem_page, double val);
 
 // USB Gain/MuteはSPI書込み結果を返す。不正チャンネルはSIGMA_SPI_RESULT_INVALID_ARG。
-sigma_spi_result_t control_input_from_usb_gain(uint8_t ch, int16_t db);
-sigma_spi_result_t control_input_from_usb_mute(uint8_t ch, bool muted);
-void control_input_from_ch1_gain(const uint16_t adc_val);
-void control_input_from_ch2_gain(const uint16_t adc_val);
-void control_input_from_return_gain(const uint16_t adc_val);
-void mute_input_from_return(void);
+sigma_spi_result_t adau1466_control_input_from_usb_gain(uint8_t ch, int16_t db);
+sigma_spi_result_t adau1466_control_input_from_usb_mute(uint8_t ch, bool muted);
+void adau1466_control_input_from_ch1_gain(const uint16_t adc_val);
+void adau1466_control_input_from_ch2_gain(const uint16_t adc_val);
+void adau1466_control_input_from_return_gain(const uint16_t adc_val);
+void adau1466_mute_input_from_return(void);
 
-void control_send1_out_gain(const uint16_t adc_val);
-void control_send2_out_gain(const uint16_t adc_val);
+void adau1466_control_send1_out_gain(const uint16_t adc_val);
+void adau1466_control_send2_out_gain(const uint16_t adc_val);
 
-void control_dryA_out_gain(const uint16_t adc_val);
-void control_dryB_out_gain(const uint16_t adc_val);
+void adau1466_control_dry_a_out_gain(const uint16_t adc_val);
+void adau1466_control_dry_b_out_gain(const uint16_t adc_val);
 
-void control_wet_out_gain(const uint16_t adc_val);
-void control_ch1_out_gain(const uint16_t adc_val);
-void control_ch2_out_gain(const uint16_t adc_val);
-void control_hp_out_gain(const uint16_t adc_val);
+void adau1466_control_wet_out_gain(const uint16_t adc_val);
+void adau1466_control_ch1_out_gain(const uint16_t adc_val);
+void adau1466_control_ch2_out_gain(const uint16_t adc_val);
+void adau1466_control_hp_out_gain(const uint16_t adc_val);
 
-void select_input_type(AudioInputSource_t audio_input_source, uint8_t input_type);
-void set_input_insert_enabled(AudioInputSource_t audio_input_source, bool enabled);
-void select_send_source(AudioInputSource_t audio_input_source, bool select_insert);
+void adau1466_select_input_type(AudioInputSource_t audio_input_source, uint8_t input_type);
+void adau1466_set_input_insert_enabled(AudioInputSource_t audio_input_source, bool enabled);
+void adau1466_select_send_source(AudioInputSource_t audio_input_source, bool select_insert);
 
-void select_ch_fader_assign_a_source(AudioInputSource_t audio_input_source);
-void select_ch_fader_assign_b_source(AudioInputSource_t audio_input_source);
-void select_ch_fader_assign_post_source(AudioInputSource_t audio_input_source);
-void select_return_ch_source(AudioInputSource_t audio_input_source);
-void select_hp_out_source(HpSource_t hp_source);
+void adau1466_select_ch_fader_assign_a_source(AudioInputSource_t audio_input_source);
+void adau1466_select_ch_fader_assign_b_source(AudioInputSource_t audio_input_source);
+void adau1466_select_ch_fader_assign_post_source(AudioInputSource_t audio_input_source);
+void adau1466_select_return_ch_source(AudioInputSource_t audio_input_source);
+void adau1466_select_hp_out_source(HpSource_t hp_source);
 
 #endif /* INC_ADAU1466_H_ */

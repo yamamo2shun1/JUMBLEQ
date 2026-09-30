@@ -63,13 +63,13 @@ static struct { char op; int value; } calls[16];
 static int call_count, fail_call;
 static bool dsp_mute[5];
 static int dsp_gain[5];
-static sigma_spi_result_t control_input_from_usb_gain(uint8_t ch, int16_t db) {
+static sigma_spi_result_t adau1466_control_input_from_usb_gain(uint8_t ch, int16_t db) {
     assert(db>=-100 && db<=0); assert(call_count<16);
     calls[call_count].op='G'; calls[call_count++].value=db;
     if(call_count==fail_call) return SIGMA_SPI_RESULT_FAILED;
     dsp_gain[ch]=db; return SIGMA_SPI_RESULT_OK;
 }
-static sigma_spi_result_t control_input_from_usb_mute(uint8_t ch, bool value) {
+static sigma_spi_result_t adau1466_control_input_from_usb_mute(uint8_t ch, bool value) {
     assert(call_count<16); calls[call_count].op='M'; calls[call_count++].value=value;
     if(call_count==fail_call) return SIGMA_SPI_RESULT_FAILED;
     dsp_mute[ch]=value; return SIGMA_SPI_RESULT_OK;

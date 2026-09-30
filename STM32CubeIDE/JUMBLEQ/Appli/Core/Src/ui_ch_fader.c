@@ -157,7 +157,7 @@ static ch_fader_pair_runtime_t s_ch_fader_pairs[] = {
      .aux2_fade_down_idx = MAG_SW_NUM,
      .prev_idx          = CH_FADER_PAIR_A,
      .current_position  = &s_ch_fader.position_a,
-     .set_dc            = set_dc_inputA,
+     .set_dc            = adau1466_set_dc_input_a,
      },
     {
      .fade_up_idx       = 5,
@@ -166,7 +166,7 @@ static ch_fader_pair_runtime_t s_ch_fader_pairs[] = {
      .aux2_fade_down_idx = MAG_SW_NUM,
      .prev_idx          = CH_FADER_PAIR_B,
      .current_position  = &s_ch_fader.position_b,
-     .set_dc            = set_dc_inputB,
+     .set_dc            = adau1466_set_dc_input_b,
      },
 };
 
@@ -506,27 +506,27 @@ static float clamp_ch_fader_curve_width(float value)
     return value;
 }
 
-uint8_t get_current_ch_fader_a_position(void)
+uint8_t ui_ch_fader_get_position_a(void)
 {
     return s_ch_fader.position_a;
 }
 
-uint8_t get_current_ch_fader_b_position(void)
+uint8_t ui_ch_fader_get_position_b(void)
 {
     return s_ch_fader.position_b;
 }
 
-uint8_t ui_control_get_ch_fader_dvs_delay_ms(void)
+uint8_t ui_ch_fader_get_dvs_delay_ms(void)
 {
     return s_ch_fader_dvs_delay_ms;
 }
 
-bool ui_control_is_ch_fader_reverse_a_enabled(void)
+bool ui_ch_fader_is_reverse_a_enabled(void)
 {
     return s_ch_fader_reverse_a;
 }
 
-bool ui_control_is_ch_fader_reverse_b_enabled(void)
+bool ui_ch_fader_is_reverse_b_enabled(void)
 {
     return s_ch_fader_reverse_b;
 }

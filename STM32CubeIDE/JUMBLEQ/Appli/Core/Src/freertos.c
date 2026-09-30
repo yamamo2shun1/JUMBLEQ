@@ -297,7 +297,7 @@ void StartDefaultTask(void *argument)
     /* Infinite loop */
     for (;;)
     {
-        update_color_state();
+        led_update_color_state();
         osDelay(1000);
     }
   /* USER CODE END StartDefaultTask */
@@ -394,13 +394,13 @@ void StartAudioTask(void *argument)
 
     audio_control_reset_runtime_state();
 
-    AUDIO_Init_AK4619(96000);
+    ak4619_init(96000);
 
     /* もし、SigmaStudio+からUSBi経由で書き込み、デバッグを行う場合は
      * RESET_FROMFWを0に設定し、ここ以下の行で一旦ブレークして、
      * SigmaStudio+からダウンロードを実行すること。
      */
-    const bool dsp_rate_ok = AUDIO_Init_ADAU1466_Checked(48000);
+    const bool dsp_rate_ok = adau1466_init_checked(48000);
     audio_control_load_config_or_restore_defaults();
     osDelay(500);
 
@@ -460,10 +460,10 @@ void StartLEDTask(void *argument)
   /* USER CODE BEGIN StartLEDTask */
     (void) argument;
     wait_task_init_turn(TASK_INIT_TURN_LED);
-    reset_led_buffer();
+    led_reset_buffer();
 
-    set_led_color(0, 0, 0, 0);
-    renew();
+    led_set_color(0, 0, 0, 0);
+    led_renew_buffer();
     mark_task_init_done();
     release_next_task_init_turn(TASK_INIT_TURN_ADC);
 
@@ -472,7 +472,7 @@ void StartLEDTask(void *argument)
     {
         led_tx_blinking_task();
         led_rx_blinking_task();
-        rgb_led_task();
+        led_rgb_task();
         osDelay(5);
     }
   /* USER CODE END StartLEDTask */
@@ -491,7 +491,7 @@ void StartADCTask(void *argument)
     (void) argument;
     wait_task_init_turn(TASK_INIT_TURN_ADC);
 
-    start_adc();
+    ui_control_start_adc();
     osDelay(100);
     mark_task_init_done();
     release_next_task_init_turn(TASK_INIT_TURN_AUDIO);
@@ -518,8 +518,8 @@ void StartOLEDTask(void *argument)
     (void) argument;
     wait_task_init_turn(TASK_INIT_TURN_OLED);
 
-    OLED_Init();
-    OLED_ShowInitStatus("Waiting tasks...");
+    oled_init();
+    oled_show_init_status("Waiting tasks...");
     release_next_task_init_turn(TASK_INIT_TURN_LED);
 
     while (s_task_init_done_count < TASK_INIT_DONE_TARGET_COUNT)
@@ -527,13 +527,13 @@ void StartOLEDTask(void *argument)
         osDelay(20);
     }
 
-    OLED_ShowInitStatus("Init complete");
+    oled_show_init_status("Init complete");
     osDelay(200);
 
     /* Infinite loop */
     for (;;)
     {
-        OLED_UpdateTask();
+        oled_update_task();
         osDelay(20);
     }
   /* USER CODE END StartOLEDTask */

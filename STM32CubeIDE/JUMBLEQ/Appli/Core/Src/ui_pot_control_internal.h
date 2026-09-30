@@ -14,7 +14,7 @@
 #include "ui_adc_control_internal.h"
 #include "ui_routing_control_internal.h"
 
-// start_adc()のMUX初期化直後に、初期スキャンchannelを設定する。
+// ui_control_start_adc()のMUX初期化直後に、初期スキャンchannelを設定する。
 void ui_pot_control_set_initial_channel(void);
 
 // ADC完了ごとの1channelスキャンとDSP/MIDI反映。

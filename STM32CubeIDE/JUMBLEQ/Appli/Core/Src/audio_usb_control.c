@@ -217,10 +217,10 @@ static void audio_usb_feature_apply_channel(uint8_t channel,
 
     if (effective_mute)
     {
-        result = control_input_from_usb_mute(channel, true);
+        result = adau1466_control_input_from_usb_mute(channel, true);
         if (result == SIGMA_SPI_RESULT_OK)
         {
-            result = control_input_from_usb_gain(channel, effective_volume_db);
+            result = adau1466_control_input_from_usb_gain(channel, effective_volume_db);
             if (result != SIGMA_SPI_RESULT_OK)
             {
                 failed_operation = AUDIO_USB_FEATURE_OP_GAIN;
@@ -233,10 +233,10 @@ static void audio_usb_feature_apply_channel(uint8_t channel,
     }
     else
     {
-        result = control_input_from_usb_gain(channel, effective_volume_db);
+        result = adau1466_control_input_from_usb_gain(channel, effective_volume_db);
         if (result == SIGMA_SPI_RESULT_OK)
         {
-            result = control_input_from_usb_mute(channel, false);
+            result = adau1466_control_input_from_usb_mute(channel, false);
             if (result != SIGMA_SPI_RESULT_OK)
             {
                 failed_operation = AUDIO_USB_FEATURE_OP_MUTE;

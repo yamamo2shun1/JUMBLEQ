@@ -74,7 +74,7 @@ static const uint8_t s_ch_fader_led_index_b[CH_FADER_SLOT_COUNT]   = {9, 8, 7, 6
 
 static const float s_ch_fader_blink_peak_level = 80.0f;
 
-void update_color_state(void)
+void led_update_color_state(void)
 {
     is_color_update = true;
 }
@@ -85,7 +85,7 @@ void led_notify_save_success(void)
     s_save_blink_last_ms = 0U;
 }
 
-void reset_led_buffer(void)
+void led_reset_buffer(void)
 {
     for (int i = 0; i < DMA_BUF_SIZE; i++)
     {
@@ -132,21 +132,21 @@ void led_rx_blinking_task(void)
     HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
 }
 
-void set_led_color(uint8_t index, uint8_t red, uint8_t green, uint8_t blue)
+void led_set_color(uint8_t index, uint8_t red, uint8_t green, uint8_t blue)
 {
     grb[index][0] = green;
     grb[index][1] = red;
     grb[index][2] = blue;
 }
 
-void layer_led_color(uint8_t index, uint8_t red, uint8_t green, uint8_t blue)
+void led_layer_color(uint8_t index, uint8_t red, uint8_t green, uint8_t blue)
 {
     grb[index][0] |= green;
     grb[index][1] |= red;
     grb[index][2] |= blue;
 }
 
-void renew(void)
+void led_renew_buffer(void)
 {
     for (int k = 0; k < LED_NUMS; k++)
     {
@@ -217,21 +217,21 @@ static void set_vu_meter_generic(uint16_t sigma_addr, const uint8_t led_index_lo
     {
         if (i < active_on)
         {
-            set_led_color(led_index_low_to_high[i], s_vu_colors_low_to_high[i].r, s_vu_colors_low_to_high[i].g, s_vu_colors_low_to_high[i].b);
+            led_set_color(led_index_low_to_high[i], s_vu_colors_low_to_high[i].r, s_vu_colors_low_to_high[i].g, s_vu_colors_low_to_high[i].b);
         }
         else
         {
-            set_led_color(led_index_low_to_high[i], 0, 0, 0);
+            led_set_color(led_index_low_to_high[i], 0, 0, 0);
         }
     }
 }
 
-void set_vu_meter_a(void)
+void led_set_vu_meter_a(void)
 {
     set_vu_meter_generic(MOD_DSPREADBACK_A_VALUE_ADDR, s_vu_led_index_a);
 }
 
-void set_vu_meter_b(void)
+void led_set_vu_meter_b(void)
 {
     set_vu_meter_generic(MOD_DSPREADBACK_B_VALUE_ADDR, s_vu_led_index_b);
 }
@@ -261,15 +261,15 @@ static void layer_ch_fader_position(uint8_t led_index, uint8_t white_level)
 {
     for (uint8_t i = 0; i < LED_NUMS; i++)
     {
-        layer_led_color(i, 0, 0, 0);
+        led_layer_color(i, 0, 0, 0);
     }
-    layer_led_color(led_index, white_level, white_level, white_level);
+    led_layer_color(led_index, white_level, white_level, white_level);
 }
 
-void layer_ch_fader_a_position(void)
+void led_layer_ch_fader_a_position(void)
 {
     static uint8_t blink_count_a  = 0;
-    const uint8_t ch_fader_position          = get_current_ch_fader_a_position();
+    const uint8_t ch_fader_position          = ui_ch_fader_get_position_a();
     const uint8_t white_level     = calc_white_level(blink_count_a);
     const uint8_t slot            = calc_ch_fader_slot(ch_fader_position);
     const uint8_t led_index_for_a = s_ch_fader_led_index_a[slot];
@@ -278,10 +278,10 @@ void layer_ch_fader_a_position(void)
     blink_count_a = (blink_count_a + 1) % BLINK_COUNT_MAX;
 }
 
-void layer_ch_fader_b_position(void)
+void led_layer_ch_fader_b_position(void)
 {
     static uint8_t blink_count_b  = 0;
-    const uint8_t ch_fader_position          = get_current_ch_fader_b_position();
+    const uint8_t ch_fader_position          = ui_ch_fader_get_position_b();
     const uint8_t white_level     = calc_white_level(blink_count_b);
     const uint8_t slot            = calc_ch_fader_slot(ch_fader_position);
     const uint8_t led_index_for_b = s_ch_fader_led_index_b[slot];
@@ -290,13 +290,13 @@ void layer_ch_fader_b_position(void)
     blink_count_b = (blink_count_b + 1) % BLINK_COUNT_MAX;
 }
 
-void rgb_led_task(void)
+void led_rgb_task(void)
 {
-    set_vu_meter_a();
-    set_vu_meter_b();
-    layer_ch_fader_a_position();
-    layer_ch_fader_b_position();
-    renew();
+    led_set_vu_meter_a();
+    led_set_vu_meter_b();
+    led_layer_ch_fader_a_position();
+    led_layer_ch_fader_b_position();
+    led_renew_buffer();
 
     if (s_save_blink_remaining > 0U)
     {
