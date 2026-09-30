@@ -71,7 +71,7 @@ bool ui_control_get_display_snapshot(UI_DisplaySnapshot_t* snapshot);
 void ui_control_notify_uf2_displays_cleared(void);
 float ui_control_evaluate_ch_fader_curve_preview(uint8_t cc_value, float normalized_preview_position);
 
-void start_adc(void);
+void ui_control_start_adc(void);
 void ui_control_task(void);
 void ui_control_enable_runtime_processing(void);
 

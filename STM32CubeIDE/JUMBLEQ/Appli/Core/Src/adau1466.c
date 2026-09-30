@@ -457,7 +457,7 @@ static bool adau1466_safeload_write_words(uint16_t addr, uint8_t mem_page, const
     return true;
 }
 
-double convert_pot2dB(uint16_t adc_val)
+double adau1466_convert_pot_to_db(uint16_t adc_val)
 {
     double x  = (double) normalize_pot10_ratio(adc_val);
     double db = 0.0;
@@ -472,7 +472,7 @@ double convert_pot2dB(uint16_t adc_val)
     return db;
 }
 
-int16_t convert_pot2dB_int(uint16_t adc_val)
+int16_t adau1466_convert_pot_to_db_int(uint16_t adc_val)
 {
     // Pot end-stop付近のADCノイズで表示/制御値が揺れないように端点デッドゾーンを設ける
     if (adc_val <= POT_10BIT_MIN_DEADZONE)
@@ -484,7 +484,7 @@ int16_t convert_pot2dB_int(uint16_t adc_val)
         return 10;
     }
 
-    double db    = convert_pot2dB(adc_val);
+    double db    = adau1466_convert_pot_to_db(adc_val);
     int16_t db_i = (int16_t) ((db >= 0.0) ? (db + 0.5) : (db - 0.5));
     if (db_i < -80)
     {
@@ -497,7 +497,7 @@ int16_t convert_pot2dB_int(uint16_t adc_val)
     return db_i;
 }
 
-double convert_dB2gain(double db)
+double adau1466_convert_db_to_gain(double db)
 {
     return pow(10.0, db / 20.0);
 }
@@ -526,8 +526,8 @@ static void adau1466_write_indexed_q8_24(const uint16_t* addr_table, uint32_t co
 
 static void adau1466_write_pot_gain(uint16_t addr, uint16_t adc_val)
 {
-    const double db   = (double) convert_pot2dB_int(adc_val);
-    const double gain = convert_dB2gain(db);
+    const double db   = (double) adau1466_convert_pot_to_db_int(adc_val);
+    const double gain = adau1466_convert_db_to_gain(db);
     write_q8_24(addr, gain);
 }
 
@@ -610,14 +610,14 @@ static void adau1466_select_ch_fader_source(uint16_t addr, AudioInputSource_t au
     adau1466_write_int_mux(addr, mux_index);
 }
 
-void safeload_write_q8_24(uint16_t addr, uint8_t mem_page, double val)
+void adau1466_safeload_write_q8_24(uint16_t addr, uint8_t mem_page, double val)
 {
     uint8_t safeload_data[4] = {0x00};
     adau1466_store_be32(adau1466_q8_24_to_raw(val), safeload_data);
     (void) adau1466_safeload_write_words(addr, mem_page, safeload_data, 1U, NULL);
 }
 
-bool AUDIO_Init_ADAU1466_Checked(uint32_t hz)
+bool adau1466_init_checked(uint32_t hz)
 {
     // ADAU1466 HW Reset
     HAL_GPIO_WritePin(DSP_RESET_GPIO_Port, DSP_RESET_Pin, 0);
@@ -632,7 +632,7 @@ bool AUDIO_Init_ADAU1466_Checked(uint32_t hz)
     osDelay(5);
 #endif
 
-    if (!AUDIO_Update_ADAU1466_SampleRate(hz))
+    if (!adau1466_update_sample_rate(hz))
     {
         SEGGER_RTT_printf(0, "[ADAU1466] initialization failed for %lu Hz\n", (unsigned long) hz);
         return false;
@@ -641,9 +641,9 @@ bool AUDIO_Init_ADAU1466_Checked(uint32_t hz)
     return true;
 }
 
-void AUDIO_Init_ADAU1466(uint32_t hz)
+void adau1466_init(uint32_t hz)
 {
-    (void) AUDIO_Init_ADAU1466_Checked(hz);
+    (void) adau1466_init_checked(hz);
 }
 
 // DSPレート適用の失敗理由を記録する。SPI結果・HAL結果は失敗した呼出し固有の
@@ -666,7 +666,7 @@ static void adau1466_rate_failure_record(adau1466_rate_failure_t* failure,
     failure->spi_abort_status = (detail != NULL) ? detail->abort_status : 0u;
 }
 
-bool AUDIO_Update_ADAU1466_SampleRate_Checked(uint32_t hz, adau1466_rate_failure_t* failure)
+bool adau1466_update_sample_rate_checked(uint32_t hz, adau1466_rate_failure_t* failure)
 {
     adau1466_sample_rate_cfg_t cfg;
 
@@ -781,24 +781,24 @@ bool AUDIO_Update_ADAU1466_SampleRate_Checked(uint32_t hz, adau1466_rate_failure
     return true;
 }
 
-bool AUDIO_Update_ADAU1466_SampleRate(uint32_t hz)
+bool adau1466_update_sample_rate(uint32_t hz)
 {
-    return AUDIO_Update_ADAU1466_SampleRate_Checked(hz, NULL);
+    return adau1466_update_sample_rate_checked(hz, NULL);
 }
 
-void set_dc_inputA(float ch_fader_position)
+void adau1466_set_dc_input_a(float ch_fader_position)
 {
     adau1466_write_indexed_q8_24(s_dc_input_addr, ADAU1466_DC_INPUT_COUNT,
                                  ADAU1466_DC_INPUT_A, ch_fader_position);
 }
 
-void set_dc_inputB(float ch_fader_position)
+void adau1466_set_dc_input_b(float ch_fader_position)
 {
     adau1466_write_indexed_q8_24(s_dc_input_addr, ADAU1466_DC_INPUT_COUNT,
                                  ADAU1466_DC_INPUT_B, ch_fader_position);
 }
 
-sigma_spi_result_t control_input_from_usb_gain(uint8_t ch, int16_t db)
+sigma_spi_result_t adau1466_control_input_from_usb_gain(uint8_t ch, int16_t db)
 {
     SEGGER_RTT_printf(0, "USB CH%d Gain: %d dB\n", ch, db);
 
@@ -807,10 +807,10 @@ sigma_spi_result_t control_input_from_usb_gain(uint8_t ch, int16_t db)
         return SIGMA_SPI_RESULT_INVALID_ARG;
     }
 
-    return write_q8_24(s_usb_gain_addr[(uint32_t) ch - 1U], convert_dB2gain(db));
+    return write_q8_24(s_usb_gain_addr[(uint32_t) ch - 1U], adau1466_convert_db_to_gain(db));
 }
 
-sigma_spi_result_t control_input_from_usb_mute(uint8_t ch, bool muted)
+sigma_spi_result_t adau1466_control_input_from_usb_mute(uint8_t ch, bool muted)
 {
     if ((ch < 1U) || ((uint16_t) ch > ADAU1466_USB_CH_COUNT))
     {
@@ -821,72 +821,72 @@ sigma_spi_result_t control_input_from_usb_mute(uint8_t ch, bool muted)
     return write_q8_24(s_usb_mute_addr[(uint32_t) ch - 1U], muted ? 0.0 : 1.0);
 }
 
-void control_input_from_ch1_gain(const uint16_t adc_val)
+void adau1466_control_input_from_ch1_gain(const uint16_t adc_val)
 {
     adau1466_write_pot_gain(MOD_INPUT_FROM_CH1_GAIN_ADDR, adc_val);
 }
 
-void control_input_from_ch2_gain(const uint16_t adc_val)
+void adau1466_control_input_from_ch2_gain(const uint16_t adc_val)
 {
     adau1466_write_pot_gain(MOD_INPUT_FROM_CH2_GAIN_ADDR, adc_val);
 }
 
-void control_input_from_return_gain(const uint16_t adc_val)
+void adau1466_control_input_from_return_gain(const uint16_t adc_val)
 {
     adau1466_write_pot_gain(MOD_INPUT_FROM_RETURN_GAIN_ADDR, adc_val);
 }
 
-void mute_input_from_return(void)
+void adau1466_mute_input_from_return(void)
 {
     write_q8_24(MOD_INPUT_FROM_RETURN_GAIN_ADDR, 0.0);
 }
 
-void control_send1_out_gain(const uint16_t adc_val)
+void adau1466_control_send1_out_gain(const uint16_t adc_val)
 {
     adau1466_write_pot_gain(MOD_SEND1_OUTPUT_GAIN_ADDR, adc_val);
 }
 
-void control_send2_out_gain(const uint16_t adc_val)
+void adau1466_control_send2_out_gain(const uint16_t adc_val)
 {
     adau1466_write_pot_gain(MOD_SEND2_OUTPUT_GAIN_ADDR, adc_val);
 }
 
-void control_dryA_out_gain(const uint16_t adc_val)
+void adau1466_control_dry_a_out_gain(const uint16_t adc_val)
 {
     const float rate = cos(pow(normalize_pot10_snap_ratio(adc_val), 2.0f) * M_PI_2);
     adau1466_write_indexed_q8_24(s_dry_dc_addr, ADAU1466_DRY_DC_COUNT,
                                  ADAU1466_DRY_DC_A, rate);
 }
 
-void control_dryB_out_gain(const uint16_t adc_val)
+void adau1466_control_dry_b_out_gain(const uint16_t adc_val)
 {
     const float rate = cos(pow(normalize_pot10_snap_ratio(adc_val), 2.0f) * M_PI_2);
     adau1466_write_indexed_q8_24(s_dry_dc_addr, ADAU1466_DRY_DC_COUNT,
                                  ADAU1466_DRY_DC_B, rate);
 }
 
-void control_wet_out_gain(const uint16_t adc_val)
+void adau1466_control_wet_out_gain(const uint16_t adc_val)
 {
     const float rate = sin(pow(normalize_pot10_snap_ratio(adc_val), 2.0f) * M_PI_2);
     write_q8_24(MOD_DCINPUT_WET_DCVALUE_ADDR, rate);
 }
 
-void control_ch1_out_gain(const uint16_t adc_val)
+void adau1466_control_ch1_out_gain(const uint16_t adc_val)
 {
     adau1466_write_pot_gain(MOD_CH1_OUTPUT_GAIN_ADDR, adc_val);
 }
 
-void control_ch2_out_gain(const uint16_t adc_val)
+void adau1466_control_ch2_out_gain(const uint16_t adc_val)
 {
     adau1466_write_pot_gain(MOD_CH2_OUTPUT_GAIN_ADDR, adc_val);
 }
 
-void control_hp_out_gain(const uint16_t adc_val)
+void adau1466_control_hp_out_gain(const uint16_t adc_val)
 {
     adau1466_write_pot_gain(MOD_HP_OUTPUT_GAIN_ADDR, adc_val);
 }
 
-void select_input_type(AudioInputSource_t audio_input_source, uint8_t input_type)
+void adau1466_select_input_type(AudioInputSource_t audio_input_source, uint8_t input_type)
 {
     const adau1466_safeload_selector_t* selector;
 
@@ -904,7 +904,7 @@ void select_input_type(AudioInputSource_t audio_input_source, uint8_t input_type
     (void) adau1466_write_two_way_safeload(selector, (input_type == INPUT_TYPE_PHONO) ? 1U : 0U);
 }
 
-void set_input_insert_enabled(AudioInputSource_t audio_input_source, bool enabled)
+void adau1466_set_input_insert_enabled(AudioInputSource_t audio_input_source, bool enabled)
 {
     const adau1466_safeload_selector_t* selector;
 
@@ -917,7 +917,7 @@ void set_input_insert_enabled(AudioInputSource_t audio_input_source, bool enable
     (void) adau1466_write_two_way_safeload(selector, enabled ? 1U : 0U);
 }
 
-void select_send_source(AudioInputSource_t audio_input_source, bool select_insert)
+void adau1466_select_send_source(AudioInputSource_t audio_input_source, bool select_insert)
 {
     uint16_t addr;
 
@@ -930,25 +930,25 @@ void select_send_source(AudioInputSource_t audio_input_source, bool select_inser
     adau1466_write_int_mux_it(addr, select_insert ? 1U : 0U);
 }
 
-void select_ch_fader_assign_a_source(AudioInputSource_t audio_input_source)
+void adau1466_select_ch_fader_assign_a_source(AudioInputSource_t audio_input_source)
 {
     adau1466_select_ch_fader_source(s_ch_fader_assign_addr[ADAU1466_CH_FADER_TARGET_A],
                                     audio_input_source);
 }
 
-void select_ch_fader_assign_b_source(AudioInputSource_t audio_input_source)
+void adau1466_select_ch_fader_assign_b_source(AudioInputSource_t audio_input_source)
 {
     adau1466_select_ch_fader_source(s_ch_fader_assign_addr[ADAU1466_CH_FADER_TARGET_B],
                                     audio_input_source);
 }
 
-void select_ch_fader_assign_post_source(AudioInputSource_t audio_input_source)
+void adau1466_select_ch_fader_assign_post_source(AudioInputSource_t audio_input_source)
 {
     adau1466_select_ch_fader_source(s_ch_fader_assign_addr[ADAU1466_CH_FADER_TARGET_POST],
                                     audio_input_source);
 }
 
-void select_return_ch_source(AudioInputSource_t audio_input_source)
+void adau1466_select_return_ch_source(AudioInputSource_t audio_input_source)
 {
     uint8_t mux_index;
 
@@ -960,7 +960,7 @@ void select_return_ch_source(AudioInputSource_t audio_input_source)
     adau1466_write_int_mux(MOD_RETURN_CH_SW_INDEX_ADDR, mux_index);
 }
 
-void select_hp_out_source(HpSource_t hp_source)
+void adau1466_select_hp_out_source(HpSource_t hp_source)
 {
     uint8_t mux_index = 0U;
 

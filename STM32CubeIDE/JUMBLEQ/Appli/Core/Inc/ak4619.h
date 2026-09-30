@@ -15,8 +15,8 @@
 #define AK4619_MIC_GAIN_DB_0  0U
 #define AK4619_MIC_GAIN_DB_27 27U
 
-void AUDIO_Init_AK4619(uint32_t hz);
+void ak4619_init(uint32_t hz);
 
-void AUDIO_Mic_Gain_AMP_Setting_Channel(uint8_t ch, uint8_t gain_db);
+void ak4619_set_mic_amp_gain(uint8_t ch, uint8_t gain_db);
 
 #endif /* INC_AK4619_H_ */

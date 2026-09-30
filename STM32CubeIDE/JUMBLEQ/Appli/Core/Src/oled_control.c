@@ -299,7 +299,7 @@ static bool wait_main_oled_ready(uint32_t timeout_ms)
     return false;
 }
 
-void OLED_Init(void)
+void oled_init(void)
 {
     // Power-up直後はOLED側I2C応答まで時間がかかる場合があるため、初回のみ待機する
     (void) wait_main_oled_ready(500);
@@ -317,7 +317,7 @@ void OLED_Init(void)
     sub_oled_UpdateScreen();
 }
 
-void OLED_ShowInitStatus(const char* text)
+void oled_show_init_status(const char* text)
 {
     const char* msg = (text == NULL) ? "" : text;
 
@@ -329,7 +329,7 @@ void OLED_ShowInitStatus(const char* text)
     main_oled_UpdateScreen();
 }
 
-void OLED_UpdateTask(void)
+void oled_update_task(void)
 {
     UI_DisplaySnapshot_t snapshot;
 

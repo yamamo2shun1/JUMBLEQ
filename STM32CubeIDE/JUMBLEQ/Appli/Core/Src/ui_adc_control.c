@@ -45,20 +45,20 @@ void ui_adc_control_reset(void)
     is_adc_complete = false;
 }
 
-void ui_control_dma_adc_cplt(DMA_HandleTypeDef* hdma)
+void ui_adc_control_dma_cplt(DMA_HandleTypeDef* hdma)
 {
     (void) hdma;
     is_adc_complete = true;
     __DSB();
 }
 
-void ui_control_set_adc_complete(bool complete)
+void ui_adc_control_set_complete(bool complete)
 {
     is_adc_complete = complete;
     __DMB();
 }
 
-void start_adc(void)
+void ui_control_start_adc(void)
 {
     if (MX_List_HPDMA1_Channel0_Config() != HAL_OK)
     {
@@ -82,7 +82,7 @@ void start_adc(void)
     SET_BIT(hadc1.Instance->CFGR, ADC_CFGR_DMAEN);
     SET_BIT(hadc1.Instance->CFGR, ADC_CFGR_DMACFG);
 
-    handle_HPDMA1_Channel0.XferCpltCallback = ui_control_dma_adc_cplt;
+    handle_HPDMA1_Channel0.XferCpltCallback = ui_adc_control_dma_cplt;
     if (HAL_DMAEx_List_Start_IT(&handle_HPDMA1_Channel0) != HAL_OK)
     {
         Error_Handler();

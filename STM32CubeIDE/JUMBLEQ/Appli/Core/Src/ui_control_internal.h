@@ -83,7 +83,5 @@ bool ui_control_validate_persist_state(const UI_ControlPersistState_t* state);
 bool ui_control_apply_persist_state(const UI_ControlPersistState_t* state);
 
 void ui_control_reset_state(void);
-void ui_control_set_adc_complete(bool complete);
-void ui_control_dma_adc_cplt(DMA_HandleTypeDef* hdma);
 
 #endif /* UI_CONTROL_INTERNAL_H_ */

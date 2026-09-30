@@ -10,15 +10,15 @@
 
 #include <stdint.h>
 
-void update_color_state(void);
-void reset_led_buffer(void);
+void led_update_color_state(void);
+void led_reset_buffer(void);
 
 void led_tx_blinking_task(void);
 void led_rx_blinking_task(void);
 
-void set_led_color(uint8_t index, uint8_t red, uint8_t green, uint8_t blue);
-void renew(void);
-void rgb_led_task(void);
+void led_set_color(uint8_t index, uint8_t red, uint8_t green, uint8_t blue);
+void led_renew_buffer(void);
+void led_rgb_task(void);
 void led_notify_save_success(void);
 
 #endif /* INC_LED_CONTROL_H_ */

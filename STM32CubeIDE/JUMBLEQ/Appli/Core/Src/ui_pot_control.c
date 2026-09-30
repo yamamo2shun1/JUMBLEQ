@@ -154,29 +154,29 @@ static void apply_dry_wet_value(uint16_t value, UI_RoutingSource_t return_source
     switch (return_source)
     {
     case UI_ROUTING_SOURCE_USB12:
-        control_dryA_out_gain(value);
-        control_dryB_out_gain(0U);
+        adau1466_control_dry_a_out_gain(value);
+        adau1466_control_dry_b_out_gain(0U);
         break;
     case UI_ROUTING_SOURCE_USB34:
-        control_dryA_out_gain(0U);
-        control_dryB_out_gain(value);
+        adau1466_control_dry_a_out_gain(0U);
+        adau1466_control_dry_b_out_gain(value);
         break;
     case UI_ROUTING_SOURCE_NONE:
     default:
         // A zero Dry/Wet value maps to unity dry and zero wet.
-        control_dryA_out_gain(0U);
-        control_dryB_out_gain(0U);
-        control_wet_out_gain(0U);
+        adau1466_control_dry_a_out_gain(0U);
+        adau1466_control_dry_b_out_gain(0U);
+        adau1466_control_wet_out_gain(0U);
         return;
     }
-    control_wet_out_gain(value);
+    adau1466_control_wet_out_gain(value);
 }
 
 void ui_pot_control_apply_return_outputs(UI_RoutingSource_t return_source)
 {
     if (return_source != UI_ROUTING_SOURCE_NONE)
     {
-        control_input_from_return_gain(s_pot.pot_val[POT_CH_RETURN_IN]);
+        adau1466_control_input_from_return_gain(s_pot.pot_val[POT_CH_RETURN_IN]);
     }
     apply_dry_wet_value(s_pot.pot_val[POT_CH_DRY_WET], return_source);
 }
@@ -232,7 +232,7 @@ static void apply_pot_value(uint8_t channel, uint16_t value, bool synth_mode_act
         }
         break;
     case POT_CH_CH1_IN:
-        control_input_from_ch1_gain(value);
+        adau1466_control_input_from_ch1_gain(value);
         break;
     case POT_CH_CC2:
         timecode_synth_set_control(TIMECODE_SYNTH_CONTROL_SLOPE, (uint8_t) value);
@@ -256,13 +256,13 @@ static void apply_pot_value(uint8_t channel, uint16_t value, bool synth_mode_act
         }
         break;
     case POT_CH_CH2_IN:
-        control_input_from_ch2_gain(value);
+        adau1466_control_input_from_ch2_gain(value);
         break;
     case POT_CH_CH1_OUT:
-        control_ch1_out_gain(value);
+        adau1466_control_ch1_out_gain(value);
         break;
     case POT_CH_CH2_OUT:
-        control_ch2_out_gain(value);
+        adau1466_control_ch2_out_gain(value);
         break;
     case POT_CH_DRY_WET:
         apply_dry_wet_value(value, return_source);
@@ -270,15 +270,15 @@ static void apply_pot_value(uint8_t channel, uint16_t value, bool synth_mode_act
     case POT_CH_RETURN_IN:
         if (return_source == UI_ROUTING_SOURCE_NONE)
         {
-            mute_input_from_return();
+            adau1466_mute_input_from_return();
         }
         else
         {
-            control_input_from_return_gain(value);
+            adau1466_control_input_from_return_gain(value);
         }
         break;
     case POT_CH_HP_OUT:
-        control_hp_out_gain(value);
+        adau1466_control_hp_out_gain(value);
         break;
     case POT_CH_MAG0:
     case POT_CH_MAG1:

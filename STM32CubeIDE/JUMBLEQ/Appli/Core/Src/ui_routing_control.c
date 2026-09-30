@@ -119,7 +119,7 @@ static void apply_mic_gain_amp_setting(AudioInputSource_t audio_input_source, ui
         return;
     }
 
-    AUDIO_Mic_Gain_AMP_Setting_Channel(codec_ch, gain_db);
+    ak4619_set_mic_amp_gain(codec_ch, gain_db);
 }
 
 void ui_routing_apply_input_type(AudioInputSource_t audio_input_source, uint8_t input_type)
@@ -127,7 +127,7 @@ void ui_routing_apply_input_type(AudioInputSource_t audio_input_source, uint8_t 
     const UI_RoutingSource_t new_source =
         input_src_from_channel_type(audio_input_source, input_type);
 
-    select_input_type(audio_input_source, input_type);
+    adau1466_select_input_type(audio_input_source, input_type);
     apply_mic_gain_amp_setting(audio_input_source, input_type);
 
     if (audio_input_source == AUDIO_INPUT_SOURCE_CH1)
@@ -165,34 +165,34 @@ static void apply_send_source_selection(AudioInputSource_t audio_input_source)
         const bool select_insert =
             input_mode_uses_insert(s_routing.current_ch1_input_mode) ||
             is_usb_assign(s_routing.current_ch_fader_a_assign);
-        select_send_source(AUDIO_INPUT_SOURCE_CH1, select_insert);
+        adau1466_select_send_source(AUDIO_INPUT_SOURCE_CH1, select_insert);
     }
     else if (audio_input_source == AUDIO_INPUT_SOURCE_CH2)
     {
         const bool select_insert =
             input_mode_uses_insert(s_routing.current_ch2_input_mode) ||
             is_usb_assign(s_routing.current_ch_fader_b_assign);
-        select_send_source(AUDIO_INPUT_SOURCE_CH2, select_insert);
+        adau1466_select_send_source(AUDIO_INPUT_SOURCE_CH2, select_insert);
     }
 }
 
 void ui_routing_apply_ch_fader_assign_a(AudioInputSource_t audio_input_source)
 {
-    select_ch_fader_assign_a_source(audio_input_source);
+    adau1466_select_ch_fader_assign_a_source(audio_input_source);
     s_routing.current_ch_fader_a_assign = current_input_src_from_channel(audio_input_source);
     apply_send_source_selection(AUDIO_INPUT_SOURCE_CH1);
 }
 
 void ui_routing_apply_ch_fader_assign_b(AudioInputSource_t audio_input_source)
 {
-    select_ch_fader_assign_b_source(audio_input_source);
+    adau1466_select_ch_fader_assign_b_source(audio_input_source);
     s_routing.current_ch_fader_b_assign = current_input_src_from_channel(audio_input_source);
     apply_send_source_selection(AUDIO_INPUT_SOURCE_CH2);
 }
 
 void ui_routing_apply_ch_fader_assign_post(AudioInputSource_t audio_input_source)
 {
-    select_ch_fader_assign_post_source(audio_input_source);
+    adau1466_select_ch_fader_assign_post_source(audio_input_source);
     s_routing.current_ch_fader_post_assign = current_input_src_from_channel(audio_input_source);
 }
 
@@ -203,7 +203,7 @@ void ui_routing_apply_hp_out_source(HpSource_t hp_source)
         return;
     }
 
-    select_hp_out_source(hp_source);
+    adau1466_select_hp_out_source(hp_source);
     s_routing.current_hp_out_source = hp_source;
 }
 
@@ -211,7 +211,7 @@ void ui_routing_apply_input_mode(AudioInputSource_t audio_input_source, UI_Input
 {
     const bool enable_insert = input_mode_uses_insert((uint8_t) mode);
 
-    set_input_insert_enabled(audio_input_source, enable_insert);
+    adau1466_set_input_insert_enabled(audio_input_source, enable_insert);
     if (audio_input_source == AUDIO_INPUT_SOURCE_CH1)
     {
         s_routing.current_ch1_input_mode = (uint8_t) mode;
@@ -251,11 +251,11 @@ UI_RoutingSource_t ui_routing_apply_return_source(UI_RoutingSource_t routing_sou
     if (!routing_source_to_return_audio_input_source(routing_source, &audio_input_source))
     {
         s_routing.current_return_assign = UI_ROUTING_SOURCE_NONE;
-        mute_input_from_return();
+        adau1466_mute_input_from_return();
         return UI_ROUTING_SOURCE_NONE;
     }
 
-    select_return_ch_source(audio_input_source);
+    adau1466_select_return_ch_source(audio_input_source);
     s_routing.current_return_assign = routing_source;
     return routing_source;
 }
@@ -484,12 +484,12 @@ static bool get_current_ch2_dvs_enabled(void)
     return (s_routing.current_ch2_input_mode == UI_INPUT_MODE_DVS);
 }
 
-UI_InputMode_t get_current_ch1_input_mode(void)
+UI_InputMode_t ui_routing_get_ch1_input_mode(void)
 {
     return (UI_InputMode_t) s_routing.current_ch1_input_mode;
 }
 
-UI_InputMode_t get_current_ch2_input_mode(void)
+UI_InputMode_t ui_routing_get_ch2_input_mode(void)
 {
     return (UI_InputMode_t) s_routing.current_ch2_input_mode;
 }
@@ -591,13 +591,13 @@ void ui_routing_capture_display_state(UI_RoutingDisplayState_t* state)
 
     const uint8_t src_a_channel = get_current_input_srcA_channel();
     state->input_source_a_mode_visible = (src_a_channel != 0U);
-    state->input_source_a_mode = (src_a_channel == 1U) ? get_current_ch1_input_mode()
-                                                       : ((src_a_channel == 2U) ? get_current_ch2_input_mode()
+    state->input_source_a_mode = (src_a_channel == 1U) ? ui_routing_get_ch1_input_mode()
+                                                       : ((src_a_channel == 2U) ? ui_routing_get_ch2_input_mode()
                                                                                 : UI_INPUT_MODE_DISABLED);
 
     const uint8_t src_b_channel = get_current_input_srcB_channel();
     state->input_source_b_mode_visible = (src_b_channel != 0U);
-    state->input_source_b_mode = (src_b_channel == 1U) ? get_current_ch1_input_mode()
-                                                       : ((src_b_channel == 2U) ? get_current_ch2_input_mode()
+    state->input_source_b_mode = (src_b_channel == 1U) ? ui_routing_get_ch1_input_mode()
+                                                       : ((src_b_channel == 2U) ? ui_routing_get_ch2_input_mode()
                                                                                 : UI_INPUT_MODE_DISABLED);
 }

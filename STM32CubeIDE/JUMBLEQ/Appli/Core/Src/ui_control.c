@@ -469,7 +469,7 @@ static bool dispatch_midi_program_change(uint8_t channel, uint8_t program)
     {
         ui_ch_fader_set_reverse(0U, (program == UI_MIDI_PROGRAM_CH_FADER_REVERSE_A_ON));
         ui_control_reapply_ch_fader_outputs();
-        SEGGER_RTT_printf(0, "Channel fader A Reverse: %s (PC%u)\r\n", ui_control_is_ch_fader_reverse_a_enabled() ? "ON" : "OFF", (unsigned) program);
+        SEGGER_RTT_printf(0, "Channel fader A Reverse: %s (PC%u)\r\n", ui_ch_fader_is_reverse_a_enabled() ? "ON" : "OFF", (unsigned) program);
         return true;
     }
 
@@ -477,7 +477,7 @@ static bool dispatch_midi_program_change(uint8_t channel, uint8_t program)
     {
         ui_ch_fader_set_reverse(1U, (program == UI_MIDI_PROGRAM_CH_FADER_REVERSE_B_ON));
         ui_control_reapply_ch_fader_outputs();
-        SEGGER_RTT_printf(0, "Channel fader B Reverse: %s (PC%u)\r\n", ui_control_is_ch_fader_reverse_b_enabled() ? "ON" : "OFF", (unsigned) program);
+        SEGGER_RTT_printf(0, "Channel fader B Reverse: %s (PC%u)\r\n", ui_ch_fader_is_reverse_b_enabled() ? "ON" : "OFF", (unsigned) program);
         return true;
     }
 
@@ -641,7 +641,7 @@ static bool dispatch_midi_control_change(uint8_t channel, uint8_t number, uint8_
         SEGGER_RTT_printf(0,
                           "DVS fader delay updated by CC%u Ch15 -> %u ms\r\n",
                           (unsigned) number,
-                          (unsigned) ui_control_get_ch_fader_dvs_delay_ms());
+                          (unsigned) ui_ch_fader_get_dvs_delay_ms());
         return true;
     }
 
@@ -744,12 +744,12 @@ bool ui_control_get_display_snapshot(UI_DisplaySnapshot_t* snapshot)
     local.uf2_seconds_remaining  = uf2_state.seconds_remaining;
 
     local.sample_rate_hz = sample_rate_hz;
-    local.ch1_input_db   = convert_pot2dB_int(pot_state.ch1_input);
-    local.ch2_input_db   = convert_pot2dB_int(pot_state.ch2_input);
-    local.ch1_output_db  = convert_pot2dB_int(pot_state.ch1_output);
-    local.ch2_output_db  = convert_pot2dB_int(pot_state.ch2_output);
-    local.return_db      = convert_pot2dB_int(pot_state.return_input);
-    local.hp_output_db   = convert_pot2dB_int(pot_state.hp_output);
+    local.ch1_input_db   = adau1466_convert_pot_to_db_int(pot_state.ch1_input);
+    local.ch2_input_db   = adau1466_convert_pot_to_db_int(pot_state.ch2_input);
+    local.ch1_output_db  = adau1466_convert_pot_to_db_int(pot_state.ch1_output);
+    local.ch2_output_db  = adau1466_convert_pot_to_db_int(pot_state.ch2_output);
+    local.return_db      = adau1466_convert_pot_to_db_int(pot_state.return_input);
+    local.hp_output_db   = adau1466_convert_pot_to_db_int(pot_state.hp_output);
     local.return_enabled = routing_state.return_enabled;
 
     local.ch_fader_curve_a_cc   = ui_ch_fader_curve_width_to_midi_cc(ch_fader_state.curve_width_a);

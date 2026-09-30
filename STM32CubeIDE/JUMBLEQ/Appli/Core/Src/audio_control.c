@@ -15,6 +15,7 @@
 #include "audio_usb_control_internal.h"
 #include "eeprom_config_internal.h"
 #include "ui_control_internal.h"
+#include "ui_adc_control_internal.h"
 #include "ui_routing_control_internal.h"
 #include "timecode_synth.h"
 
@@ -630,9 +631,9 @@ void audio_task(void)
         // timecodeの非緊急更新はDMA搬送後に行う。
         timecode_synth_update();
         timecode_synth_set_channel_enabled(
-            0u, get_current_ch1_input_mode() == UI_INPUT_MODE_SYNTH);
+            0u, ui_routing_get_ch1_input_mode() == UI_INPUT_MODE_SYNTH);
         timecode_synth_set_channel_enabled(
-            1u, get_current_ch2_input_mode() == UI_INPUT_MODE_SYNTH);
+            1u, ui_routing_get_ch2_input_mode() == UI_INPUT_MODE_SYNTH);
     }
 
     // 呼び出し頻度計測と周期診断は最も低い優先度で行う。
@@ -673,7 +674,7 @@ static bool audio_rate_switch_restart_adc(AudioTransportFailure_t* failure)
                                        (uint32_t) status, handle_HPDMA1_Channel0.ErrorCode);
         return false;
     }
-    handle_HPDMA1_Channel0.XferCpltCallback = ui_control_dma_adc_cplt;
+    handle_HPDMA1_Channel0.XferCpltCallback = ui_adc_control_dma_cplt;
     status = HAL_DMAEx_List_Start_IT(&handle_HPDMA1_Channel0);
     if (status != HAL_OK)
     {
@@ -760,7 +761,7 @@ static void audio_rate_switch_process(uint32_t target_hz, uint32_t target_sequen
     // 1. ADC/HPDMA停止。DSPパラメータ書込みとの競合を避ける。
     const HAL_StatusTypeDef adc_stop_status = HAL_ADC_Stop(&hadc1);
     const bool hpdma_stopped = audio_transport_dma_abort_confirmed(&handle_HPDMA1_Channel0);
-    ui_control_set_adc_complete(false);
+    ui_adc_control_set_complete(false);
     __DSB();
 
     if ((adc_stop_status != HAL_OK) || !hpdma_stopped)
@@ -797,7 +798,7 @@ static void audio_rate_switch_process(uint32_t target_hz, uint32_t target_sequen
     if (failed_stage == AUDIO_RATE_STAGE_NONE)
     {
         adau1466_rate_failure_t dsp_failure = {0};
-        if (!AUDIO_Update_ADAU1466_SampleRate_Checked(target_hz, &dsp_failure))
+        if (!adau1466_update_sample_rate_checked(target_hz, &dsp_failure))
         {
             failed_stage = AUDIO_RATE_STAGE_DSP_UPDATE;
             failed_result = (uint32_t) dsp_failure.reason;
