@@ -20,7 +20,6 @@ typedef enum
     AUDIO_INPUT_SOURCE_CH2 = 1,
     AUDIO_INPUT_SOURCE_USB12 = 2,
     AUDIO_INPUT_SOURCE_USB34 = 3,
-    AUDIO_INPUT_SOURCE_MASTER = 4,
 } adau1466_input_source_t;
 
 enum
@@ -39,7 +38,6 @@ typedef enum
 } adau1466_hp_source_t;
 
 // 10-bit POTs on the muxed ADC can stop slightly short of full-scale on hardware.
-#define POT_10BIT_ADC_MAX            1023U
 #define POT_10BIT_MIN_DEADZONE      10U
 #define POT_10BIT_DB_MAX_SNAP_START 1005U
 #define POT_10BIT_DW_MAX_SNAP_START 1005U

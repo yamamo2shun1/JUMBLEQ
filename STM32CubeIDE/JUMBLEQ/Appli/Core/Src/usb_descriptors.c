@@ -135,7 +135,6 @@ uint8_t const* tud_descriptor_device_cb(void)
     #endif
 
     // MIDI Bulk max packet size depends on speed: FS=64, HS=512.
-    #define MIDI_EP_SIZE_FS 64
     #define MIDI_EP_SIZE_HS 512
 #endif
 
