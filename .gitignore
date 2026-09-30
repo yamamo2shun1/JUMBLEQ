@@ -6,6 +6,7 @@ FlexASIO.toml
 
 ### Codex
 .codex-remote-attachments/
+.codex-artifacts/
 
 ### macOS
 .DS_Store
