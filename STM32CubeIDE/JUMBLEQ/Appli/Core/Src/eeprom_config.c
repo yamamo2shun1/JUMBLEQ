@@ -25,7 +25,7 @@ typedef struct
     uint32_t magic;
     uint16_t version;
     uint16_t payload_size;
-} EEPROM_ConfigHeader_t;
+} eeprom_config_header_t;
 
 typedef struct
 {
@@ -44,18 +44,18 @@ typedef struct
     uint8_t sensor2_aux_fade_down_assign;
     uint8_t sensor3_aux_fade_down_assign;
     uint8_t ch_fader_reverse_flags;
-} EEPROM_DeviceConfigV7_t;
+} eeprom_config_device_config_v7_t;
 
 typedef struct
 {
     uint32_t magic;
     uint16_t version;
     uint16_t payload_size;
-    EEPROM_DeviceConfigV7_t payload;
+    eeprom_config_device_config_v7_t payload;
     uint32_t crc32;
-} EEPROM_ConfigRecordV7_t;
+} eeprom_config_record_v7_t;
 
-_Static_assert(sizeof(EEPROM_DeviceConfigV7_t) == 24U, "Unexpected EEPROM v7 payload layout");
+_Static_assert(sizeof(eeprom_config_device_config_v7_t) == 24U, "Unexpected EEPROM v7 payload layout");
 
 typedef struct
 {
@@ -75,31 +75,31 @@ typedef struct
     uint8_t sensor2_aux_fade_down_assign;
     uint8_t sensor3_aux_fade_down_assign;
     uint8_t ch_fader_reverse_flags;
-} EEPROM_DeviceConfigV8_t;
+} eeprom_config_device_config_v8_t;
 
 typedef struct
 {
     uint32_t magic;
     uint16_t version;
     uint16_t payload_size;
-    EEPROM_DeviceConfigV8_t payload;
+    eeprom_config_device_config_v8_t payload;
     uint32_t crc32;
-} EEPROM_ConfigRecordV8_t;
+} eeprom_config_record_v8_t;
 
-_Static_assert(sizeof(EEPROM_DeviceConfigV8_t) == 24U, "Unexpected EEPROM v8 payload layout");
+_Static_assert(sizeof(eeprom_config_device_config_v8_t) == 24U, "Unexpected EEPROM v8 payload layout");
 
 typedef struct
 {
     uint32_t magic;
     uint16_t version;
     uint16_t payload_size;
-    EEPROM_DeviceConfig_t payload;
+    eeprom_device_config_t payload;
     uint32_t crc32;
-} EEPROM_ConfigRecord_t;
+} eeprom_config_record_t;
 
-_Static_assert(sizeof(EEPROM_DeviceConfig_t) == 28U, "Unexpected EEPROM v9 payload layout");
+_Static_assert(sizeof(eeprom_device_config_t) == 28U, "Unexpected EEPROM v9 payload layout");
 
-static uint32_t EEPROM_CRC32(const uint8_t* data, uint32_t len)
+static uint32_t eeprom_crc32(const uint8_t* data, uint32_t len)
 {
     uint32_t crc = 0xFFFFFFFFUL;
     uint32_t i;
@@ -118,7 +118,7 @@ static uint32_t EEPROM_CRC32(const uint8_t* data, uint32_t len)
     return ~crc;
 }
 
-void EEPROM_ConfigSetDefaults(EEPROM_DeviceConfig_t* cfg)
+void EEPROM_ConfigSetDefaults(eeprom_device_config_t* cfg)
 {
     if (cfg == NULL)
     {
@@ -146,9 +146,9 @@ void EEPROM_ConfigSetDefaults(EEPROM_DeviceConfig_t* cfg)
     cfg->timecode_synth_warp_algorithm = TIMECODE_WARP_CROSSFOLD;
 }
 
-void EEPROM_ConfigCaptureCurrent(EEPROM_DeviceConfig_t* cfg)
+void EEPROM_ConfigCaptureCurrent(eeprom_device_config_t* cfg)
 {
-    UI_ControlPersistState_t state;
+    ui_persist_state_t state;
 
     if (cfg == NULL)
     {
@@ -187,26 +187,26 @@ void EEPROM_ConfigCaptureCurrent(EEPROM_DeviceConfig_t* cfg)
         (uint8_t) timecode_synth_get_warp_algorithm();
 }
 
-bool eeprom_config_is_mag_out_as_note(const EEPROM_DeviceConfig_t* cfg)
+bool eeprom_config_is_mag_out_as_note(const eeprom_device_config_t* cfg)
 {
     return (cfg != NULL) &&
            ((cfg->mag_output_mode_flags & EEPROM_CFG_FLAG_MAG_OUT_AS_NOTE) != 0U);
 }
 
-bool eeprom_config_is_ch_fader_reverse_a_enabled(const EEPROM_DeviceConfig_t* cfg)
+bool eeprom_config_is_ch_fader_reverse_a_enabled(const eeprom_device_config_t* cfg)
 {
     return (cfg != NULL) &&
            ((cfg->ch_fader_reverse_flags & EEPROM_CFG_FLAG_CH_FADER_REVERSE_A) != 0U);
 }
 
-bool eeprom_config_is_ch_fader_reverse_b_enabled(const EEPROM_DeviceConfig_t* cfg)
+bool eeprom_config_is_ch_fader_reverse_b_enabled(const eeprom_device_config_t* cfg)
 {
     return (cfg != NULL) &&
            ((cfg->ch_fader_reverse_flags & EEPROM_CFG_FLAG_CH_FADER_REVERSE_B) != 0U);
 }
 
-bool eeprom_config_to_ui_persist_state(const EEPROM_DeviceConfig_t* cfg,
-                                       UI_ControlPersistState_t* ui_state)
+bool eeprom_config_to_ui_persist_state(const eeprom_device_config_t* cfg,
+                                       ui_persist_state_t* ui_state)
 {
     if ((cfg == NULL) || (ui_state == NULL))
     {
@@ -255,9 +255,9 @@ static bool eeprom_config_timecode_warp_is_valid(uint8_t warp_algorithm)
     return warp_algorithm <= (uint8_t) TIMECODE_WARP_COMPARATOR;
 }
 
-bool eeprom_config_validate(const EEPROM_DeviceConfig_t* cfg)
+bool eeprom_config_validate(const eeprom_device_config_t* cfg)
 {
-    UI_ControlPersistState_t ui_state;
+    ui_persist_state_t ui_state;
 
     if (cfg == NULL)
     {
@@ -286,9 +286,9 @@ bool eeprom_config_validate(const EEPROM_DeviceConfig_t* cfg)
     return ui_control_validate_persist_state(&ui_state);
 }
 
-bool eeprom_config_apply(const EEPROM_DeviceConfig_t* cfg)
+bool eeprom_config_apply(const eeprom_device_config_t* cfg)
 {
-    UI_ControlPersistState_t ui_state;
+    ui_persist_state_t ui_state;
 
     if (!eeprom_config_validate(cfg))
     {
@@ -306,16 +306,16 @@ bool eeprom_config_apply(const EEPROM_DeviceConfig_t* cfg)
     }
 
     timecode_synth_set_ratio_set(
-        (TimecodeOscillatorRatioSet_t) cfg->timecode_synth_ratio_set);
+        (timecode_oscillator_ratio_set_t) cfg->timecode_synth_ratio_set);
     timecode_synth_set_warp_algorithm(
-        (TimecodeOscillatorWarpAlgorithm_t) cfg->timecode_synth_warp_algorithm);
+        (timecode_oscillator_warp_algorithm_t) cfg->timecode_synth_warp_algorithm);
 
     return true;
 }
 
-HAL_StatusTypeDef EEPROM_SaveConfig(I2C_HandleTypeDef* hi2c, const EEPROM_DeviceConfig_t* cfg)
+HAL_StatusTypeDef EEPROM_SaveConfig(I2C_HandleTypeDef* hi2c, const eeprom_device_config_t* cfg)
 {
-    EEPROM_ConfigRecord_t rec;
+    eeprom_config_record_t rec;
     uint32_t crc_input_len;
 
     if ((hi2c == NULL) || (cfg == NULL))
@@ -331,19 +331,19 @@ HAL_StatusTypeDef EEPROM_SaveConfig(I2C_HandleTypeDef* hi2c, const EEPROM_Device
     memset(&rec, 0, sizeof(rec));
     rec.magic        = EEPROM_CONFIG_MAGIC;
     rec.version      = EEPROM_CONFIG_VERSION;
-    rec.payload_size = (uint16_t) sizeof(EEPROM_DeviceConfig_t);
+    rec.payload_size = (uint16_t) sizeof(eeprom_device_config_t);
     rec.payload      = *cfg;
 
-    crc_input_len = (uint32_t) offsetof(EEPROM_ConfigRecord_t, crc32);
-    rec.crc32     = EEPROM_CRC32((const uint8_t*) &rec, crc_input_len);
+    crc_input_len = (uint32_t) offsetof(eeprom_config_record_t, crc32);
+    rec.crc32     = eeprom_crc32((const uint8_t*) &rec, crc_input_len);
 
     return EEPROM_Write(hi2c, EEPROM_CONFIG_ADDR, (const uint8_t*) &rec, (uint16_t) sizeof(rec));
 }
 
-HAL_StatusTypeDef EEPROM_LoadConfig(I2C_HandleTypeDef* hi2c, EEPROM_DeviceConfig_t* cfg)
+HAL_StatusTypeDef EEPROM_LoadConfig(I2C_HandleTypeDef* hi2c, eeprom_device_config_t* cfg)
 {
-    EEPROM_ConfigHeader_t header;
-    EEPROM_DeviceConfig_t candidate;
+    eeprom_config_header_t header;
+    eeprom_device_config_t candidate;
     uint32_t expected_crc;
     HAL_StatusTypeDef status;
 
@@ -364,9 +364,9 @@ HAL_StatusTypeDef EEPROM_LoadConfig(I2C_HandleTypeDef* hi2c, EEPROM_DeviceConfig
     }
 
     if ((header.version == EEPROM_CONFIG_VERSION) &&
-        (header.payload_size == (uint16_t) sizeof(EEPROM_DeviceConfig_t)))
+        (header.payload_size == (uint16_t) sizeof(eeprom_device_config_t)))
     {
-        EEPROM_ConfigRecord_t rec;
+        eeprom_config_record_t rec;
 
         status = EEPROM_Read(hi2c, EEPROM_CONFIG_ADDR, (uint8_t*) &rec, (uint16_t) sizeof(rec));
         if (status != HAL_OK)
@@ -374,7 +374,7 @@ HAL_StatusTypeDef EEPROM_LoadConfig(I2C_HandleTypeDef* hi2c, EEPROM_DeviceConfig
             return status;
         }
 
-        expected_crc = EEPROM_CRC32((const uint8_t*) &rec, (uint32_t) offsetof(EEPROM_ConfigRecord_t, crc32));
+        expected_crc = eeprom_crc32((const uint8_t*) &rec, (uint32_t) offsetof(eeprom_config_record_t, crc32));
         if (expected_crc != rec.crc32)
         {
             return HAL_ERROR;
@@ -383,9 +383,9 @@ HAL_StatusTypeDef EEPROM_LoadConfig(I2C_HandleTypeDef* hi2c, EEPROM_DeviceConfig
         memcpy(&candidate, &rec.payload, sizeof(candidate));
     }
     else if ((header.version == EEPROM_CONFIG_VERSION_V8) &&
-             (header.payload_size == (uint16_t) sizeof(EEPROM_DeviceConfigV8_t)))
+             (header.payload_size == (uint16_t) sizeof(eeprom_config_device_config_v8_t)))
     {
-        EEPROM_ConfigRecordV8_t rec_v8;
+        eeprom_config_record_v8_t rec_v8;
 
         status = EEPROM_Read(hi2c, EEPROM_CONFIG_ADDR, (uint8_t*) &rec_v8, (uint16_t) sizeof(rec_v8));
         if (status != HAL_OK)
@@ -393,7 +393,7 @@ HAL_StatusTypeDef EEPROM_LoadConfig(I2C_HandleTypeDef* hi2c, EEPROM_DeviceConfig
             return status;
         }
 
-        expected_crc = EEPROM_CRC32((const uint8_t*) &rec_v8, (uint32_t) offsetof(EEPROM_ConfigRecordV8_t, crc32));
+        expected_crc = eeprom_crc32((const uint8_t*) &rec_v8, (uint32_t) offsetof(eeprom_config_record_v8_t, crc32));
         if (expected_crc != rec_v8.crc32)
         {
             return HAL_ERROR;
@@ -418,9 +418,9 @@ HAL_StatusTypeDef EEPROM_LoadConfig(I2C_HandleTypeDef* hi2c, EEPROM_DeviceConfig
         candidate.ch_fader_reverse_flags = rec_v8.payload.ch_fader_reverse_flags;
     }
     else if ((header.version == EEPROM_CONFIG_VERSION_V7) &&
-             (header.payload_size == (uint16_t) sizeof(EEPROM_DeviceConfigV7_t)))
+             (header.payload_size == (uint16_t) sizeof(eeprom_config_device_config_v7_t)))
     {
-        EEPROM_ConfigRecordV7_t rec_v7;
+        eeprom_config_record_v7_t rec_v7;
 
         status = EEPROM_Read(hi2c, EEPROM_CONFIG_ADDR, (uint8_t*) &rec_v7, (uint16_t) sizeof(rec_v7));
         if (status != HAL_OK)
@@ -428,7 +428,7 @@ HAL_StatusTypeDef EEPROM_LoadConfig(I2C_HandleTypeDef* hi2c, EEPROM_DeviceConfig
             return status;
         }
 
-        expected_crc = EEPROM_CRC32((const uint8_t*) &rec_v7, (uint32_t) offsetof(EEPROM_ConfigRecordV7_t, crc32));
+        expected_crc = eeprom_crc32((const uint8_t*) &rec_v7, (uint32_t) offsetof(eeprom_config_record_v7_t, crc32));
         if (expected_crc != rec_v7.crc32)
         {
             return HAL_ERROR;

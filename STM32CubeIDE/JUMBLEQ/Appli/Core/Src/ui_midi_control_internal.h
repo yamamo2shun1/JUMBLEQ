@@ -24,10 +24,10 @@ typedef struct
     uint8_t channel;
     uint8_t data1;
     uint8_t data2;
-} UiMidiEvent_t;
+} ui_midi_control_event_t;
 
 // TinyUSBの受信packetを1件読み出す。packetが無ければfalse。
-bool ui_midi_control_read(UiMidiEvent_t* event);
+bool ui_midi_control_read(ui_midi_control_event_t* event);
 
 void ui_midi_control_send_cc(uint8_t number, uint8_t value, uint8_t channel);
 void ui_midi_control_send_note(uint8_t note, uint8_t velocity, uint8_t channel);

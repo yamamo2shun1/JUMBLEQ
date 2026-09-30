@@ -53,9 +53,9 @@ typedef enum
     AUDIO_RECOVERY_STATE_WAIT_TX_SYNC,
     AUDIO_RECOVERY_STATE_BACKOFF,
     AUDIO_RECOVERY_STATE_FAILED,
-} audio_recovery_state_t;
+} audio_control_recovery_state_t;
 
-static audio_recovery_state_t s_recovery_state = AUDIO_RECOVERY_STATE_IDLE;
+static audio_control_recovery_state_t s_recovery_state = AUDIO_RECOVERY_STATE_IDLE;
 static uint32_t s_recovery_request_sequence = 0u;
 static bool s_recovery_request_in_flight = false;
 static uint32_t s_recovery_wait_start_tick = 0u;
@@ -74,10 +74,10 @@ typedef struct
     uint32_t applied_hz;                   // 最後に切り替え全体が成功した値
     uint32_t applied_sequence;             // 適用が確定した要求sequence
     bool applied_hz_valid;                 // 現在もその設定を信用できるか
-    volatile uint32_t state;               // AudioRateState_t
-} audio_sample_rate_state_t;
+    volatile uint32_t state;               // audio_control_rate_state_t
+} audio_control_sample_rate_state_t;
 
-static audio_sample_rate_state_t s_sample_rate = {
+static audio_control_sample_rate_state_t s_sample_rate = {
     .requested_hz       = 48000U,
     .requested_sequence = 0U,
     .change_pending     = false,
@@ -187,7 +187,7 @@ static bool audio_rate_change_take_pending(uint32_t* target_hz, uint32_t* target
     return pending;
 }
 
-void audio_control_get_rate_snapshot(AudioRateSnapshot_t* snapshot)
+void audio_control_get_rate_snapshot(audio_control_rate_snapshot_t* snapshot)
 {
     if (snapshot == NULL)
     {
@@ -202,14 +202,14 @@ void audio_control_get_rate_snapshot(AudioRateSnapshot_t* snapshot)
     snapshot->applied_hz         = s_sample_rate.applied_hz;
     snapshot->applied_sequence   = s_sample_rate.applied_sequence;
     snapshot->applied_hz_valid   = s_sample_rate.applied_hz_valid;
-    snapshot->state              = (AudioRateState_t) s_sample_rate.state;
+    snapshot->state              = (audio_control_rate_state_t) s_sample_rate.state;
 
     __set_PRIMASK(primask);
 }
 
 bool audio_control_clock_valid(void)
 {
-    AudioRateSnapshot_t snapshot;
+    audio_control_rate_snapshot_t snapshot;
     audio_control_get_rate_snapshot(&snapshot);
 
     return (snapshot.state == AUDIO_RATE_STATE_READY) &&
@@ -331,7 +331,7 @@ void audio_control_publish_initial_rate_result(uint32_t applied_hz, bool success
 // デフォルト設定を適用し、EEPROMへ保存して次回起動に備える。
 void audio_control_load_config_or_restore_defaults(void)
 {
-    EEPROM_DeviceConfig_t cfg;
+    eeprom_device_config_t cfg;
 
     if (EEPROM_LoadConfig(&hi2c2, &cfg) == HAL_OK)
     {
@@ -419,9 +419,9 @@ void start_sai(void)
 }
 
 // audio_task()呼び出し頻度計測用
-static volatile uint32_t audio_task_call_count = 0;
-static volatile uint32_t audio_task_last_tick  = 0;
-static volatile uint32_t audio_task_frequency  = 0;  // 呼び出し回数/秒
+static volatile uint32_t s_audio_task_call_count = 0;
+static volatile uint32_t s_audio_task_last_tick  = 0;
+static volatile uint32_t s_audio_task_frequency_hz  = 0;  // 呼び出し回数/秒
 // 復旧ラッチを解除して再試行可能にする。stream再開要求から呼ぶ。
 static void audio_recovery_release_latch(void)
 {
@@ -516,7 +516,7 @@ static void audio_recovery_process(void)
     {
         case AUDIO_RECOVERY_STATE_IDLE:
         {
-            AudioRecoveryRequest_t request;
+            audio_transport_recovery_request_t request;
             if (!audio_transport_take_recovery_request(&request))
             {
                 break;
@@ -637,17 +637,17 @@ void audio_task(void)
     }
 
     // 呼び出し頻度計測と周期診断は最も低い優先度で行う。
-    audio_task_call_count++;
+    s_audio_task_call_count++;
     uint32_t now = HAL_GetTick();
-    if (now - audio_task_last_tick >= AUDIO_TASK_STATS_PERIOD_MS)
+    if (now - s_audio_task_last_tick >= AUDIO_TASK_STATS_PERIOD_MS)
     {
-        audio_task_frequency  = audio_task_call_count;
-        audio_task_call_count = 0;
-        audio_task_last_tick  = now;
+        s_audio_task_frequency_hz  = s_audio_task_call_count;
+        s_audio_task_call_count = 0;
+        s_audio_task_last_tick  = now;
 
 #if AUDIO_DIAG_LOG
         audio_diagnostics_log_periodic(s_sample_rate.requested_hz,
-                                       audio_task_frequency,
+                                       s_audio_task_frequency_hz,
                                        audio_transport_is_output_streaming(),
                                        audio_transport_is_input_streaming(),
                                        audio_transport_tx_used_words());
@@ -658,7 +658,7 @@ void audio_task(void)
 
 // ADC/HPDMAを再構成してUI用ADCを戻す。成功・失敗の共通cleanupでも使う。
 // 失敗時はfailureへ失敗した操作とHAL結果を格納する。
-static bool audio_rate_switch_restart_adc(AudioTransportFailure_t* failure)
+static bool audio_rate_switch_restart_adc(audio_transport_failure_t* failure)
 {
     HAL_StatusTypeDef status = MX_List_HPDMA1_Channel0_Config();
     if (status != HAL_OK)
@@ -783,7 +783,7 @@ static void audio_rate_switch_process(uint32_t target_hz, uint32_t target_sequen
     // 2. SAI/GPDMA停止とバッファ初期化（停止確認できた場合のみ初期化する）。
     if (failed_stage == AUDIO_RATE_STAGE_NONE)
     {
-        AudioTransportFailure_t transport_failure = {0};
+        audio_transport_failure_t transport_failure = {0};
         if (!audio_transport_reset_for_sample_rate(target_hz, &transport_failure))
         {
             failed_stage      = AUDIO_RATE_STAGE_TRANSPORT_STOP;
@@ -839,7 +839,7 @@ static void audio_rate_switch_process(uint32_t target_hz, uint32_t target_sequen
     // 4. DMA/SAI再構築とTX開始（MSP資源は維持し、生成MspInitを通らない）。
     if (failed_stage == AUDIO_RATE_STAGE_NONE)
     {
-        AudioTransportFailure_t transport_failure = {0};
+        audio_transport_failure_t transport_failure = {0};
         if (!audio_transport_rebuild_and_start_tx(&transport_failure))
         {
             failed_stage      = AUDIO_RATE_STAGE_TX_START;
@@ -858,7 +858,7 @@ static void audio_rate_switch_process(uint32_t target_hz, uint32_t target_sequen
     // 6. RX開始。
     if (failed_stage == AUDIO_RATE_STAGE_NONE)
     {
-        AudioTransportFailure_t transport_failure = {0};
+        audio_transport_failure_t transport_failure = {0};
         if (!audio_transport_start_rx_after_tx_sync(&transport_failure))
         {
             failed_stage      = AUDIO_RATE_STAGE_RX_START;
@@ -874,7 +874,7 @@ static void audio_rate_switch_process(uint32_t target_hz, uint32_t target_sequen
     bool adc_restarted = false;
     if (hpdma_stopped)
     {
-        AudioTransportFailure_t transport_failure = {0};
+        audio_transport_failure_t transport_failure = {0};
         adc_restarted = audio_rate_switch_restart_adc(&transport_failure);
         if ((failed_stage == AUDIO_RATE_STAGE_NONE) && !adc_restarted)
         {

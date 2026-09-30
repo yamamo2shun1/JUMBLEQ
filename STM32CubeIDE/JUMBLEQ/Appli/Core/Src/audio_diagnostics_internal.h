@@ -85,9 +85,9 @@ typedef struct
     uint32_t last_process_cycles;
     uint32_t last_complete_cycles;
     uint32_t last_complete_deadline_cycles;
-} AudioTxDiagnostics_t;
+} audio_tx_diagnostics_t;
 
-extern volatile AudioTxDiagnostics_t g_audio_tx_diagnostics;
+extern volatile audio_tx_diagnostics_t g_audio_tx_diagnostics;
 
 // RX DMA搬送の永続診断。stream/rate変更や復旧のバッファ消去ではリセットせず、
 // AUDIO_DIAG_LOG=0でもデバッガから参照できる。
@@ -127,9 +127,9 @@ typedef struct
     uint32_t rx_last_process_cycles;
     uint32_t rx_last_complete_cycles;
     uint32_t rx_last_complete_deadline_cycles;
-} AudioRxDiagnostics_t;
+} audio_rx_diagnostics_t;
 
-extern volatile AudioRxDiagnostics_t g_audio_rx_diagnostics;
+extern volatile audio_rx_diagnostics_t g_audio_rx_diagnostics;
 
 // 復旧要求・試行・結果の永続診断。復旧時のバッファ消去では消去しない。
 typedef struct
@@ -151,9 +151,9 @@ typedef struct
     uint32_t last_failure_tick_ms;
     uint32_t unknown_dma_error_events;
     uint32_t last_unknown_dma_error_code;
-} AudioRecoveryDiagnostics_t;
+} audio_recovery_diagnostics_t;
 
-extern volatile AudioRecoveryDiagnostics_t g_audio_recovery_diagnostics;
+extern volatile audio_recovery_diagnostics_t g_audio_recovery_diagnostics;
 
 // 復旧失敗時の段階。どの処理で失敗したかを診断値へ残す。
 enum
@@ -186,9 +186,9 @@ typedef struct
     uint32_t state;
     uint32_t applied_valid;
     uint32_t clock_valid;
-} AudioRateSwitchDiagnostics_t;
+} audio_rate_switch_diagnostics_t;
 
-extern volatile AudioRateSwitchDiagnostics_t g_audio_rate_switch_diagnostics;
+extern volatile audio_rate_switch_diagnostics_t g_audio_rate_switch_diagnostics;
 
 // レート切り替えの失敗段階。
 enum
@@ -250,10 +250,10 @@ typedef struct
     uint32_t operation;   // AUDIO_RATE_OP_*
     uint32_t hal_status;  // 失敗したHAL APIの戻り値
     uint32_t error_code;  // 対象ハンドルのErrorCode
-} AudioTransportFailure_t;
+} audio_transport_failure_t;
 
 // 最初の失敗だけを保持する。failureがNULLなら何もしない。
-static inline void audio_transport_failure_record(AudioTransportFailure_t* failure,
+static inline void audio_transport_failure_record(audio_transport_failure_t* failure,
                                                   uint32_t operation,
                                                   uint32_t hal_status,
                                                   uint32_t error_code)

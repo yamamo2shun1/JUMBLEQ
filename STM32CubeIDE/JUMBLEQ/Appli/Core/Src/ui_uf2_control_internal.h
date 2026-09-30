@@ -26,10 +26,10 @@ void ui_uf2_control_reset(void);
 // OLED表示用: stateと残り秒数を同じcaptureで取得する。scheduler停止区間専用。
 typedef struct
 {
-    UI_Uf2TransitionState_t state;
+    ui_control_uf2_transition_state_t state;
     uint8_t seconds_remaining;
-} UI_Uf2DisplayState_t;
+} ui_uf2_control_display_state_t;
 
-void ui_uf2_control_capture_display_state(UI_Uf2DisplayState_t* state);
+void ui_uf2_control_capture_display_state(ui_uf2_control_display_state_t* state);
 
 #endif /* UI_UF2_CONTROL_INTERNAL_H_ */

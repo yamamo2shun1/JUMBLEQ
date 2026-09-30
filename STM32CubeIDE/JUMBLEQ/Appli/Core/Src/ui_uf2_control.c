@@ -12,14 +12,14 @@
 
 #include <string.h>
 
-static const uint32_t UF2_ARM_WINDOW_MS      = 10000U;
-static const uint32_t UF2_SWITCH_DEBOUNCE_MS = 30U;
-static const uint32_t UF2_SWITCH_HOLD_MS     = 2000U;
-static const uint32_t UF2_NOTICE_MS          = 2000U;
+static const uint32_t s_uf2_arm_window_ms      = 10000U;
+static const uint32_t s_uf2_switch_debounce_ms = 30U;
+static const uint32_t s_uf2_switch_hold_ms     = 2000U;
+static const uint32_t s_uf2_notice_ms          = 2000U;
 
 typedef struct
 {
-    volatile UI_Uf2TransitionState_t state;
+    volatile ui_control_uf2_transition_state_t state;
     volatile uint32_t arm_started_ms;
     volatile bool displays_cleared;
     uint32_t raw_changed_ms;
@@ -28,9 +28,9 @@ typedef struct
     bool last_raw_pressed;
     bool stable_pressed;
     bool release_observed;
-} uf2_bootloader_control_t;
+} ui_uf2_control_state_t;
 
-static uf2_bootloader_control_t s_uf2 = {
+static ui_uf2_control_state_t s_uf2 = {
     .state = UI_UF2_TRANSITION_IDLE,
 };
 
@@ -45,7 +45,7 @@ void ui_control_notify_uf2_displays_cleared(void)
     s_uf2.displays_cleared = true;
 }
 
-static bool uf2_transition_is_armed(UI_Uf2TransitionState_t state)
+static bool uf2_transition_is_armed(ui_control_uf2_transition_state_t state)
 {
     return (state == UI_UF2_TRANSITION_WAIT_RELEASE) ||
            (state == UI_UF2_TRANSITION_WAIT_HOLD) ||
@@ -82,11 +82,11 @@ void ui_uf2_control_arm(uint8_t program_change)
     s_uf2.state            = UI_UF2_TRANSITION_WAIT_RELEASE;
 
     SEGGER_RTT_printf(0, "UF2 bootloader request armed for %lu ms (PC%u Ch15)\r\n",
-                      (unsigned long) UF2_ARM_WINDOW_MS,
+                      (unsigned long) s_uf2_arm_window_ms,
                       (unsigned) program_change);
 }
 
-static void set_uf2_transition_notice(UI_Uf2TransitionState_t state, const char* reason)
+static void set_uf2_transition_notice(ui_control_uf2_transition_state_t state, const char* reason)
 {
     s_uf2.hold_started_ms  = 0U;
     s_uf2.displays_cleared = false;
@@ -110,11 +110,11 @@ void ui_uf2_control_cancel(const char* reason)
 void ui_uf2_control_service(void)
 {
     const uint32_t now = HAL_GetTick();
-    UI_Uf2TransitionState_t state = s_uf2.state;
+    ui_control_uf2_transition_state_t state = s_uf2.state;
 
     if ((state == UI_UF2_TRANSITION_CANCELLED) || (state == UI_UF2_TRANSITION_TIMED_OUT))
     {
-        if ((now - s_uf2.notice_started_ms) >= UF2_NOTICE_MS)
+        if ((now - s_uf2.notice_started_ms) >= s_uf2_notice_ms)
         {
             s_uf2.state = UI_UF2_TRANSITION_IDLE;
             __DMB();
@@ -133,7 +133,7 @@ void ui_uf2_control_service(void)
         return;
     }
 
-    if ((now - s_uf2.arm_started_ms) >= UF2_ARM_WINDOW_MS)
+    if ((now - s_uf2.arm_started_ms) >= s_uf2_arm_window_ms)
     {
         set_uf2_transition_notice(UI_UF2_TRANSITION_TIMED_OUT, "timed out");
         return;
@@ -147,7 +147,7 @@ void ui_uf2_control_service(void)
     }
 
     if ((raw_pressed != s_uf2.stable_pressed) &&
-        ((now - s_uf2.raw_changed_ms) >= UF2_SWITCH_DEBOUNCE_MS))
+        ((now - s_uf2.raw_changed_ms) >= s_uf2_switch_debounce_ms))
     {
         s_uf2.stable_pressed = raw_pressed;
 
@@ -172,7 +172,7 @@ void ui_uf2_control_service(void)
     state = s_uf2.state;
     if ((state == UI_UF2_TRANSITION_WAIT_RELEASE) &&
         !s_uf2.stable_pressed &&
-        ((now - s_uf2.raw_changed_ms) >= UF2_SWITCH_DEBOUNCE_MS))
+        ((now - s_uf2.raw_changed_ms) >= s_uf2_switch_debounce_ms))
     {
         s_uf2.release_observed = true;
         __DMB();
@@ -183,7 +183,7 @@ void ui_uf2_control_service(void)
 
     if ((state == UI_UF2_TRANSITION_HOLDING) &&
         s_uf2.stable_pressed &&
-        ((now - s_uf2.hold_started_ms) >= UF2_SWITCH_HOLD_MS))
+        ((now - s_uf2.hold_started_ms) >= s_uf2_switch_hold_ms))
     {
         s_uf2.displays_cleared = false;
         __DMB();
@@ -213,14 +213,14 @@ void ui_uf2_control_reset(void)
 }
 
 // OLED表示用: stateと残り秒数を同じcaptureで取得する。scheduler停止区間専用。
-void ui_uf2_control_capture_display_state(UI_Uf2DisplayState_t* state)
+void ui_uf2_control_capture_display_state(ui_uf2_control_display_state_t* state)
 {
     if (state == NULL)
     {
         return;
     }
 
-    const UI_Uf2TransitionState_t uf2_state = s_uf2.state;
+    const ui_control_uf2_transition_state_t uf2_state = s_uf2.state;
     __DMB();
 
     state->state = uf2_state;
@@ -234,11 +234,11 @@ void ui_uf2_control_capture_display_state(UI_Uf2DisplayState_t* state)
     }
 
     const uint32_t elapsed_ms = HAL_GetTick() - s_uf2.arm_started_ms;
-    if (elapsed_ms >= UF2_ARM_WINDOW_MS)
+    if (elapsed_ms >= s_uf2_arm_window_ms)
     {
         return;
     }
 
-    const uint32_t remaining_ms = UF2_ARM_WINDOW_MS - elapsed_ms;
+    const uint32_t remaining_ms = s_uf2_arm_window_ms - elapsed_ms;
     state->seconds_remaining = (uint8_t) ((remaining_ms + 999U) / 1000U);
 }

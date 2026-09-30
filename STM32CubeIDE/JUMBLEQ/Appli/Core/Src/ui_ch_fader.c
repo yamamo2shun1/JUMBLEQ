@@ -32,7 +32,7 @@ typedef enum
     CH_FADER_GESTURE_PARENT_NONE = 0,
     CH_FADER_GESTURE_PARENT_FADE_UP,
     CH_FADER_GESTURE_PARENT_FADE_DOWN,
-} ch_fader_gesture_parent_t;
+} ui_ch_fader_gesture_parent_t;
 
 // State used by magnetic-switch channel fader processing.
 typedef struct
@@ -66,9 +66,9 @@ typedef struct
     uint32_t note_scan_start_ms[MAG_SW_NUM];  // Start tick for one ch_fader sensor note velocity scan window.
     bool note_is_on[MAG_SW_NUM];  // Whether each ch_fader sensor note output is currently on.
     bool note_scan_active[MAG_SW_NUM];  // Whether each ch_fader sensor is accumulating note-on velocity.
-} ch_fader_state_t;
+} ui_ch_fader_state_t;
 
-static ch_fader_state_t s_ch_fader = {
+static ui_ch_fader_state_t s_ch_fader = {
     .position_a          = 0,
     .position_b          = 0,
     .raw                 = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},
@@ -108,24 +108,24 @@ static uint8_t s_ch_fader_dvs_delay_ms = UI_CH_FADER_DVS_DELAY_DEFAULT_MS;
 static uint8_t s_sensor2_aux_fade_down_assign = UI_CH_FADER_AUX_ASSIGN_A;
 static uint8_t s_sensor3_aux_fade_down_assign = UI_CH_FADER_AUX_ASSIGN_B;
 
-static const float CH_FADER_CC_UPDATE_THRESHOLD    = 0.01f;
-static const float CH_FADER_EXTREMA_HYSTERESIS     = 0.002f;
-static const float CH_FADER_SEND_THRESHOLD         = 0.002f;
-static const float CH_FADER_PAIR_RESET_THRESHOLD   = 0.98f;
-static const float CH_FADER_MIN_RESET_CUTOFF       = 0.05f;
-static const float CH_FADER_PAIR_ONSET_DEADBAND    = 0.10f;
-static const float CH_FADER_PAIR_FADE_DOWN_PRESS_THRESHOLD     = 0.95f;
-static const float CH_FADER_PAIR_FADE_DOWN_DEEPER_DELTA        = 0.03f;
-static const float CH_FADER_PAIR_CURVE_WIDTH_MIN   = 0.02f;
-static const float CH_FADER_PAIR_CURVE_WIDTH_MAX   = 0.60f;
+static const float s_ch_fader_cc_update_threshold    = 0.01f;
+static const float s_ch_fader_extrema_hysteresis     = 0.002f;
+static const float s_ch_fader_send_threshold         = 0.002f;
+static const float s_ch_fader_pair_reset_threshold   = 0.98f;
+static const float s_ch_fader_min_reset_cutoff       = 0.05f;
+static const float s_ch_fader_pair_onset_deadband    = 0.10f;
+static const float s_ch_fader_pair_fade_down_press_threshold     = 0.95f;
+static const float s_ch_fader_pair_fade_down_deeper_delta        = 0.03f;
+static const float s_ch_fader_pair_curve_width_min   = 0.02f;
+static const float s_ch_fader_pair_curve_width_max   = 0.60f;
 // At the maximum curve setting, 2% key travel reaches 90% output.
-static const float CH_FADER_PAIR_CURVE_EXPONENT_MAX = 115.12925465f;
-static const float CH_FADER_PAIR_CURVE_LINEAR_EPSILON = 0.0001f;
-static const float CH_FADER_PAIR_BOTTOM_HOLD_RELEASE_THRESHOLD = 0.0025f;
-static const float CH_FADER_PAIR_BOTTOM_REHOLD_THRESHOLD       = 0.0008f;
-static const uint8_t CH_FADER_FADE_DOWN_SOURCE_NONE    = 0xFFU;
-static const uint8_t CH_FADER_FADE_DOWN_RETRIGGER_RELEASE_READS_WITH_FADE_UP = 16U;
-static const uint8_t CH_FADER_FADE_DOWN_RETRIGGER_RELEASE_READS_MOMENTARY    = 16U;
+static const float s_ch_fader_pair_curve_exponent_max = 115.12925465f;
+static const float s_ch_fader_pair_curve_linear_epsilon = 0.0001f;
+static const float s_ch_fader_pair_bottom_hold_release_threshold = 0.0025f;
+static const float s_ch_fader_pair_bottom_rehold_threshold       = 0.0008f;
+static const uint8_t s_ch_fader_fade_down_source_none    = 0xFFU;
+static const uint8_t s_ch_fader_fade_down_retrigger_release_reads_with_fade_up = 16U;
+static const uint8_t s_ch_fader_fade_down_retrigger_release_reads_momentary    = 16U;
 
 typedef struct
 {
@@ -136,20 +136,20 @@ typedef struct
     uint8_t prev_idx;
     uint8_t* current_position;
     void (*set_dc)(float ch_fader_position);
-} ch_fader_pair_runtime_t;
+} ui_ch_fader_pair_runtime_t;
 
 typedef enum
 {
     CH_FADER_PAIR_A = 0,
     CH_FADER_PAIR_B = 1,
     CH_FADER_PAIR_COUNT
-} ch_fader_pair_index_t;
+} ui_ch_fader_pair_index_t;
 
 // Runtime mapping for each ch_fader bus:
 // Change these indices to reassign the magnetic switches used by each pair.
 // fade_up_idx and fade_down_idx produce the held scalar. Each valid auxiliary
 // fade-down index can retrigger the same fade-down gesture path.
-static ch_fader_pair_runtime_t s_ch_fader_pairs[] = {
+static ui_ch_fader_pair_runtime_t s_ch_fader_pairs[] = {
     {
      .fade_up_idx       = 0,
      .fade_down_idx     = 1,
@@ -174,29 +174,29 @@ typedef struct
 {
     uint32_t captured_ms;
     float value;
-} ch_fader_dsp_update_t;
+} ui_ch_fader_dsp_update_t;
 
 typedef struct
 {
-    ch_fader_dsp_update_t queue[CH_FADER_DSP_QUEUE_CAPACITY];
+    ui_ch_fader_dsp_update_t queue[CH_FADER_DSP_QUEUE_CAPACITY];
     uint16_t head;
     uint16_t count;
     uint8_t target_position;
     float target_value;
-    UI_RoutingSource_t input_assign;
+    ui_routing_source_t input_assign;
     bool delay_enabled;
     bool context_valid;
     bool target_valid;
-} ch_fader_dsp_state_t;
+} ui_ch_fader_dsp_state_t;
 
-static ch_fader_dsp_state_t s_ch_fader_dsp[CH_FADER_PAIR_COUNT];
+static ui_ch_fader_dsp_state_t s_ch_fader_dsp[CH_FADER_PAIR_COUNT];
 
-static UI_RoutingSource_t get_ch_fader_dsp_assign(const ch_fader_pair_runtime_t* pair)
+static ui_routing_source_t get_ch_fader_dsp_assign(const ui_ch_fader_pair_runtime_t* pair)
 {
     return ui_routing_get_ch_fader_assign((pair->prev_idx == CH_FADER_PAIR_A) ? 0U : 1U);
 }
 
-static bool ch_fader_assign_uses_dvs(UI_RoutingSource_t routing_source)
+static bool ch_fader_assign_uses_dvs(ui_routing_source_t routing_source)
 {
     switch (routing_source)
     {
@@ -213,16 +213,16 @@ static bool ch_fader_assign_uses_dvs(UI_RoutingSource_t routing_source)
     }
 }
 
-static void write_ch_fader_dsp_output(const ch_fader_pair_runtime_t* pair, float value)
+static void write_ch_fader_dsp_output(const ui_ch_fader_pair_runtime_t* pair, float value)
 {
     pair->set_dc(value);
     *pair->current_position = (uint8_t) (value * 128.0f);
 }
 
 // Configuration/reapply operations synchronize immediately and cancel old gestures.
-static void sync_ch_fader_dsp_output(const ch_fader_pair_runtime_t* pair, float value)
+static void sync_ch_fader_dsp_output(const ui_ch_fader_pair_runtime_t* pair, float value)
 {
-    ch_fader_dsp_state_t* state = &s_ch_fader_dsp[pair->prev_idx];
+    ui_ch_fader_dsp_state_t* state = &s_ch_fader_dsp[pair->prev_idx];
     state->head = 0U;
     state->count = 0U;
     state->target_value = value;
@@ -234,10 +234,10 @@ static void sync_ch_fader_dsp_output(const ch_fader_pair_runtime_t* pair, float 
     write_ch_fader_dsp_output(pair, value);
 }
 
-static void refresh_ch_fader_dsp_context(const ch_fader_pair_runtime_t* pair)
+static void refresh_ch_fader_dsp_context(const ui_ch_fader_pair_runtime_t* pair)
 {
-    ch_fader_dsp_state_t* state = &s_ch_fader_dsp[pair->prev_idx];
-    const UI_RoutingSource_t routing_source = get_ch_fader_dsp_assign(pair);
+    ui_ch_fader_dsp_state_t* state = &s_ch_fader_dsp[pair->prev_idx];
+    const ui_routing_source_t routing_source = get_ch_fader_dsp_assign(pair);
     const bool delay_enabled = ch_fader_assign_uses_dvs(routing_source);
 
     if (state->context_valid &&
@@ -255,9 +255,9 @@ static void refresh_ch_fader_dsp_context(const ch_fader_pair_runtime_t* pair)
     state->context_valid = true;
 }
 
-static void submit_ch_fader_dsp_output(const ch_fader_pair_runtime_t* pair, float value)
+static void submit_ch_fader_dsp_output(const ui_ch_fader_pair_runtime_t* pair, float value)
 {
-    ch_fader_dsp_state_t* state = &s_ch_fader_dsp[pair->prev_idx];
+    ui_ch_fader_dsp_state_t* state = &s_ch_fader_dsp[pair->prev_idx];
     const uint8_t position = (uint8_t) (value * 128.0f);
     refresh_ch_fader_dsp_context(pair);
 
@@ -290,14 +290,14 @@ static void service_ch_fader_dsp_outputs(void)
 {
     for (uint8_t i = 0U; i < CH_FADER_PAIR_COUNT; i++)
     {
-        const ch_fader_pair_runtime_t* pair = &s_ch_fader_pairs[i];
-        ch_fader_dsp_state_t* state = &s_ch_fader_dsp[i];
+        const ui_ch_fader_pair_runtime_t* pair = &s_ch_fader_pairs[i];
+        ui_ch_fader_dsp_state_t* state = &s_ch_fader_dsp[i];
         refresh_ch_fader_dsp_context(pair);
         const uint32_t now = HAL_GetTick();
 
         while (state->count != 0U)
         {
-            const ch_fader_dsp_update_t* update = &state->queue[state->head];
+            const ui_ch_fader_dsp_update_t* update = &state->queue[state->head];
             // Unsigned elapsed time also handles HAL tick wraparound.
             if ((uint32_t) (now - update->captured_ms) < s_ch_fader_dvs_delay_ms)
             {
@@ -312,7 +312,7 @@ static void service_ch_fader_dsp_outputs(void)
 
 static void append_ch_fader_aux_sensor(uint8_t pair_idx, uint8_t sensor_idx)
 {
-    ch_fader_pair_runtime_t* pair;
+    ui_ch_fader_pair_runtime_t* pair;
 
     if ((pair_idx >= CH_FADER_PAIR_COUNT) || (sensor_idx >= MAG_SW_NUM))
     {
@@ -336,7 +336,7 @@ static void reset_ch_fader_aux_assignment_runtime(void)
     {
         s_ch_fader.fade_down_prev[pair_idx] = -1.0f;
         s_ch_fader.fade_down_combined_raw[pair_idx] = 1.0f;
-        s_ch_fader.fade_down_active_source[pair_idx] = CH_FADER_FADE_DOWN_SOURCE_NONE;
+        s_ch_fader.fade_down_active_source[pair_idx] = s_ch_fader_fade_down_source_none;
         s_ch_fader.fade_down_force_release_reads[pair_idx] = 0U;
         s_ch_fader.pair_gesture_parent[pair_idx] = CH_FADER_GESTURE_PARENT_NONE;
         s_ch_fader.pair_gesture_armed[pair_idx] = true;
@@ -464,23 +464,23 @@ static float midi_cc_to_ch_fader_curve_width(uint8_t value)
 {
     const float t = (float) value / 127.0f;
 
-    return CH_FADER_PAIR_CURVE_WIDTH_MAX + ((CH_FADER_PAIR_CURVE_WIDTH_MIN - CH_FADER_PAIR_CURVE_WIDTH_MAX) * t);
+    return s_ch_fader_pair_curve_width_max + ((s_ch_fader_pair_curve_width_min - s_ch_fader_pair_curve_width_max) * t);
 }
 
 uint8_t ui_ch_fader_curve_width_to_midi_cc(float width)
 {
     float t;
 
-    if (width < CH_FADER_PAIR_CURVE_WIDTH_MIN)
+    if (width < s_ch_fader_pair_curve_width_min)
     {
-        width = CH_FADER_PAIR_CURVE_WIDTH_MIN;
+        width = s_ch_fader_pair_curve_width_min;
     }
-    else if (width > CH_FADER_PAIR_CURVE_WIDTH_MAX)
+    else if (width > s_ch_fader_pair_curve_width_max)
     {
-        width = CH_FADER_PAIR_CURVE_WIDTH_MAX;
+        width = s_ch_fader_pair_curve_width_max;
     }
 
-    t = (CH_FADER_PAIR_CURVE_WIDTH_MAX - width) / (CH_FADER_PAIR_CURVE_WIDTH_MAX - CH_FADER_PAIR_CURVE_WIDTH_MIN);
+    t = (s_ch_fader_pair_curve_width_max - width) / (s_ch_fader_pair_curve_width_max - s_ch_fader_pair_curve_width_min);
     if (t < 0.0f)
     {
         t = 0.0f;
@@ -495,13 +495,13 @@ uint8_t ui_ch_fader_curve_width_to_midi_cc(float width)
 
 static float clamp_ch_fader_curve_width(float value)
 {
-    if (value < CH_FADER_PAIR_CURVE_WIDTH_MIN)
+    if (value < s_ch_fader_pair_curve_width_min)
     {
-        return CH_FADER_PAIR_CURVE_WIDTH_MIN;
+        return s_ch_fader_pair_curve_width_min;
     }
-    if (value > CH_FADER_PAIR_CURVE_WIDTH_MAX)
+    if (value > s_ch_fader_pair_curve_width_max)
     {
-        return CH_FADER_PAIR_CURVE_WIDTH_MAX;
+        return s_ch_fader_pair_curve_width_max;
     }
     return value;
 }
@@ -621,17 +621,17 @@ static float apply_ch_fader_pair_onset_deadband(uint8_t i, float raw)
 
     if (get_pair_fade_down_index_from_up(i) >= 0)
     {
-        if (raw <= CH_FADER_PAIR_ONSET_DEADBAND)
+        if (raw <= s_ch_fader_pair_onset_deadband)
         {
             return 0.0f;
         }
 
-        return (raw - CH_FADER_PAIR_ONSET_DEADBAND) / (1.0f - CH_FADER_PAIR_ONSET_DEADBAND);
+        return (raw - s_ch_fader_pair_onset_deadband) / (1.0f - s_ch_fader_pair_onset_deadband);
     }
 
     if (get_pair_fade_up_index_from_down(i) >= 0)
     {
-        const float high_deadband = 1.0f - CH_FADER_PAIR_ONSET_DEADBAND;
+        const float high_deadband = 1.0f - s_ch_fader_pair_onset_deadband;
 
         if (raw >= high_deadband)
         {
@@ -688,7 +688,7 @@ static void update_ch_fader_extrema(uint8_t i)
     if (get_pair_fade_down_index_from_up(i) >= 0)
     {
         // Track fade-up peak; paired fade-down floor is synchronized from this edge.
-        if (pair_raw > (s_ch_fader.up_peak[i] + CH_FADER_EXTREMA_HYSTERESIS))
+        if (pair_raw > (s_ch_fader.up_peak[i] + s_ch_fader_extrema_hysteresis))
         {
             s_ch_fader.up_peak[i] = pair_raw;
 
@@ -701,7 +701,7 @@ static void update_ch_fader_extrema(uint8_t i)
 
         // Keep paired minimum re-synchronized while the source side stays near full scale.
         // This avoids "stuck min" when ch_fader[0]/ch_fader[5] remains high and only the paired side moves.
-        if (pair_raw >= CH_FADER_PAIR_RESET_THRESHOLD)
+        if (pair_raw >= s_ch_fader_pair_reset_threshold)
         {
             const int8_t fade_down_idx = get_pair_fade_down_index_from_up(i);
             if (fade_down_idx >= 0)
@@ -713,11 +713,11 @@ static void update_ch_fader_extrema(uint8_t i)
     else if (get_pair_fade_up_index_from_down(i) >= 0)
     {
         // Track fade-down floor; when near zero, clear paired fade-up peak.
-        if (pair_raw < (s_ch_fader.down_floor[i] - CH_FADER_EXTREMA_HYSTERESIS))
+        if (pair_raw < (s_ch_fader.down_floor[i] - s_ch_fader_extrema_hysteresis))
         {
             s_ch_fader.down_floor[i] = pair_raw;
 
-            if (s_ch_fader.down_floor[i] < CH_FADER_MIN_RESET_CUTOFF)
+            if (s_ch_fader.down_floor[i] < s_ch_fader_min_reset_cutoff)
             {
                 const int8_t fade_up_idx = get_pair_fade_up_index_from_down(i);
                 if (fade_up_idx >= 0)
@@ -800,7 +800,7 @@ static void emit_ch_fader_cc_if_needed(uint8_t i, bool output_as_note)
     }
 
     // MIDI CC updates use a larger threshold to limit traffic and jitter.
-    if (fabs(s_ch_fader.raw[i] - s_ch_fader.prev[i]) > CH_FADER_CC_UPDATE_THRESHOLD)
+    if (fabs(s_ch_fader.raw[i] - s_ch_fader.prev[i]) > s_ch_fader_cc_update_threshold)
     {
         ui_midi_control_send_cc((uint8_t) (20U + i), value, 0U);
         s_ch_fader.prev[i] = s_ch_fader.raw[i];
@@ -842,7 +842,7 @@ static float compute_ch_fader_exponential_curve(float position, float curve_amou
     const float t = clamp01(position);
     const float magnitude = fabsf(curve_amount);
 
-    if (magnitude <= CH_FADER_PAIR_CURVE_LINEAR_EPSILON)
+    if (magnitude <= s_ch_fader_pair_curve_linear_epsilon)
     {
         return t;
     }
@@ -850,7 +850,7 @@ static float compute_ch_fader_exponential_curve(float position, float curve_amou
     // Cubic shaping allocates more CC resolution around the linear midpoint
     // while preserving the same maximum curvature at both endpoints.
     const float shaped_magnitude = magnitude * magnitude * magnitude;
-    const float k = CH_FADER_PAIR_CURVE_EXPONENT_MAX * shaped_magnitude;
+    const float k = s_ch_fader_pair_curve_exponent_max * shaped_magnitude;
     const float denominator = -expm1f(-k);
     float result;
 
@@ -876,7 +876,7 @@ float ui_control_evaluate_ch_fader_curve_preview(uint8_t cc_value, float normali
 // Keep a small high-end deadband so light touch/noise does not start a cut.
 static float apply_ch_fader_fade_down_onset_deadband(float raw)
 {
-    const float high_deadband = 1.0f - CH_FADER_PAIR_ONSET_DEADBAND;
+    const float high_deadband = 1.0f - s_ch_fader_pair_onset_deadband;
 
     raw = clamp01(raw);
     if (raw >= high_deadband)
@@ -899,7 +899,7 @@ static void update_multi_fade_down_source(uint8_t pair_idx,
                                           bool fade_up_active)
 {
     uint8_t active  = s_ch_fader.fade_down_active_source[pair_idx];
-    uint8_t started = CH_FADER_FADE_DOWN_SOURCE_NONE;
+    uint8_t started = s_ch_fader_fade_down_source_none;
     bool force_release = false;
 
     for (uint8_t i = 0; i < CH_FADER_FADE_DOWN_SOURCE_COUNT; i++)
@@ -907,11 +907,11 @@ static void update_multi_fade_down_source(uint8_t pair_idx,
         const float prev = s_ch_fader.fade_down_source_prev[pair_idx][i];
         // Detect a new cut either from the idle zone or from a clear deeper
         // push on the non-active sensor.
-        const bool newly_pressed = (prev >= CH_FADER_PAIR_FADE_DOWN_PRESS_THRESHOLD) &&
-                                   (source[i] < CH_FADER_PAIR_FADE_DOWN_PRESS_THRESHOLD);
+        const bool newly_pressed = (prev >= s_ch_fader_pair_fade_down_press_threshold) &&
+                                   (source[i] < s_ch_fader_pair_fade_down_press_threshold);
         const bool other_pressed_deeper = (i != active) &&
-                                          (source[i] < CH_FADER_PAIR_RESET_THRESHOLD) &&
-                                          ((prev - source[i]) >= CH_FADER_PAIR_FADE_DOWN_DEEPER_DELTA);
+                                          (source[i] < s_ch_fader_pair_reset_threshold) &&
+                                          ((prev - source[i]) >= s_ch_fader_pair_fade_down_deeper_delta);
 
         if (newly_pressed || other_pressed_deeper)
         {
@@ -919,9 +919,9 @@ static void update_multi_fade_down_source(uint8_t pair_idx,
         }
     }
 
-    if (started != CH_FADER_FADE_DOWN_SOURCE_NONE)
+    if (started != s_ch_fader_fade_down_source_none)
     {
-        if ((active != CH_FADER_FADE_DOWN_SOURCE_NONE) && (started != active))
+        if ((active != s_ch_fader_fade_down_source_none) && (started != active))
         {
             // Switching sources while the previous one is bottomed would
             // otherwise keep the audio muted and hide the second cut.
@@ -932,8 +932,8 @@ static void update_multi_fade_down_source(uint8_t pair_idx,
             s_ch_fader.pair_top_hold_active[pair_idx] = false;
             s_ch_fader.pair_fade_up_topped[pair_idx] = false;
             s_ch_fader.fade_down_force_release_reads[pair_idx] =
-                fade_up_active ? CH_FADER_FADE_DOWN_RETRIGGER_RELEASE_READS_WITH_FADE_UP
-                               : CH_FADER_FADE_DOWN_RETRIGGER_RELEASE_READS_MOMENTARY;
+                fade_up_active ? s_ch_fader_fade_down_retrigger_release_reads_with_fade_up
+                               : s_ch_fader_fade_down_retrigger_release_reads_momentary;
         }
         active = started;
     }
@@ -943,7 +943,7 @@ static void update_multi_fade_down_source(uint8_t pair_idx,
     bool all_released = true;
     for (uint8_t i = 0; i < CH_FADER_FADE_DOWN_SOURCE_COUNT; i++)
     {
-        if (source[i] < CH_FADER_PAIR_RESET_THRESHOLD)
+        if (source[i] < s_ch_fader_pair_reset_threshold)
         {
             all_released = false;
             break;
@@ -951,7 +951,7 @@ static void update_multi_fade_down_source(uint8_t pair_idx,
     }
     if (all_released)
     {
-        active = CH_FADER_FADE_DOWN_SOURCE_NONE;
+        active = s_ch_fader_fade_down_source_none;
     }
 
     s_ch_fader.fade_down_active_source[pair_idx] = active;
@@ -970,7 +970,7 @@ static void update_multi_fade_down_source(uint8_t pair_idx,
         return;
     }
 
-    if (active != CH_FADER_FADE_DOWN_SOURCE_NONE)
+    if (active != s_ch_fader_fade_down_source_none)
     {
         // During a gesture, only the active source drives fade-down. This lets
         // the other sensor retrigger even if the first one remains deeper.
@@ -993,7 +993,7 @@ static void update_multi_fade_down_source(uint8_t pair_idx,
 // Convert each pair's physical fade-down sensor(s) into one cached value.
 // This is done once per ch_fader scan so retrigger state is not consumed by
 // multiple later reads of get_ch_fader_pair_fade_down_raw().
-static void update_ch_fader_pair_fade_down_source(const ch_fader_pair_runtime_t* pair)
+static void update_ch_fader_pair_fade_down_source(const ui_ch_fader_pair_runtime_t* pair)
 {
     const uint8_t source_idx[CH_FADER_FADE_DOWN_SOURCE_COUNT] = {
         pair->fade_down_idx,
@@ -1024,23 +1024,23 @@ static void update_ch_fader_fade_down_sources(void)
     }
 }
 
-static float get_ch_fader_pair_fade_down_raw(const ch_fader_pair_runtime_t* pair)
+static float get_ch_fader_pair_fade_down_raw(const ui_ch_fader_pair_runtime_t* pair)
 {
     return s_ch_fader.fade_down_combined_raw[pair->prev_idx];
 }
 
 // Fade-up sensors idle near 0.0 and rise toward 1.0 when pressed.
-static float get_ch_fader_pair_fade_up_raw(const ch_fader_pair_runtime_t* pair)
+static float get_ch_fader_pair_fade_up_raw(const ui_ch_fader_pair_runtime_t* pair)
 {
     return apply_ch_fader_pair_onset_deadband(pair->fade_up_idx, s_ch_fader.raw[pair->fade_up_idx]);
 }
 
-static bool is_ch_fader_pair_reverse_enabled(const ch_fader_pair_runtime_t* pair)
+static bool is_ch_fader_pair_reverse_enabled(const ui_ch_fader_pair_runtime_t* pair)
 {
     return (pair->prev_idx == CH_FADER_PAIR_A) ? s_ch_fader_reverse_a : s_ch_fader_reverse_b;
 }
 
-static float apply_ch_fader_pair_reverse(const ch_fader_pair_runtime_t* pair, float value)
+static float apply_ch_fader_pair_reverse(const ui_ch_fader_pair_runtime_t* pair, float value)
 {
     value = clamp01(value);
     return is_ch_fader_pair_reverse_enabled(pair) ? (1.0f - value) : value;
@@ -1052,7 +1052,7 @@ static float apply_ch_fader_pair_reverse(const ch_fader_pair_runtime_t* pair, fl
 // fade-down can lower it, and releasing either side leaves the output where it
 // was. A full fade-down press enters a bottom-hold state so the cut stays muted
 // until the sensor leaves the bottom zone.
-static float compute_ch_fader_pair_value(const ch_fader_pair_runtime_t* pair)
+static float compute_ch_fader_pair_value(const ui_ch_fader_pair_runtime_t* pair)
 {
     // Current hold-value model:
     // - fade-up raises the held output toward its current ramped value
@@ -1069,11 +1069,11 @@ static float compute_ch_fader_pair_value(const ch_fader_pair_runtime_t* pair)
     // Bottom/top gesture states now follow the physical endpoints instead of
     // the curve setting, so CC64 remains linear across the complete travel.
     const float down_bottom_threshold       = 0.0f;
-    const float down_bottom_hold_release_threshold = CH_FADER_PAIR_BOTTOM_HOLD_RELEASE_THRESHOLD;
-    const float down_bottom_rehold_threshold       = CH_FADER_PAIR_BOTTOM_REHOLD_THRESHOLD;
+    const float down_bottom_hold_release_threshold = s_ch_fader_pair_bottom_hold_release_threshold;
+    const float down_bottom_rehold_threshold       = s_ch_fader_pair_bottom_rehold_threshold;
     const float up_top_threshold            = 1.0f;
-    const float up_top_hold_release_threshold = 1.0f - CH_FADER_PAIR_BOTTOM_HOLD_RELEASE_THRESHOLD;
-    const float up_top_rehold_threshold       = 1.0f - CH_FADER_PAIR_BOTTOM_REHOLD_THRESHOLD;
+    const float up_top_hold_release_threshold = 1.0f - s_ch_fader_pair_bottom_hold_release_threshold;
+    const float up_top_rehold_threshold       = 1.0f - s_ch_fader_pair_bottom_rehold_threshold;
     // After bottoming out, ignore further fade-down cuts until the sensor returns to unpressed.
     const float down_bottom_release_threshold = 1.0f;
     bool cut_active         = s_ch_fader.pair_fade_down_cut_active[pair->prev_idx];
@@ -1090,7 +1090,7 @@ static float compute_ch_fader_pair_value(const ch_fader_pair_runtime_t* pair)
     const float up_gain     = compute_ch_fader_exponential_curve(fade_up, curve_amount);
     const float down_gain   = 1.0f - compute_ch_fader_exponential_curve(1.0f - fade_down, curve_amount);
     const bool fade_up_active = (up_gain > 0.0f);
-    const bool fade_down_released = (fade_down >= CH_FADER_PAIR_RESET_THRESHOLD);
+    const bool fade_down_released = (fade_down >= s_ch_fader_pair_reset_threshold);
     const bool fade_down_pressed = !fade_down_released;
     const bool both_released = !fade_up_active && !fade_down_pressed;
     uint8_t gesture_parent = s_ch_fader.pair_gesture_parent[pair->prev_idx];
@@ -1147,7 +1147,7 @@ static float compute_ch_fader_pair_value(const ch_fader_pair_runtime_t* pair)
 
         if (!reverse_fade_down_takeover &&
             fade_down_pressed &&
-            ((reverse_down_gain + CH_FADER_SEND_THRESHOLD) >= hold_value))
+            ((reverse_down_gain + s_ch_fader_send_threshold) >= hold_value))
         {
             reverse_fade_down_takeover = true;
         }
@@ -1330,11 +1330,11 @@ static float compute_ch_fader_pair_value(const ch_fader_pair_runtime_t* pair)
 }
 
 // Compute and commit one pair output (A or B) from the current fade-up/fade-down drive values.
-static void update_ch_fader_pair_output(const ch_fader_pair_runtime_t* pair)
+static void update_ch_fader_pair_output(const ui_ch_fader_pair_runtime_t* pair)
 {
     const float up_now          = get_ch_fader_pair_fade_up_raw(pair);
     const float down_now        = get_ch_fader_pair_fade_down_raw(pair);
-    const bool fade_changed     = (fabs(up_now - s_ch_fader.fade_up_prev[pair->prev_idx]) > CH_FADER_SEND_THRESHOLD) || (fabs(down_now - s_ch_fader.fade_down_prev[pair->prev_idx]) > CH_FADER_SEND_THRESHOLD);
+    const bool fade_changed     = (fabs(up_now - s_ch_fader.fade_up_prev[pair->prev_idx]) > s_ch_fader_send_threshold) || (fabs(down_now - s_ch_fader.fade_down_prev[pair->prev_idx]) > s_ch_fader_send_threshold);
 
     if (fade_changed)
     {
@@ -1396,7 +1396,7 @@ void ui_ch_fader_reapply_outputs(void)
 
     for (uint32_t i = 0; i < TU_ARRAY_SIZE(s_ch_fader_pairs); i++)
     {
-        const ch_fader_pair_runtime_t* pair = &s_ch_fader_pairs[i];
+        const ui_ch_fader_pair_runtime_t* pair = &s_ch_fader_pairs[i];
         const float ch_fader_value = apply_ch_fader_pair_reverse(pair, compute_ch_fader_pair_value(pair));
 
         sync_ch_fader_dsp_output(pair, ch_fader_value);
@@ -1475,7 +1475,7 @@ void ui_ch_fader_mark_curve_dirty(void)
     mark_ch_fader_curve_dirty();
 }
 
-bool ui_ch_fader_validate_persist(const UI_ControlPersistState_t* state)
+bool ui_ch_fader_validate_persist(const ui_persist_state_t* state)
 {
     if (state == NULL)
     {
@@ -1486,7 +1486,7 @@ bool ui_ch_fader_validate_persist(const UI_ControlPersistState_t* state)
            (state->sensor3_aux_fade_down_assign <= UI_CH_FADER_AUX_ASSIGN_B);
 }
 
-void ui_ch_fader_capture_persist(UI_ControlPersistState_t* state)
+void ui_ch_fader_capture_persist(ui_persist_state_t* state)
 {
     if (state == NULL)
     {
@@ -1546,7 +1546,7 @@ void ui_ch_fader_reset(void)
         {
             s_ch_fader.fade_down_source_prev[i][source] = 1.0f;
         }
-        s_ch_fader.fade_down_active_source[i] = CH_FADER_FADE_DOWN_SOURCE_NONE;
+        s_ch_fader.fade_down_active_source[i] = s_ch_fader_fade_down_source_none;
         s_ch_fader.fade_down_force_release_reads[i] = 0U;
         s_ch_fader.pair_gesture_parent[i] = CH_FADER_GESTURE_PARENT_NONE;
         s_ch_fader.pair_gesture_armed[i] = true;
@@ -1566,7 +1566,7 @@ void ui_ch_fader_reset(void)
 }
 
 // OLED表示用: curve幅、DVS delay、Reverseの軽量コピー。scheduler停止区間専用。
-void ui_ch_fader_capture_display_state(UI_ChFaderDisplayState_t* state)
+void ui_ch_fader_capture_display_state(ui_ch_fader_display_state_t* state)
 {
     if (state == NULL)
     {

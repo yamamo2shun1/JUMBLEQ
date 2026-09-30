@@ -206,7 +206,7 @@ static bool adau1466_get_sample_rate_cfg(uint32_t hz, adau1466_sample_rate_cfg_t
     return false;
 }
 
-static bool adau1466_audio_input_source_to_mux_index(AudioInputSource_t audio_input_source,
+static bool adau1466_audio_input_source_to_mux_index(adau1466_input_source_t audio_input_source,
                                                      uint8_t* mux_index)
 {
     if (mux_index == NULL)
@@ -233,7 +233,7 @@ static bool adau1466_audio_input_source_to_mux_index(AudioInputSource_t audio_in
     }
 }
 
-static bool adau1466_return_source_to_mux_index(AudioInputSource_t audio_input_source,
+static bool adau1466_return_source_to_mux_index(adau1466_input_source_t audio_input_source,
                                                 uint8_t* mux_index)
 {
     if (mux_index == NULL)
@@ -254,7 +254,7 @@ static bool adau1466_return_source_to_mux_index(AudioInputSource_t audio_input_s
     }
 }
 
-static bool adau1466_hp_source_to_mux_index(HpSource_t hp_source, uint8_t* mux_index)
+static bool adau1466_hp_source_to_mux_index(adau1466_hp_source_t hp_source, uint8_t* mux_index)
 {
     if (mux_index == NULL)
     {
@@ -544,7 +544,7 @@ static void adau1466_write_int_mux_it(uint16_t addr, uint8_t mux_index)
 }
 
 static bool adau1466_find_channel_addr(const adau1466_channel_addr_t* table, uint32_t count,
-                                       AudioInputSource_t audio_input_source, uint16_t* addr)
+                                       adau1466_input_source_t audio_input_source, uint16_t* addr)
 {
     if ((table == NULL) || (addr == NULL))
     {
@@ -564,7 +564,7 @@ static bool adau1466_find_channel_addr(const adau1466_channel_addr_t* table, uin
 }
 
 static bool adau1466_find_selector(const adau1466_safeload_selector_t* table, uint32_t count,
-                                   AudioInputSource_t audio_input_source,
+                                   adau1466_input_source_t audio_input_source,
                                    const adau1466_safeload_selector_t** selector)
 {
     if ((table == NULL) || (selector == NULL))
@@ -600,7 +600,7 @@ static bool adau1466_write_two_way_safeload(const adau1466_safeload_selector_t* 
     return adau1466_safeload_write_words(selector->addr, selector->mem_page, safeload_data, 2U, NULL);
 }
 
-static void adau1466_select_ch_fader_source(uint16_t addr, AudioInputSource_t audio_input_source)
+static void adau1466_select_ch_fader_source(uint16_t addr, adau1466_input_source_t audio_input_source)
 {
     uint8_t mux_index = 0U;
 
@@ -886,7 +886,7 @@ void adau1466_control_hp_out_gain(const uint16_t adc_val)
     adau1466_write_pot_gain(MOD_HP_OUTPUT_GAIN_ADDR, adc_val);
 }
 
-void adau1466_select_input_type(AudioInputSource_t audio_input_source, uint8_t input_type)
+void adau1466_select_input_type(adau1466_input_source_t audio_input_source, uint8_t input_type)
 {
     const adau1466_safeload_selector_t* selector;
 
@@ -904,7 +904,7 @@ void adau1466_select_input_type(AudioInputSource_t audio_input_source, uint8_t i
     (void) adau1466_write_two_way_safeload(selector, (input_type == INPUT_TYPE_PHONO) ? 1U : 0U);
 }
 
-void adau1466_set_input_insert_enabled(AudioInputSource_t audio_input_source, bool enabled)
+void adau1466_set_input_insert_enabled(adau1466_input_source_t audio_input_source, bool enabled)
 {
     const adau1466_safeload_selector_t* selector;
 
@@ -917,7 +917,7 @@ void adau1466_set_input_insert_enabled(AudioInputSource_t audio_input_source, bo
     (void) adau1466_write_two_way_safeload(selector, enabled ? 1U : 0U);
 }
 
-void adau1466_select_send_source(AudioInputSource_t audio_input_source, bool select_insert)
+void adau1466_select_send_source(adau1466_input_source_t audio_input_source, bool select_insert)
 {
     uint16_t addr;
 
@@ -930,25 +930,25 @@ void adau1466_select_send_source(AudioInputSource_t audio_input_source, bool sel
     adau1466_write_int_mux_it(addr, select_insert ? 1U : 0U);
 }
 
-void adau1466_select_ch_fader_assign_a_source(AudioInputSource_t audio_input_source)
+void adau1466_select_ch_fader_assign_a_source(adau1466_input_source_t audio_input_source)
 {
     adau1466_select_ch_fader_source(s_ch_fader_assign_addr[ADAU1466_CH_FADER_TARGET_A],
                                     audio_input_source);
 }
 
-void adau1466_select_ch_fader_assign_b_source(AudioInputSource_t audio_input_source)
+void adau1466_select_ch_fader_assign_b_source(adau1466_input_source_t audio_input_source)
 {
     adau1466_select_ch_fader_source(s_ch_fader_assign_addr[ADAU1466_CH_FADER_TARGET_B],
                                     audio_input_source);
 }
 
-void adau1466_select_ch_fader_assign_post_source(AudioInputSource_t audio_input_source)
+void adau1466_select_ch_fader_assign_post_source(adau1466_input_source_t audio_input_source)
 {
     adau1466_select_ch_fader_source(s_ch_fader_assign_addr[ADAU1466_CH_FADER_TARGET_POST],
                                     audio_input_source);
 }
 
-void adau1466_select_return_ch_source(AudioInputSource_t audio_input_source)
+void adau1466_select_return_ch_source(adau1466_input_source_t audio_input_source)
 {
     uint8_t mux_index;
 
@@ -960,7 +960,7 @@ void adau1466_select_return_ch_source(AudioInputSource_t audio_input_source)
     adau1466_write_int_mux(MOD_RETURN_CH_SW_INDEX_ADDR, mux_index);
 }
 
-void adau1466_select_hp_out_source(HpSource_t hp_source)
+void adau1466_select_hp_out_source(adau1466_hp_source_t hp_source)
 {
     uint8_t mux_index = 0U;
 

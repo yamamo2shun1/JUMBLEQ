@@ -18,7 +18,7 @@ typedef enum
     TIMECODE_RATIO_OCTAVE = 0,
     TIMECODE_RATIO_HARMONIC,
     TIMECODE_RATIO_CHORD,
-} TimecodeOscillatorRatioSet_t;
+} timecode_oscillator_ratio_set_t;
 
 typedef enum
 {
@@ -26,14 +26,14 @@ typedef enum
     TIMECODE_WARP_CROSSFOLD,
     TIMECODE_WARP_RING_MOD,
     TIMECODE_WARP_COMPARATOR,
-} TimecodeOscillatorWarpAlgorithm_t;
+} timecode_oscillator_warp_algorithm_t;
 
 typedef enum
 {
     TIMECODE_TRACK_NO_SIGNAL = 0,
     TIMECODE_TRACK_TRACKING,
     TIMECODE_TRACK_HOLD,
-} TimecodeOscillatorTrackState_t;
+} timecode_oscillator_track_state_t;
 
 typedef struct
 {
@@ -45,27 +45,27 @@ typedef struct
     float threshold;
     float confidence_min;
     float morph;
-    TimecodeOscillatorRatioSet_t ratio_set;
+    timecode_oscillator_ratio_set_t ratio_set;
     float slope;
     float smooth_fold;
-    TimecodeOscillatorWarpAlgorithm_t warp_algorithm;
+    timecode_oscillator_warp_algorithm_t warp_algorithm;
     float warp_amount;
     float direction;
     float output_gain_db;
-} TimecodeOscillatorParameters_t;
+} timecode_oscillator_parameters_t;
 
 typedef struct
 {
     float signed_speed;
     float confidence;
     float input_level;
-    TimecodeOscillatorTrackState_t state;
-} TimecodeOscillatorDiagnostics_t;
+    timecode_oscillator_track_state_t state;
+} timecode_oscillator_diagnostics_t;
 
 typedef struct
 {
-    TimecodeOscillatorParameters_t parameters;
-    TimecodeOscillatorDiagnostics_t diagnostics;
+    timecode_oscillator_parameters_t parameters;
+    timecode_oscillator_diagnostics_t diagnostics;
 
     float sample_rate_hz;
     float dc_coefficient;
@@ -98,17 +98,17 @@ typedef struct
     float smooth_fold_smooth;
     float voice_lp_a[TIMECODE_OSCILLATOR_VOICE_COUNT];
     float voice_lp_b[TIMECODE_OSCILLATOR_VOICE_COUNT];
-} TimecodeOscillator_t;
+} timecode_oscillator_t;
 
-void timecode_oscillator_init(TimecodeOscillator_t* oscillator, uint32_t sample_rate_hz);
-void timecode_oscillator_reset(TimecodeOscillator_t* oscillator);
-void timecode_oscillator_set_enabled(TimecodeOscillator_t* oscillator, bool enabled);
-void timecode_oscillator_set_parameters(TimecodeOscillator_t* oscillator,
-                                        const TimecodeOscillatorParameters_t* parameters);
-const TimecodeOscillatorParameters_t* timecode_oscillator_get_parameters(const TimecodeOscillator_t* oscillator);
-const TimecodeOscillatorDiagnostics_t* timecode_oscillator_get_diagnostics(const TimecodeOscillator_t* oscillator);
+void timecode_oscillator_init(timecode_oscillator_t* oscillator, uint32_t sample_rate_hz);
+void timecode_oscillator_reset(timecode_oscillator_t* oscillator);
+void timecode_oscillator_set_enabled(timecode_oscillator_t* oscillator, bool enabled);
+void timecode_oscillator_set_parameters(timecode_oscillator_t* oscillator,
+                                        const timecode_oscillator_parameters_t* parameters);
+const timecode_oscillator_parameters_t* timecode_oscillator_get_parameters(const timecode_oscillator_t* oscillator);
+const timecode_oscillator_diagnostics_t* timecode_oscillator_get_diagnostics(const timecode_oscillator_t* oscillator);
 
-void timecode_oscillator_process_interleaved(TimecodeOscillator_t* oscillator,
+void timecode_oscillator_process_interleaved(timecode_oscillator_t* oscillator,
                                              const int32_t* input_l,
                                              const int32_t* input_r,
                                              uint32_t input_stride_words,

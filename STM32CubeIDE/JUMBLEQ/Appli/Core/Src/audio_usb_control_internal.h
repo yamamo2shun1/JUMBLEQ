@@ -59,16 +59,16 @@ typedef struct
     uint32_t last_apply_tick_ms;       // 最後に適用を試みたtick
     uint32_t backoff_active;           // 再試行バックオフ中か
     uint32_t task_create_failed;       // 専用Task生成に失敗したか
-} AudioUsbFeatureDiagnostics_t;
+} audio_usb_feature_diagnostics_t;
 
-extern volatile AudioUsbFeatureDiagnostics_t g_audio_usb_feature_diagnostics;
+extern volatile audio_usb_feature_diagnostics_t g_audio_usb_feature_diagnostics;
 
 // 音量・ミュート適用専用Taskを開始する。DSP初期化とSAI開始の後に呼ぶ。
 // 二重開始は無視する。生成失敗時は診断のtask_create_failedに記録する。
 void audio_usb_control_feature_task_start(void);
 
 // LED blink interval getters (consumed by led_control.c).
-uint32_t get_tx_blink_interval_ms(void);
-uint32_t get_rx_blink_interval_ms(void);
+uint32_t audio_usb_control_get_tx_blink_interval_ms(void);
+uint32_t audio_usb_control_get_rx_blink_interval_ms(void);
 
 #endif /* AUDIO_USB_CONTROL_INTERNAL_H_ */
