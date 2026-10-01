@@ -558,6 +558,60 @@ void audio_diagnostics_record_rx_ring_discard(uint32_t dropped_words, bool full_
     g_audio_rx_diagnostics.rx_last_discard_tick_ms = HAL_GetTick();
 }
 
+void audio_diagnostics_record_usb_in_start_boundary(uint32_t discarded_words)
+{
+    g_audio_rx_diagnostics.usb_in_start_boundaries++;
+    g_audio_rx_diagnostics.usb_in_start_discard_words += discarded_words;
+}
+
+void audio_diagnostics_record_usb_in_fifo_level(uint32_t judged_count, uint32_t post_write_bound)
+{
+    if (judged_count > g_audio_rx_diagnostics.usb_in_fifo_judged_count_max)
+    {
+        g_audio_rx_diagnostics.usb_in_fifo_judged_count_max = judged_count;
+    }
+    if (post_write_bound > g_audio_rx_diagnostics.usb_in_fifo_post_write_max)
+    {
+        g_audio_rx_diagnostics.usb_in_fifo_post_write_max = post_write_bound;
+    }
+}
+
+void audio_diagnostics_record_usb_in_fifo_defer(void)
+{
+    g_audio_rx_diagnostics.usb_in_fifo_defer_events++;
+}
+
+void audio_diagnostics_record_usb_in_stale_request_skip(void)
+{
+    g_audio_rx_diagnostics.usb_in_stale_request_skips++;
+}
+
+void audio_diagnostics_record_usb_in_backlog_discard(uint32_t dropped_words)
+{
+    g_audio_rx_diagnostics.usb_in_backlog_discard_events++;
+    g_audio_rx_diagnostics.usb_in_backlog_discard_words += dropped_words;
+}
+
+void audio_diagnostics_record_usb_in_write_error(bool partial)
+{
+    if (partial)
+    {
+        g_audio_rx_diagnostics.usb_in_write_partial_events++;
+    }
+    else
+    {
+        g_audio_rx_diagnostics.usb_in_write_zero_events++;
+    }
+}
+
+void audio_diagnostics_record_usb_in_write_section(uint32_t cycles)
+{
+    if (cycles > g_audio_rx_diagnostics.usb_in_write_section_cycles_max)
+    {
+        g_audio_rx_diagnostics.usb_in_write_section_cycles_max = cycles;
+    }
+}
+
 void audio_diagnostics_record_dma_error(uint32_t error_code,
                                         bool tx_route,
                                         bool streaming,
