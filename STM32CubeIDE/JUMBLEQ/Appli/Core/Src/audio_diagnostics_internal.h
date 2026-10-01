@@ -127,6 +127,18 @@ typedef struct
     uint32_t rx_last_process_cycles;
     uint32_t rx_last_complete_cycles;
     uint32_t rx_last_complete_deadline_cycles;
+    // USB IN stream境界とFIFO書込み（#250/#253）。Audio Taskだけが更新する。
+    uint32_t usb_in_start_boundaries;        // IN開始境界の適用回数
+    uint32_t usb_in_start_discard_words;     // 開始境界で破棄したRXリングword数の累計
+    uint32_t usb_in_fifo_judged_count_max;   // 最終判定時に観測したIN FIFO水位の最大値(byte)
+    uint32_t usb_in_fifo_post_write_max;     // 判定時水位＋書込みbyte数の最大値(byte)。write直後の水位の上界
+    uint32_t usb_in_fifo_defer_events;       // FIFO上限・空き不足で書込みを保留した回数
+    uint32_t usb_in_stale_request_skips;     // 未適用のstream要求があり書込みを見送った回数
+    uint32_t usb_in_backlog_discard_events;  // RXリング保持上限による明示破棄の回数
+    uint32_t usb_in_backlog_discard_words;   // RXリング保持上限による明示破棄のword数累計
+    uint32_t usb_in_write_zero_events;       // tud_audio_n_write()が0を返した回数（未構成時のみ）
+    uint32_t usb_in_write_partial_events;    // 要求量と異なる非0値を返した回数（現行TinyUSBでは0）
+    uint32_t usb_in_write_section_cycles_max;  // scheduler停止区間の最大サイクル数(DWT->CYCCNT)
 } audio_rx_diagnostics_t;
 
 extern volatile audio_rx_diagnostics_t g_audio_rx_diagnostics;
@@ -345,6 +357,18 @@ void audio_diagnostics_record_rx_events_dropped(uint32_t last_event,
                                                 uint32_t dropped_events);
 // RXリング破棄。full_discardは負値・capacity超過による異常水位の全破棄を表す。
 void audio_diagnostics_record_rx_ring_discard(uint32_t dropped_words, bool full_discard);
+
+// USB IN stream境界とFIFO書込み（#250/#253）。Audio Task context only。
+// 値はscheduler停止区間内で取得したものを、区間外で渡すこと。
+void audio_diagnostics_record_usb_in_start_boundary(uint32_t discarded_words);
+// judged_count: 最終判定時のFIFO水位。post_write_bound: 判定時水位＋書込みbyte数（書込みなしは0）。
+void audio_diagnostics_record_usb_in_fifo_level(uint32_t judged_count, uint32_t post_write_bound);
+void audio_diagnostics_record_usb_in_fifo_defer(void);
+void audio_diagnostics_record_usb_in_stale_request_skip(void);
+void audio_diagnostics_record_usb_in_backlog_discard(uint32_t dropped_words);
+// partial=false: 0を返した。partial=true: 要求量と異なる非0値を返した。
+void audio_diagnostics_record_usb_in_write_error(bool partial);
+void audio_diagnostics_record_usb_in_write_section(uint32_t cycles);
 void audio_diagnostics_record_dma_error(uint32_t error_code,
                                         bool tx_route,
                                         bool streaming,

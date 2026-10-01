@@ -32,6 +32,12 @@ enum
     AUDIO_USB_FRAME_BYTES = AUDIO_USB_FRAME_CHANNELS * sizeof(int32_t),
     AUDIO_USB_OUT_TARGET_MICROFRAMES = 4u,  // 0.5 ms (HS OUT転送 0.125 ms x 4)
     AUDIO_USB_IN_TARGET_INTERVALS    = 2u,  // 1.0 ms (EP IN interval 0.5 ms x 2)
+    // USB IN FIFOへの書込み上限（暫定値、実測で確定する）。flow control目標(2 interval)
+    // ＋書込み1チャンク＋余白1 interval = 2.0 ms相当のframe数。保持データ量の上限であり、
+    // ホスト停滞中の経過時間の上限ではない。
+    AUDIO_USB_IN_FIFO_LIMIT_INTERVALS = 4u,
+    // FIFO上限で保留した音声をRXリングに保持できる上限（DMA half＋2 interval、暫定値）。
+    AUDIO_USB_IN_BACKLOG_INTERVALS    = 2u,
     // USB再生(OUT)primingの目標水位（消費前、word単位）。通常の消費前目標と同じ基準。
     // 224 word = 56 frame = 48kHzで約1.167ms、96kHzで約0.583ms。
     AUDIO_TX_PRIME_LEVEL_WORDS = SAI_TX_TARGET_LEVEL_WORDS + (SAI_TX_DMA_BUF_WORDS / 2),
@@ -71,6 +77,13 @@ enum
        (AUDIO_USB_HS_MICROFRAMES_PER_SECOND - 1u)) / \
       AUDIO_USB_HS_MICROFRAMES_PER_SECOND) * \
      AUDIO_USB_IN_TARGET_INTERVALS * (uint32_t) AUDIO_USB_FRAME_BYTES)
+#define AUDIO_USB_IN_LIMIT_BYTES_MAX \
+    ((AUDIO_USB_IN_TARGET_BYTES_MAX / AUDIO_USB_IN_TARGET_INTERVALS) * AUDIO_USB_IN_FIFO_LIMIT_INTERVALS)
+#define AUDIO_RX_BACKLOG_LIMIT_WORDS_MAX \
+    ((SAI_RX_DMA_BUF_WORDS / 2u) + \
+     ((((uint32_t) CFG_TUD_AUDIO_FUNC_1_MAX_SAMPLE_RATE * CFG_TUD_AUDIO_FUNC_1_EP_IN_INTERVAL_UFRAMES) / \
+       AUDIO_USB_HS_MICROFRAMES_PER_SECOND) * \
+      AUDIO_RING_FRAME_WORDS * AUDIO_USB_IN_BACKLOG_INTERVALS))
 
 #define SAI_ERROR_STATUS_MASK \
     (SAI_xSR_OVRUDR | SAI_xSR_WCKCFG | SAI_xSR_CNRDY | SAI_xSR_AFSDET | SAI_xSR_LFSDET)
@@ -119,6 +132,15 @@ _Static_assert(AUDIO_USB_OUT_TARGET_BYTES_MAX + CFG_TUD_AUDIO_FUNC_1_EP_OUT_SZ_M
 _Static_assert(AUDIO_USB_IN_TARGET_BYTES_MAX + CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ_MAX <=
                    CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ,
                "USB IN FIFO target must leave room for one maximum packet");
+// IN FIFO書込み上限は、目標の上に書込み1チャンクと余白1 intervalを残し、
+// 最大packet分の余白を残してFIFO容量に収まること。
+_Static_assert(AUDIO_USB_IN_FIFO_LIMIT_INTERVALS >= AUDIO_USB_IN_TARGET_INTERVALS + 2u,
+               "IN FIFO limit must leave one chunk and one interval of headroom above the target");
+_Static_assert(AUDIO_USB_IN_LIMIT_BYTES_MAX + CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ_MAX <=
+                   CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ,
+               "IN FIFO limit must leave room for one maximum packet");
+_Static_assert(AUDIO_RX_BACKLOG_LIMIT_WORDS_MAX < AUDIO_RING_CAPACITY_WORDS,
+               "USB IN backlog limit must fit the RX ring");
 
 static __attribute__((section("noncacheable_buffer"), aligned(32)))
 int32_t s_tx_ring_storage[AUDIO_RING_CAPACITY_WORDS] = {0};
@@ -388,6 +410,11 @@ static volatile bool s_streaming_in  = false;
 static volatile uint32_t s_stream_requested_mask     = 0u;
 static volatile uint32_t s_stream_request_sequence   = 0u;
 static uint32_t s_stream_applied_request_sequence    = 0u;
+// IN開始要求（alt≠0のSET_INTERFACE）の世代。要求publishと同じPRIMASK区間で進める。
+// 適用前にstop→startが集約された場合や、streaming中の再SET_INTERFACEでも
+// 開始境界を作るために、maskとは別に数える。
+static volatile uint32_t s_stream_in_start_sequence  = 0u;
+static uint32_t s_stream_in_applied_start_sequence   = 0u;  // Audio Task専用
 
 static volatile bool s_usb_in_send_pending = false;  // USB IN(device→host)送信要求フラグ (ISR→Task通知用)
 static volatile bool s_usb_out_receive_pending = false;  // USB OUT(host→device)受信通知フラグ (ISR→Task通知用)
@@ -1034,6 +1061,10 @@ void audio_transport_request_stream(audio_transport_stream_t stream, bool enable
     if (enabled)
     {
         s_stream_requested_mask |= stream_bit;
+        if (stream == AUDIO_TRANSPORT_STREAM_IN)
+        {
+            s_stream_in_start_sequence++;
+        }
     }
     else
     {
@@ -1061,7 +1092,7 @@ void audio_transport_request_stream(audio_transport_stream_t stream, bool enable
     audio_transport_notify_task();
 }
 
-static bool audio_stream_take_requested_state(uint32_t* requested_mask)
+static bool audio_stream_take_requested_state(uint32_t* requested_mask, bool* in_start_requested)
 {
     const uint32_t primask = __get_PRIMASK();
     __disable_irq();
@@ -1075,6 +1106,11 @@ static bool audio_stream_take_requested_state(uint32_t* requested_mask)
 
     *requested_mask = s_stream_requested_mask;
     s_stream_applied_request_sequence = request_sequence;
+
+    // 開始世代はmaskと同じ区間で取り出し、未適用の開始要求の有無を返す。
+    const uint32_t in_start_sequence = s_stream_in_start_sequence;
+    *in_start_requested = (in_start_sequence != s_stream_in_applied_start_sequence);
+    s_stream_in_applied_start_sequence = in_start_sequence;
 
     __set_PRIMASK(primask);
     return true;
@@ -1118,35 +1154,48 @@ static void audio_stream_apply_out_state(bool enabled)
 #endif
 }
 
-static void audio_stream_apply_in_state(bool enabled)
+// IN開始境界。境界より前にRXリング・IN FIFOへ入っていた音声を送らない。
+// Audio Task context only。IN FIFOのclearはUSB ISRの読出しとusbTaskのclearの
+// 両方と排他するためPRIMASK区間で行う。OUT FIFOには触れない。
+static void audio_stream_begin_in(void)
 {
-    if (enabled != s_streaming_in)
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    const int32_t stale_words = audio_ring_used_words(&s_rx_ring);
+    audio_ring_discard_all(&s_rx_ring);
+    dma_audio_event_reset_locked(&s_rx_dma_event);
+    (void) tud_audio_n_clear_ep_in_ff(AUDIO_FUNC_ID);
+    s_usb_in_send_pending = true;
+    s_streaming_in        = true;
+
+    __set_PRIMASK(primask);
+
+    audio_diagnostics_record_usb_in_start_boundary((stale_words > 0) ? (uint32_t) stale_words : 0u);
+#if AUDIO_DIAG_LOG
+    audio_diagnostics_record_usb_in_notify();
+#endif
+}
+
+// start_requested: 未適用のIN開始要求（alt≠0のSET_INTERFACE）があったか。
+// 開始要求なしの再適用（OUT要求のみ等）ではstreaming中のリングを破棄しない。
+static void audio_stream_apply_in_state(bool enabled, bool start_requested)
+{
+    if (enabled && (!s_streaming_in || start_requested))
+    {
+        audio_stream_begin_in();
+    }
+    else if (!enabled && s_streaming_in)
     {
         const uint32_t primask = __get_PRIMASK();
         __disable_irq();
 
-        if (enabled)
-        {
-            s_usb_in_send_pending = true;
-            dma_audio_event_reset_locked(&s_rx_dma_event);
-            s_streaming_in = true;
-        }
-        else
-        {
-            s_streaming_in       = false;
-            s_usb_in_send_pending       = false;
-            audio_ring_reset_indices(&s_rx_ring, 0U);
-            dma_audio_event_reset_locked(&s_rx_dma_event);
-        }
+        s_streaming_in        = false;
+        s_usb_in_send_pending = false;
+        audio_ring_reset_indices(&s_rx_ring, 0U);
+        dma_audio_event_reset_locked(&s_rx_dma_event);
 
         __set_PRIMASK(primask);
-
-#if AUDIO_DIAG_LOG
-        if (enabled)
-        {
-            audio_diagnostics_record_usb_in_notify();
-        }
-#endif
     }
 
     if (enabled)
@@ -1160,7 +1209,8 @@ static void audio_stream_apply_in_state(bool enabled)
 bool audio_transport_apply_requested_stream_state(void)
 {
     uint32_t requested_mask;
-    if (!audio_stream_take_requested_state(&requested_mask))
+    bool in_start_requested = false;
+    if (!audio_stream_take_requested_state(&requested_mask, &in_start_requested))
     {
         return false;
     }
@@ -1170,7 +1220,7 @@ bool audio_transport_apply_requested_stream_state(void)
     const bool previous_in  = s_streaming_in;
 #endif
     audio_stream_apply_out_state((requested_mask & AUDIO_STREAM_OUT_BIT) != 0u);
-    audio_stream_apply_in_state((requested_mask & AUDIO_STREAM_IN_BIT) != 0u);
+    audio_stream_apply_in_state((requested_mask & AUDIO_STREAM_IN_BIT) != 0u, in_start_requested);
 
 #if AUDIO_DIAG_LOG
     SEGGER_RTT_printf(0,
@@ -1680,6 +1730,14 @@ static void fill_rx_half(uint32_t src_half_offset_words, bool streaming)
                                  AUDIO_RING_FRAME_WORDS,
                                  (SAI_RX_DMA_BUF_WORDS / 2u) / AUDIO_RING_FRAME_WORDS);
 
+    if (!streaming)
+    {
+        // USB IN停止中は送信先がないため、USB用RXリングへ蓄積しない。
+        // timecode入力処理は上で継続する。開始境界はaudio_stream_begin_in()が作る。
+        audio_ring_discard_all(&s_rx_ring);
+        return;
+    }
+
     int32_t used_words = audio_ring_used_words(&s_rx_ring);
     if (used_words < 0)
     {
@@ -1710,11 +1768,7 @@ static void fill_rx_half(uint32_t src_half_offset_words, bool streaming)
         if (drop_words > 0)
         {
             s_rx_ring.read_index_words += (uint32_t) drop_words;
-            if (streaming)
-            {
-                // USB IN停止中は排出されないため、正常動作としての破棄は記録しない。
-                audio_diagnostics_record_rx_ring_discard((uint32_t) drop_words, false);
-            }
+            audio_diagnostics_record_rx_ring_discard((uint32_t) drop_words, false);
         }
     }
 
@@ -1849,6 +1903,26 @@ static uint16_t audio_transport_usb_in_fifo_target_bytes(uint32_t sample_rate_hz
                                              CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ_MAX);
 }
 
+// USB IN FIFOへの書込み上限。EP IN interval 4回分 = 2.0 ms相当（暫定値）。
+static uint16_t audio_transport_usb_in_fifo_limit_bytes(uint32_t sample_rate_hz)
+{
+    const uint64_t limit_frames =
+        (uint64_t) audio_frames_per_usb_in_interval(sample_rate_hz) *
+        AUDIO_USB_IN_FIFO_LIMIT_INTERVALS;
+
+    return audio_usb_fifo_target_bytes_clamp(limit_frames * AUDIO_USB_FRAME_BYTES,
+                                             CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ,
+                                             CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ_MAX);
+}
+
+// FIFO上限で保留した音声をRXリングに保持できる上限（word単位）。
+static uint32_t audio_rx_usb_in_backlog_limit_words(uint32_t sample_rate_hz)
+{
+    return (SAI_RX_DMA_BUF_WORDS / 2u) +
+           (audio_frames_per_usb_in_interval(sample_rate_hz) * AUDIO_RING_FRAME_WORDS *
+            AUDIO_USB_IN_BACKLOG_INTERVALS);
+}
+
 // TinyUSBのIN FIFO目標を現在レートの1.0 ms相当へ適用する。Audio Task contextのみ。
 static void audio_transport_apply_usb_in_fifo_target(uint32_t sample_rate_hz)
 {
@@ -1950,6 +2024,80 @@ static void audio_transport_discard_usb_out(void)
     }
 }
 
+typedef enum
+{
+    AUDIO_USB_IN_WRITE_OK = 0,
+    AUDIO_USB_IN_WRITE_DEFERRED,       // FIFO上限・空き不足。上書きさせずに保留
+    AUDIO_USB_IN_WRITE_STALE_REQUEST,  // 未適用のstream要求あり。旧世代データを書かない
+    AUDIO_USB_IN_WRITE_ZERO,           // tud_audio_n_write()が0（未構成時のみ）
+    AUDIO_USB_IN_WRITE_PARTIAL,        // 要求量と異なる非0値（現行TinyUSBでは発生しない）
+} audio_usb_in_write_result_t;
+
+// scheduler停止区間内で取得した値。resume後はこの値だけを使う。
+typedef struct
+{
+    audio_usb_in_write_result_t result;
+    uint16_t judged_count;    // 最終判定時のFIFO水位(byte)。STALE_REQUESTでは0
+    uint16_t written_bytes;   // tud_audio_n_write()の戻り値。書込みなしは0
+    uint32_t section_cycles;  // 区間のサイクル数(DWT->CYCCNT)
+} audio_usb_in_write_outcome_t;
+
+// IN FIFOへの最終判定とwrite。Audio Task context only。
+// usbTaskのSET_INTERFACE処理（IN FIFO clearと要求publish）がwrite途中に割り込むと、
+// tu_fifoのwriteがclear前のindexを公開し得る（tusb_fifo.c、FIFOにmutexなし）。
+// vTaskSuspendAll()でusbTaskだけを止め、USB ISRの読出し（SPSCとして安全）は継続させる。
+// usbTaskはclearから要求publishまでブロックしないため、clearが起きていれば区間内で
+// 要求sequenceの不一致として必ず検出できる。
+// 区間内では待機API・ログ・HALを呼ばず、途中returnせずに全経路でxTaskResumeAll()を
+// 1回だけ通る。
+static void audio_usb_in_commit_chunk(tu_fifo_t* ep_in_ff,
+                                      uint16_t usb_bytes,
+                                      uint16_t limit_bytes,
+                                      audio_usb_in_write_outcome_t* outcome)
+{
+    outcome->judged_count  = 0u;
+    outcome->written_bytes = 0u;
+
+    vTaskSuspendAll();
+    const uint32_t section_start_cycle = DWT->CYCCNT;
+
+    if ((s_stream_request_sequence != s_stream_applied_request_sequence) || !s_streaming_in)
+    {
+        outcome->result = AUDIO_USB_IN_WRITE_STALE_REQUEST;
+    }
+    else
+    {
+        const uint16_t fifo_count     = tu_fifo_count(ep_in_ff);
+        const uint16_t fifo_remaining = tu_fifo_remaining(ep_in_ff);
+        outcome->judged_count = fifo_count;
+
+        if ((((uint32_t) fifo_count + usb_bytes) > limit_bytes) || (fifo_remaining < usb_bytes))
+        {
+            outcome->result = AUDIO_USB_IN_WRITE_DEFERRED;
+        }
+        else
+        {
+            const uint16_t written_bytes = tud_audio_n_write(AUDIO_FUNC_ID, s_usb_capture_buf, usb_bytes);
+            outcome->written_bytes = written_bytes;
+            if (written_bytes == usb_bytes)
+            {
+                outcome->result = AUDIO_USB_IN_WRITE_OK;
+            }
+            else if (written_bytes == 0u)
+            {
+                outcome->result = AUDIO_USB_IN_WRITE_ZERO;
+            }
+            else
+            {
+                outcome->result = AUDIO_USB_IN_WRITE_PARTIAL;
+            }
+        }
+    }
+
+    outcome->section_cycles = DWT->CYCCNT - section_start_cycle;
+    (void) xTaskResumeAll();
+}
+
 static void copy_rx_ring_to_usb_in(uint32_t sample_rate_hz)
 {
     if (!tud_audio_n_mounted(AUDIO_FUNC_ID))
@@ -2017,26 +2165,87 @@ static void copy_rx_ring_to_usb_in(uint32_t sample_rate_hz)
         s_usb_capture_buf[f * AUDIO_USB_FRAME_CHANNELS + 3] = send_ch2_to_usb ? s_rx_ring.data[r2_offset_words] : 0;  // R2
     }
 
-    // ISRコンテキストから呼ばれるので通常版を使用
-    uint16_t written_bytes = tud_audio_n_write(AUDIO_FUNC_ID, s_usb_capture_buf, (uint16_t) usb_bytes);
+    const uint16_t limit_bytes = audio_transport_usb_in_fifo_limit_bytes(sample_rate_hz);
+
+    audio_usb_in_write_outcome_t outcome;
+    audio_usb_in_commit_chunk(ep_in_ff, (uint16_t) usb_bytes, limit_bytes, &outcome);
+
+    // ---- 以降はscheduler停止区間の外。resume直後にusbTaskがFIFOをclearし得るため、
+    // 診断には区間内で取得したoutcomeの値だけを使い、FIFO水位を再取得しない。
+    audio_diagnostics_record_usb_in_write_section(outcome.section_cycles);
 
 #if AUDIO_DIAG_LOG
-    audio_diagnostics_record_usb_in_write(written_bytes, (uint16_t) usb_bytes);
-    audio_diagnostics_record_usb_in_fifo(tu_fifo_count(ep_in_ff));
+    if ((outcome.result != AUDIO_USB_IN_WRITE_STALE_REQUEST) &&
+        (outcome.result != AUDIO_USB_IN_WRITE_DEFERRED))
+    {
+        audio_diagnostics_record_usb_in_write(outcome.written_bytes, (uint16_t) usb_bytes);
+    }
 #endif
 
-    if (written_bytes == 0)
+    switch (outcome.result)
+    {
+        case AUDIO_USB_IN_WRITE_OK:
+            audio_diagnostics_record_usb_in_fifo_level(
+                outcome.judged_count, (uint32_t) outcome.judged_count + outcome.written_bytes);
+            // 1チャンク（1 interval分のframe）を送出済みとしてreadを進める。
+            s_rx_ring.read_index_words += required_words;
+            break;
+
+        case AUDIO_USB_IN_WRITE_DEFERRED:
+            // 上書きさせない。データはRXリングに残し、超過は保持上限で明示破棄する。
+            audio_diagnostics_record_usb_in_fifo_level(outcome.judged_count, 0u);
+            audio_diagnostics_record_usb_in_fifo_defer();
+            break;
+
+        case AUDIO_USB_IN_WRITE_STALE_REQUEST:
+            // 組立て中に新しいstream要求がpublishされた。次の適用で停止（リングreset）か
+            // 開始境界（破棄）になるため、readは進めない。
+            audio_diagnostics_record_usb_in_stale_request_skip();
+            break;
+
+        case AUDIO_USB_IN_WRITE_ZERO:
+            // 未構成（p_desc == NULL）時のみ。readは進めない。
+            audio_diagnostics_record_usb_in_fifo_level(outcome.judged_count, 0u);
+            audio_diagnostics_record_usb_in_write_error(false);
+            break;
+
+        case AUDIO_USB_IN_WRITE_PARTIAL:
+        default:
+        {
+            // 防御処理。現行TinyUSB（上書き可能FIFO）では 0 < n < depth で常にnを返すため
+            // 発生しない。frame途中で途切れるとホスト側でch順序がずれるため成功扱いせず、
+            // 公開API経由のIN FIFO clearとRXリング破棄で再同期する。TinyUSBが転送予約に
+            // 使用している領域（lin_buf_in等）には触れない。
+            audio_diagnostics_record_usb_in_fifo_level(
+                outcome.judged_count, (uint32_t) outcome.judged_count + outcome.written_bytes);
+            audio_diagnostics_record_usb_in_write_error(true);
+
+            const uint32_t primask = __get_PRIMASK();
+            __disable_irq();
+            (void) tud_audio_n_clear_ep_in_ff(AUDIO_FUNC_ID);
+            audio_ring_discard_all(&s_rx_ring);
+            __set_PRIMASK(primask);
+            break;
+        }
+    }
+}
+
+// FIFO上限で保留した音声がRXリングの保持上限を超えた場合、古いframeから
+// frame境界で明示的に破棄する。Audio Task context only。
+static void audio_rx_enforce_usb_in_backlog_limit(uint32_t sample_rate_hz)
+{
+    const int32_t used_words  = audio_ring_used_words(&s_rx_ring);
+    const int32_t limit_words = (int32_t) audio_rx_usb_in_backlog_limit_words(sample_rate_hz);
+    if (used_words <= limit_words)
     {
         return;
     }
 
-    // 書けた分だけ読みポインタを進める
-    uint32_t written_frames = ((uint32_t) written_bytes) / (AUDIO_USB_FRAME_CHANNELS * sizeof(int32_t));
-    if (written_frames > frames)
-        written_frames = frames;
-    if (written_frames == 0)
-        return;
-    s_rx_ring.read_index_words += written_frames * AUDIO_RING_FRAME_WORDS;  // SAIは4ch分
+    uint32_t drop_words = (uint32_t) (used_words - limit_words);
+    drop_words = ((drop_words + AUDIO_RING_FRAME_WORDS - 1u) / AUDIO_RING_FRAME_WORDS) *
+                 AUDIO_RING_FRAME_WORDS;
+    s_rx_ring.read_index_words += drop_words;
+    audio_diagnostics_record_usb_in_backlog_discard(drop_words);
 }
 
 // TinyUSB TX完了コールバック - USB ISRコンテキストで呼ばれる
@@ -2208,6 +2417,8 @@ void audio_transport_service(uint32_t sample_rate_hz)
     if (s_streaming_in && (usb_in_event || audio_usb_in_source_ready(sample_rate_hz)))
     {
         copy_rx_ring_to_usb_in(sample_rate_hz);
+        // FIFO上限で保留した分がRXリング保持上限を超えたら明示的に破棄する（#253）。
+        audio_rx_enforce_usb_in_backlog_limit(sample_rate_hz);
     }
 
     audio_control_commit_unlock();
