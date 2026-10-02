@@ -461,6 +461,9 @@ void audio_usb_control_feedback_update(void)
     if (updated)
     {
         (void) tud_audio_n_fb_set(AUDIO_FUNC_ID, feedback);
+#if AUDIO_DIAG_LOG
+        audio_diagnostics_record_usb_out_feedback(feedback);
+#endif
     }
 }
 #endif

@@ -194,8 +194,10 @@ extern "C"
 #define CFG_TUD_AUDIO_FUNC_1_EP_OUT_SZ_MAX CFG_TUD_AUDIO20_FUNC_1_FORMAT_1_EP_SZ_OUT
 
 // Rx flow control needs buffer size >= 4* EP size to work correctly
-// Example read FIFO every 1ms (8 HS frames), so buffer size should be 8 times larger for HS device
-#define CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ (8 * CFG_TUD_AUDIO20_FUNC_1_FORMAT_1_EP_SZ_OUT)
+// USB OUT FIFOは唯一の再生バッファ（#260）。feedback目標・DMA half・最大packetに加え、
+// feedbackに従わないホスト向けの上側ドリフト補正の閾値（96kHzで160 frame）を
+// 収めるため16 packet分（3328 byte、208 frame）を確保する。
+#define CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ (16 * CFG_TUD_AUDIO20_FUNC_1_FORMAT_1_EP_SZ_OUT)
 
 #ifdef __cplusplus
 }

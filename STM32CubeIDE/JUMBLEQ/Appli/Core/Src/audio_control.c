@@ -605,6 +605,18 @@ void audio_task(void)
                 audio_recovery_release_latch();
             }
         }
+
+#if AUDIO_DIAG_DMA_TIME_REPORT
+        // 測定用: OUT/INの両方が停止した遷移時に一度だけDMA処理時間を出力する。
+        static bool s_dma_time_report_armed = false;
+        const bool any_streaming =
+            audio_transport_is_output_streaming() || audio_transport_is_input_streaming();
+        if (!any_streaming && s_dma_time_report_armed)
+        {
+            audio_diagnostics_report_dma_time();
+        }
+        s_dma_time_report_armed = any_streaming;
+#endif
     }
 
     // サンプルレート変更とDMA復旧は同じ呼出しで並行実行しない。
