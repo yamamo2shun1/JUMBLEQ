@@ -81,7 +81,7 @@ HAL_StatusTypeDef MX_List_GPDMA1_Channel2_Config(void)
   pNodeConfig.DataHandlingConfig.DataAlignment = DMA_DATA_RIGHTALIGN_ZEROPADDED;
   pNodeConfig.SrcAddress = (uint32_t) sai_tx_dma_buf;
   pNodeConfig.DstAddress = (uint32_t) &SAI2_Block_A->DR;
-  pNodeConfig.DataSize = SAI_TX_DMA_BUF_WORDS * 4U;
+  pNodeConfig.DataSize = SAI_TX_DMA_XFER_BYTES;
 
   /* Build Node_GPDMA1_Channel2 Node */
   ret |= HAL_DMAEx_List_BuildNode(&pNodeConfig, &Node_GPDMA1_Channel2);
@@ -127,7 +127,7 @@ HAL_StatusTypeDef MX_List_GPDMA1_Channel3_Config(void)
   pNodeConfig.DataHandlingConfig.DataAlignment = DMA_DATA_RIGHTALIGN_ZEROPADDED;
   pNodeConfig.SrcAddress = (uint32_t) &SAI1_Block_A->DR;
   pNodeConfig.DstAddress = (uint32_t) sai_rx_dma_buf;
-  pNodeConfig.DataSize = SAI_RX_DMA_BUF_WORDS * 4U;
+  pNodeConfig.DataSize = SAI_RX_DMA_XFER_BYTES;
 
   /* Build Node_GPDMA1_Channel3 Node */
   ret |= HAL_DMAEx_List_BuildNode(&pNodeConfig, &Node_GPDMA1_Channel3);

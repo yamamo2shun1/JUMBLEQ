@@ -38,17 +38,21 @@ enum
     AUDIO_USB_IN_FIFO_LIMIT_INTERVALS = 4u,
     // FIFO上限で保留した音声をRXリングに保持できる上限（DMA half＋2 interval、暫定値）。
     AUDIO_USB_IN_BACKLOG_INTERVALS    = 2u,
-    // USB再生(OUT)primingの目標水位（消費前、word単位）。通常の消費前目標と同じ基準。
-    // 224 word = 56 frame = 48kHzで約1.167ms、96kHzで約0.583ms。
-    AUDIO_TX_PRIME_LEVEL_WORDS = SAI_TX_TARGET_LEVEL_WORDS + (SAI_TX_DMA_BUF_WORDS / 2),
-    // ドリフト補正の開始／解除閾値（消費前水位、word単位）。
+    // SAI DMA half期間をサンプルレートに依らず約0.333ms（1/3000秒）にする。
+    // 48kHzで16 frame（64 word）、96kHzで32 frame（128 word）。
+    AUDIO_SAI_DMA_HALVES_PER_SECOND = 3000u,
+    AUDIO_SAI_DMA_HALF_WORDS_MIN    = 64u,
+    AUDIO_SAI_DMA_HALF_WORDS_MAX    = SAI_TX_DMA_BUF_WORDS / 2u,
+    // USB再生(OUT)primingの目標水位（消費前、word単位）の最大値。実行時の水位は
+    // audio_tx_prime_level_words()（目標 + DMA half）で、通常の消費前目標と同じ基準。
+    // 48kHzで160 word = 40 frame = 約0.833ms、96kHzで224 word = 56 frame = 約0.583ms。
+    AUDIO_TX_PRIME_LEVEL_WORDS_MAX = SAI_TX_TARGET_LEVEL_WORDS + AUDIO_SAI_DMA_HALF_WORDS_MAX,
+    // ドリフト補正の開始／解除閾値（消費前水位からのoffset、word単位）。
     // 開始は目標±2 frame、解除は±1 frame。USB OUTパケットは48kHzで約13 frame相当が
     // 0.125msごとに届き、水位は通常±1フレーム強揺れるため、開始だけでは補正せず、
     // 逸脱の継続時間と補正間隔の条件を満たした場合だけ補正する。
-    AUDIO_TX_DRIFT_UP_START_WORDS     = AUDIO_TX_PRIME_LEVEL_WORDS + 8,
-    AUDIO_TX_DRIFT_UP_RELEASE_WORDS   = AUDIO_TX_PRIME_LEVEL_WORDS + 4,
-    AUDIO_TX_DRIFT_DOWN_START_WORDS   = AUDIO_TX_PRIME_LEVEL_WORDS - 8,
-    AUDIO_TX_DRIFT_DOWN_RELEASE_WORDS = AUDIO_TX_PRIME_LEVEL_WORDS - 4,
+    AUDIO_TX_DRIFT_START_OFFSET_WORDS   = 8u,
+    AUDIO_TX_DRIFT_RELEASE_OFFSET_WORDS = 4u,
     // 逸脱がこの時間継続した場合だけ補正する。通常パケット周期（0.125ms）の
     // 揺れは継続しないため、48/96kHzで共通の時間基準として20msとする。
     AUDIO_TX_DRIFT_HOLD_MS = 20u,
@@ -56,7 +60,7 @@ enum
     // 補正が連続しないようにする。実測で不足する場合はこの値で調整する。
     AUDIO_TX_DRIFT_MIN_INTERVAL_MS = 100u,
     // 補正時のクロスフェード長（frame）。1 frameの位相移動を8 frameへ分散し、
-    // 4chで同じ位置・同じ係数を使う。DMA half（32 frame）より十分短くする。
+    // 4chで同じ位置・同じ係数を使う。最短のDMA half（16 frame）より短くする。
     AUDIO_TX_DRIFT_BLEND_FRAMES = 8u,
     DMA_AUDIO_EVENT_NONE       = 0u,
     DMA_AUDIO_EVENT_HALF       = 1u,
@@ -80,7 +84,7 @@ enum
 #define AUDIO_USB_IN_LIMIT_BYTES_MAX \
     ((AUDIO_USB_IN_TARGET_BYTES_MAX / AUDIO_USB_IN_TARGET_INTERVALS) * AUDIO_USB_IN_FIFO_LIMIT_INTERVALS)
 #define AUDIO_RX_BACKLOG_LIMIT_WORDS_MAX \
-    ((SAI_RX_DMA_BUF_WORDS / 2u) + \
+    (AUDIO_SAI_DMA_HALF_WORDS_MAX + \
      ((((uint32_t) CFG_TUD_AUDIO_FUNC_1_MAX_SAMPLE_RATE * CFG_TUD_AUDIO_FUNC_1_EP_IN_INTERVAL_UFRAMES) / \
        AUDIO_USB_HS_MICROFRAMES_PER_SECOND) * \
       AUDIO_RING_FRAME_WORDS * AUDIO_USB_IN_BACKLOG_INTERVALS))
@@ -116,14 +120,26 @@ _Static_assert((uint32_t) DMA_AUDIO_EVENT_COMPLETE == (uint32_t) AUDIO_DIAG_DMA_
                "DMA event encoding must match the diagnostics API");
 _Static_assert(AUDIO_USB_FRAME_BYTES == AUDIO_RING_FRAME_WORDS * sizeof(int32_t),
                "USB and ring buffer frame sizes must match");
-_Static_assert((AUDIO_TX_PRIME_LEVEL_WORDS % AUDIO_RING_FRAME_WORDS) == 0u,
+_Static_assert((AUDIO_SAI_DMA_HALF_WORDS_MIN % AUDIO_RING_FRAME_WORDS) == 0u,
+               "minimum DMA half must preserve frame alignment");
+_Static_assert((AUDIO_SAI_DMA_HALF_WORDS_MAX % AUDIO_RING_FRAME_WORDS) == 0u,
+               "maximum DMA half must preserve frame alignment");
+_Static_assert(AUDIO_SAI_DMA_HALF_WORDS_MIN <= AUDIO_SAI_DMA_HALF_WORDS_MAX,
+               "DMA half range must be ordered");
+_Static_assert((AUDIO_SAI_DMA_HALF_WORDS_MAX * 2u) <= SAI_TX_DMA_BUF_WORDS,
+               "maximum DMA transfer must fit the TX DMA buffer");
+_Static_assert((AUDIO_SAI_DMA_HALF_WORDS_MAX * 2u) <= SAI_RX_DMA_BUF_WORDS,
+               "maximum DMA transfer must fit the RX DMA buffer");
+_Static_assert((SAI_TX_TARGET_LEVEL_WORDS % AUDIO_RING_FRAME_WORDS) == 0u,
                "USB playback priming level must preserve frame alignment");
-_Static_assert((AUDIO_TX_PRIME_LEVEL_WORDS * (uint32_t) sizeof(int32_t)) <=
+_Static_assert((AUDIO_TX_PRIME_LEVEL_WORDS_MAX * (uint32_t) sizeof(int32_t)) <=
                    CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ,
                "USB playback priming level must fit one USB read buffer");
-_Static_assert(AUDIO_TX_PRIME_LEVEL_WORDS < AUDIO_RING_CAPACITY_WORDS,
+_Static_assert(AUDIO_TX_PRIME_LEVEL_WORDS_MAX < AUDIO_RING_CAPACITY_WORDS,
                "USB playback priming level must fit the TX ring");
-_Static_assert(AUDIO_TX_DRIFT_BLEND_FRAMES < ((SAI_TX_DMA_BUF_WORDS / 2u) / AUDIO_RING_FRAME_WORDS),
+_Static_assert((SAI_TX_TARGET_LEVEL_WORDS + AUDIO_SAI_DMA_HALF_WORDS_MIN) > AUDIO_TX_DRIFT_START_OFFSET_WORDS,
+               "drift lower start threshold must stay positive");
+_Static_assert(AUDIO_TX_DRIFT_BLEND_FRAMES < (AUDIO_SAI_DMA_HALF_WORDS_MIN / AUDIO_RING_FRAME_WORDS),
                "drift blend must be shorter than one DMA half");
 // FIFO目標は最大packetを追加で格納できる余白を残し、uint16_tに収まること。
 _Static_assert(AUDIO_USB_OUT_TARGET_BYTES_MAX + CFG_TUD_AUDIO_FUNC_1_EP_OUT_SZ_MAX <=
@@ -452,6 +468,41 @@ static __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t s_us
 
 __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t sai_tx_dma_buf[SAI_TX_DMA_BUF_WORDS] = {0};
 __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t sai_rx_dma_buf[SAI_RX_DMA_BUF_WORDS]  = {0};
+
+// TX/RX共通のDMA half長（word単位）。SAI/GPDMA停止中にAudio Taskだけが
+// audio_transport_configure_dma_period()で更新し、DMA動作中は変更しない。ISRは参照しない。
+static uint32_t s_sai_dma_half_words = AUDIO_SAI_DMA_HALF_WORDS_MAX;
+
+// DMA構築前に、サンプルレートからhalf長を約0.333ms相当へ確定する。
+// 3000で割り切れないレートや、half長がMIN..MAXの範囲外になるレートは、
+// 従来の32 frame（MAX）へフォールバックする。Audio Task context only。
+static void audio_transport_configure_dma_period(uint32_t sample_rate_hz)
+{
+    uint32_t half_words = AUDIO_SAI_DMA_HALF_WORDS_MAX;
+
+    if ((sample_rate_hz % AUDIO_SAI_DMA_HALVES_PER_SECOND) == 0u)
+    {
+        const uint32_t half_frames = sample_rate_hz / AUDIO_SAI_DMA_HALVES_PER_SECOND;
+        if ((half_frames >= (AUDIO_SAI_DMA_HALF_WORDS_MIN / AUDIO_RING_FRAME_WORDS)) &&
+            (half_frames <= (AUDIO_SAI_DMA_HALF_WORDS_MAX / AUDIO_RING_FRAME_WORDS)))
+        {
+            half_words = half_frames * AUDIO_RING_FRAME_WORDS;
+        }
+    }
+
+    s_sai_dma_half_words = half_words;
+}
+
+uint32_t audio_transport_sai_dma_xfer_words(void)
+{
+    return s_sai_dma_half_words * 2u;
+}
+
+// USB再生(OUT)primingの目標水位（消費前、word単位）。通常の消費前目標と同じ基準。
+static inline uint32_t audio_tx_prime_level_words(void)
+{
+    return SAI_TX_TARGET_LEVEL_WORDS + s_sai_dma_half_words;
+}
 
 // USB OUT FIFOから最後に読み出したbyte数（tud_audio_n_readの結果）
 static uint16_t s_usb_out_read_bytes;
@@ -850,6 +901,9 @@ void audio_transport_reset_buffers(void)
 
 void audio_transport_start(void)
 {
+    // 起動時のDMA half長を、最初のノード構築より前に初期レートで確定する。
+    audio_transport_configure_dma_period(audio_control_transport_sample_rate_hz());
+
     // ========================================
     // リングバッファは空のまま開始する
     // SAI DMAが開始直後にHalf割り込みを発生させても、USB再生priming中の
@@ -991,6 +1045,10 @@ bool audio_transport_rebuild_and_start_tx(audio_transport_failure_t* failure)
     /* TX ringは空のまま再始動する。priming完了まではfill_tx_half()が無音を書き、
      * prefillを入れるとUSB音声の前に無音が残って再生されるため。 */
     audio_ring_reset_indices(&s_tx_ring, 0U);
+
+    /* SAI/GPDMA停止確認後、TX/RXノード構築前にDMA half長を確定する。
+     * 切替中は固定target、復旧時は適用済みレートが返る。後から開始するRXも同じ値を使う。 */
+    audio_transport_configure_dma_period(audio_control_transport_sample_rate_hz());
 
     /* Configure and link DMA for SAI2 TX */
     sai_status = audio_transport_start_tx_path();
@@ -1283,10 +1341,11 @@ static void copy_usb_out_to_tx_ring(void)
     // 無音や停止前の残存データをpriming完了の根拠にしないため。
     if (!s_tx_primed)
     {
+        const uint32_t prime_level_words = audio_tx_prime_level_words();
         s_tx_usb_fill_words += received_words;
-        if (s_tx_usb_fill_words > AUDIO_TX_PRIME_LEVEL_WORDS)
+        if (s_tx_usb_fill_words > prime_level_words)
         {
-            s_tx_usb_fill_words = AUDIO_TX_PRIME_LEVEL_WORDS;
+            s_tx_usb_fill_words = prime_level_words;
         }
     }
 }
@@ -1314,16 +1373,23 @@ static int8_t audio_tx_drift_update(int32_t used_words, uint32_t now_ms)
 
     // 実underrun相当（halfを満たない水位）では補正できず、保持／無音で回復を待つ。
     // 未実施の補正で頻度制限を開始しないよう、逸脱の継続履歴をここで解除する。
-    if (used_words < (int32_t) (SAI_TX_DMA_BUF_WORDS / 2))
+    if (used_words < (int32_t) s_sai_dma_half_words)
     {
         audio_tx_drift_history_clear();
         return 0;
     }
 
+    // 開始／解除閾値は消費前目標（priming水位）を基準にする。
+    const int32_t prime_level_words  = (int32_t) audio_tx_prime_level_words();
+    const int32_t up_start_words     = prime_level_words + (int32_t) AUDIO_TX_DRIFT_START_OFFSET_WORDS;
+    const int32_t up_release_words   = prime_level_words + (int32_t) AUDIO_TX_DRIFT_RELEASE_OFFSET_WORDS;
+    const int32_t down_start_words   = prime_level_words - (int32_t) AUDIO_TX_DRIFT_START_OFFSET_WORDS;
+    const int32_t down_release_words = prime_level_words - (int32_t) AUDIO_TX_DRIFT_RELEASE_OFFSET_WORDS;
+
     // ヒステリシス: 逸脱中は解除閾値へ戻るまで同じ方向を維持する。
     if (s_tx_drift_direction > 0)
     {
-        if (used_words <= (int32_t) AUDIO_TX_DRIFT_UP_RELEASE_WORDS)
+        if (used_words <= up_release_words)
         {
             s_tx_drift_direction = 0;
             s_tx_drift_since_valid = false;
@@ -1332,14 +1398,14 @@ static int8_t audio_tx_drift_update(int32_t used_words, uint32_t now_ms)
     }
     else if (s_tx_drift_direction < 0)
     {
-        if (used_words >= (int32_t) AUDIO_TX_DRIFT_DOWN_RELEASE_WORDS)
+        if (used_words >= down_release_words)
         {
             s_tx_drift_direction = 0;
             s_tx_drift_since_valid = false;
             s_tx_drift_suppressed_recorded = false;
         }
     }
-    else if (used_words >= (int32_t) AUDIO_TX_DRIFT_UP_START_WORDS)
+    else if (used_words >= up_start_words)
     {
         // 方向反転時は前方向の継続履歴を引き継がず、ここから計時する。
         s_tx_drift_direction = 1;
@@ -1348,7 +1414,7 @@ static int8_t audio_tx_drift_update(int32_t used_words, uint32_t now_ms)
         s_tx_drift_suppressed_recorded = false;
         audio_diagnostics_record_tx_drift_threshold(true);
     }
-    else if (used_words <= (int32_t) AUDIO_TX_DRIFT_DOWN_START_WORDS)
+    else if (used_words <= down_start_words)
     {
         s_tx_drift_direction = -1;
         s_tx_drift_since_valid = true;
@@ -1397,14 +1463,14 @@ static void audio_tx_drift_commit(uint32_t now_ms)
 
 static void fill_tx_half(uint32_t dst_half_offset_words)
 {
-    const uint32_t half_words  = (SAI_TX_DMA_BUF_WORDS / 2);
+    const uint32_t half_words  = s_sai_dma_half_words;
     const uint32_t frame_words = AUDIO_RING_FRAME_WORDS;
     uint32_t consume_words     = half_words;
     uint32_t diagnostic_event_flags = 0u;
     const bool streaming       = s_streaming_out;
 
-    // dst_half_offset_wordsの範囲チェック
-    if (dst_half_offset_words > (SAI_TX_DMA_BUF_WORDS - half_words))
+    // dst_half_offset_wordsの範囲チェック（有効なDMA転送長の内側だけを更新する）
+    if (dst_half_offset_words > (audio_transport_sai_dma_xfer_words() - half_words))
     {
         // 不正な値は無音で埋める
         return;
@@ -1427,7 +1493,7 @@ static void fill_tx_half(uint32_t dst_half_offset_words)
     // USB受信とリング補充はaudio_transport_service()側で継続する。
     if (!s_tx_primed)
     {
-        if (s_tx_usb_fill_words >= AUDIO_TX_PRIME_LEVEL_WORDS)
+        if (s_tx_usb_fill_words >= audio_tx_prime_level_words())
         {
             s_tx_primed = true;
             audio_diagnostics_record_tx_priming_complete();
@@ -1442,7 +1508,7 @@ static void fill_tx_half(uint32_t dst_half_offset_words)
             memset(sai_tx_dma_buf + dst_half_offset_words, 0, half_words * sizeof(int32_t));
             timecode_synth_render_output(sai_tx_dma_buf + dst_half_offset_words,
                                          AUDIO_RING_FRAME_WORDS,
-                                         (SAI_TX_DMA_BUF_WORDS / 2u) / AUDIO_RING_FRAME_WORDS);
+                                         half_words / AUDIO_RING_FRAME_WORDS);
             return;
         }
     }
@@ -1461,7 +1527,7 @@ static void fill_tx_half(uint32_t dst_half_offset_words)
             audio_diagnostics_record_tx_event(streaming, diagnostic_event_flags, used_words);
             timecode_synth_render_output(sai_tx_dma_buf + dst_half_offset_words,
                                          AUDIO_RING_FRAME_WORDS,
-                                         (SAI_TX_DMA_BUF_WORDS / 2u) / AUDIO_RING_FRAME_WORDS);
+                                         half_words / AUDIO_RING_FRAME_WORDS);
             return;
         }
         consume_words = ((uint32_t) used_words / frame_words) * frame_words;
@@ -1471,7 +1537,7 @@ static void fill_tx_half(uint32_t dst_half_offset_words)
             audio_diagnostics_record_tx_event(streaming, diagnostic_event_flags, used_words);
             timecode_synth_render_output(sai_tx_dma_buf + dst_half_offset_words,
                                          AUDIO_RING_FRAME_WORDS,
-                                         (SAI_TX_DMA_BUF_WORDS / 2u) / AUDIO_RING_FRAME_WORDS);
+                                         half_words / AUDIO_RING_FRAME_WORDS);
             return;
         }
     }
@@ -1485,7 +1551,7 @@ static void fill_tx_half(uint32_t dst_half_offset_words)
         memset(sai_tx_dma_buf + dst_half_offset_words, 0, half_words * sizeof(int32_t));
         timecode_synth_render_output(sai_tx_dma_buf + dst_half_offset_words,
                                      AUDIO_RING_FRAME_WORDS,
-                                     (SAI_TX_DMA_BUF_WORDS / 2u) / AUDIO_RING_FRAME_WORDS);
+                                     half_words / AUDIO_RING_FRAME_WORDS);
         return;
     }
 
@@ -1528,7 +1594,7 @@ static void fill_tx_half(uint32_t dst_half_offset_words)
         audio_diagnostics_record_tx_event(streaming, diagnostic_event_flags, used_words);
         timecode_synth_render_output(sai_tx_dma_buf + dst_half_offset_words,
                                      AUDIO_RING_FRAME_WORDS,
-                                     (SAI_TX_DMA_BUF_WORDS / 2u) / AUDIO_RING_FRAME_WORDS);
+                                     half_words / AUDIO_RING_FRAME_WORDS);
         return;
     }
 
@@ -1637,11 +1703,11 @@ static void fill_tx_half(uint32_t dst_half_offset_words)
     }
     timecode_synth_render_output(sai_tx_dma_buf + dst_half_offset_words,
                                  AUDIO_RING_FRAME_WORDS,
-                                 (SAI_TX_DMA_BUF_WORDS / 2u) / AUDIO_RING_FRAME_WORDS);
+                                 half_words / AUDIO_RING_FRAME_WORDS);
 }
 
 // DMA half期間（4ch frame単位）をSystemCoreClockサイクルへ換算する。
-// 96kHzで約0.333ms、48kHzで約0.667ms。sample_rate_hzが不正なら期限なし。
+// 48/96kHzとも約0.333ms（実行時のhalf長による）。sample_rate_hzが不正なら期限なし。
 static uint32_t audio_dma_half_deadline_cycles(uint32_t half_words, uint32_t sample_rate_hz)
 {
     if ((sample_rate_hz == 0u) || (SystemCoreClock == 0u))
@@ -1677,7 +1743,7 @@ static void copy_tx_ring_to_sai_dma(uint32_t sample_rate_hz)
     {
         const uint32_t service_cycles = process_start_cycle - event.cycle;
         deadline_cycles =
-            audio_dma_half_deadline_cycles(SAI_TX_DMA_BUF_WORDS / 2u, sample_rate_hz);
+            audio_dma_half_deadline_cycles(s_sai_dma_half_words, sample_rate_hz);
         audio_diagnostics_record_tx_dma_service(event.event, service_cycles,
                                                 service_cycles > deadline_cycles);
 
@@ -1692,7 +1758,7 @@ static void copy_tx_ring_to_sai_dma(uint32_t sample_rate_hz)
     {
         // stream停止中もDMAとfill/synthは動作するため、完了計測用の期限を算出する。
         deadline_cycles =
-            audio_dma_half_deadline_cycles(SAI_TX_DMA_BUF_WORDS / 2u, sample_rate_hz);
+            audio_dma_half_deadline_cycles(s_sai_dma_half_words, sample_rate_hz);
     }
 
     // 遅延時は古い要求を処理しない。最新コールバックが示す現在安全なhalfだけを更新する。
@@ -1702,7 +1768,7 @@ static void copy_tx_ring_to_sai_dma(uint32_t sample_rate_hz)
     }
     else if (event.event == DMA_AUDIO_EVENT_COMPLETE)
     {
-        fill_tx_half(SAI_TX_DMA_BUF_WORDS / 2);
+        fill_tx_half(s_sai_dma_half_words);
     }
 
     // half更新完了時点を境界とし、コピー・補間・合成を含む完了時間を計測する。
@@ -1718,17 +1784,17 @@ static void copy_tx_ring_to_sai_dma(uint32_t sample_rate_hz)
 // ==============================
 static void fill_rx_half(uint32_t src_half_offset_words, bool streaming)
 {
-    const uint32_t half_words = (SAI_RX_DMA_BUF_WORDS / 2);  // 半分のword数
+    const uint32_t half_words = s_sai_dma_half_words;  // 実行時のDMA half長（word数）
 
-    // src_half_offset_wordsの範囲チェック
-    if (src_half_offset_words >= SAI_RX_DMA_BUF_WORDS)
+    // src_half_offset_wordsの範囲チェック（有効なDMA転送長の内側だけを取り込む）
+    if (src_half_offset_words > (audio_transport_sai_dma_xfer_words() - half_words))
     {
         return;
     }
 
     timecode_synth_process_input(sai_rx_dma_buf + src_half_offset_words,
                                  AUDIO_RING_FRAME_WORDS,
-                                 (SAI_RX_DMA_BUF_WORDS / 2u) / AUDIO_RING_FRAME_WORDS);
+                                 half_words / AUDIO_RING_FRAME_WORDS);
 
     if (!streaming)
     {
@@ -1809,7 +1875,7 @@ static void copy_sai_rx_dma_to_rx_ring(uint32_t sample_rate_hz)
     {
         const uint32_t service_cycles = process_start_cycle - event.cycle;
         deadline_cycles =
-            audio_dma_half_deadline_cycles(SAI_RX_DMA_BUF_WORDS / 2u, sample_rate_hz);
+            audio_dma_half_deadline_cycles(s_sai_dma_half_words, sample_rate_hz);
         audio_diagnostics_record_rx_dma_service(event.event, service_cycles,
                                                 service_cycles > deadline_cycles);
 
@@ -1822,7 +1888,7 @@ static void copy_sai_rx_dma_to_rx_ring(uint32_t sample_rate_hz)
     {
         // stream停止中もDMAとfill/synthは動作するため、完了計測用の期限を算出する。
         deadline_cycles =
-            audio_dma_half_deadline_cycles(SAI_RX_DMA_BUF_WORDS / 2u, sample_rate_hz);
+            audio_dma_half_deadline_cycles(s_sai_dma_half_words, sample_rate_hz);
     }
 
     // TXと同様に、最新コールバックが示す現在安全なhalfだけを取り込む。
@@ -1832,7 +1898,7 @@ static void copy_sai_rx_dma_to_rx_ring(uint32_t sample_rate_hz)
     }
     else if (event.event == DMA_AUDIO_EVENT_COMPLETE)
     {
-        fill_rx_half(SAI_RX_DMA_BUF_WORDS / 2, s_streaming_in);
+        fill_rx_half(s_sai_dma_half_words, s_streaming_in);
     }
 
     // half取り込み完了時点を境界とし、synth処理を含む完了時間を計測する。
@@ -1918,7 +1984,7 @@ static uint16_t audio_transport_usb_in_fifo_limit_bytes(uint32_t sample_rate_hz)
 // FIFO上限で保留した音声をRXリングに保持できる上限（word単位）。
 static uint32_t audio_rx_usb_in_backlog_limit_words(uint32_t sample_rate_hz)
 {
-    return (SAI_RX_DMA_BUF_WORDS / 2u) +
+    return s_sai_dma_half_words +
            (audio_frames_per_usb_in_interval(sample_rate_hz) * AUDIO_RING_FRAME_WORDS *
             AUDIO_USB_IN_BACKLOG_INTERVALS);
 }
@@ -1961,12 +2027,12 @@ static uint16_t audio_out_read_budget_bytes(void)
     int32_t budget_words;
     if (!s_tx_primed)
     {
-        budget_words = (int32_t) AUDIO_TX_PRIME_LEVEL_WORDS - (int32_t) s_tx_usb_fill_words;
+        budget_words = (int32_t) audio_tx_prime_level_words() - (int32_t) s_tx_usb_fill_words;
     }
     else
     {
         budget_words = (int32_t) SAI_TX_TARGET_LEVEL_WORDS +
-                       (int32_t) (SAI_TX_DMA_BUF_WORDS / 2) - used_words;
+                       (int32_t) s_sai_dma_half_words - used_words;
     }
     if (budget_words <= 0)
     {
