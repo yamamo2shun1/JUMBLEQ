@@ -22,17 +22,26 @@
 // 48kHzで約42.67ms、96kHzで約21.33ms。これは滞留可能な上限であり、通常の滞留水位や
 // end-to-end遅延を表す値ではない。
 #define AUDIO_RING_CAPACITY_WORDS 8192  // TX/RXリング容量（word単位、2のべき乗必須）
-#define SAI_TX_DMA_BUF_WORDS  256  // 4ch DMAバッファ (USB OUT->SAI TX, word単位)
-#define SAI_RX_DMA_BUF_WORDS  256  // 4ch DMAバッファ (SAI RX->USB IN, word単位)
+#define SAI_TX_DMA_BUF_WORDS  256  // 4ch DMAバッファの確保長 (USB OUT->SAI TX, word単位)
+#define SAI_RX_DMA_BUF_WORDS  256  // 4ch DMAバッファの確保長 (SAI RX->USB IN, word単位)
 // DMA halfを消費した後のTXリング目標水位（word単位、24 frame）。
 // 消費前の判定基準は、この値にDMA half-buffer分を加えた水位になる。
-// 0.5ms相当（48kHz、24 frame）／0.25ms相当（96kHz）で、DMA half期間（32 frame、
-// 48kHz約0.667ms／96kHz約0.333ms）や容量相当時間とは合算しない。
+// 0.5ms相当（48kHz、24 frame）／0.25ms相当（96kHz）で、DMA half期間（約0.333ms、
+// 48kHzで16 frame／96kHzで32 frame）や容量相当時間とは合算しない。
 #define SAI_TX_TARGET_LEVEL_WORDS 96
+
+// SAI DMAノードの転送長（byte単位）。JUMBLEQ.iocのLinkedlist DataSizeと対応する。
+// 確保長の先頭から、DMA構築時のサンプルレートで決めたhalf×2だけを循環転送する。
+#define SAI_TX_DMA_XFER_BYTES (audio_transport_sai_dma_xfer_words() * 4U)
+#define SAI_RX_DMA_XFER_BYTES (audio_transport_sai_dma_xfer_words() * 4U)
 
 // SAI DMAバッファ。linked_list.cがaddressを参照する（JUMBLEQ.iocのLinkedlist設定と対応）。
 extern int32_t sai_tx_dma_buf[SAI_TX_DMA_BUF_WORDS];
 extern int32_t sai_rx_dma_buf[SAI_RX_DMA_BUF_WORDS];
+
+// DMA構築時に確定したTX/RX共通のDMA転送長（half×2、word単位）。
+// SAI/GPDMA停止中にAudio Taskが確定し、linked_list.cのノード構築から参照する。
+uint32_t audio_transport_sai_dma_xfer_words(void);
 
 typedef enum
 {
