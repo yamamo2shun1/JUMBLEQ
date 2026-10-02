@@ -21,7 +21,7 @@
 // リング容量相当は AUDIO_RING_CAPACITY_WORDS / 4 / sample_rate 秒。8192 word = 2048 frame なので
 // 48kHzで約42.67ms、96kHzで約21.33ms。これは滞留可能な上限であり、通常の滞留水位や
 // end-to-end遅延を表す値ではない。
-#define AUDIO_RING_CAPACITY_WORDS 8192  // TX/RXリング容量（word単位、2のべき乗必須）
+#define AUDIO_RING_CAPACITY_WORDS 8192  // TXリング容量（word単位、2のべき乗必須）
 #define SAI_TX_DMA_BUF_WORDS  256  // 4ch DMAバッファの確保長 (USB OUT->SAI TX, word単位)
 #define SAI_RX_DMA_BUF_WORDS  256  // 4ch DMAバッファの確保長 (SAI RX->USB IN, word単位)
 // DMA halfを消費した後のTXリング目標水位（word単位、24 frame）。

@@ -80,8 +80,6 @@ static volatile uint32_t dbg_usb_in_packet_zero_events = 0u;
 static volatile uint32_t dbg_usb_in_packet_bytes    = 0u;
 static volatile uint16_t dbg_usb_in_packet_size_min = DBG_MIN_U16_INIT;
 static volatile uint16_t dbg_usb_in_packet_size_max = 0u;
-static volatile uint32_t dbg_usb_in_notify_events   = 0u;
-static volatile uint32_t dbg_usb_in_source_wait_events = 0u;
 static volatile uint32_t dbg_usb_in_write_zero_events = 0u;
 static volatile uint32_t dbg_usb_in_write_partial_events = 0u;
 static volatile uint32_t dbg_usb_in_write_bytes     = 0u;
@@ -128,8 +126,6 @@ static void audio_diagnostics_reset_interval_locked(void)
     dbg_usb_in_packet_bytes    = 0u;
     dbg_usb_in_packet_size_min = DBG_MIN_U16_INIT;
     dbg_usb_in_packet_size_max = 0u;
-    dbg_usb_in_notify_events   = 0u;
-    dbg_usb_in_source_wait_events = 0u;
     dbg_usb_in_write_zero_events = 0u;
     dbg_usb_in_write_partial_events = 0u;
     dbg_usb_in_write_bytes     = 0u;
@@ -542,22 +538,6 @@ void audio_diagnostics_record_rx_events_dropped(uint32_t last_event,
     g_audio_rx_diagnostics.rx_both_pending_last_callback = last_event;
 }
 
-void audio_diagnostics_record_rx_ring_discard(uint32_t dropped_words, bool full_discard)
-{
-    if (full_discard)
-    {
-        g_audio_rx_diagnostics.rx_ring_full_discards++;
-        g_audio_rx_diagnostics.rx_last_discard_words = 0u;
-    }
-    else
-    {
-        g_audio_rx_diagnostics.rx_ring_discard_events++;
-        g_audio_rx_diagnostics.rx_ring_discard_words += dropped_words;
-        g_audio_rx_diagnostics.rx_last_discard_words = dropped_words;
-    }
-    g_audio_rx_diagnostics.rx_last_discard_tick_ms = HAL_GetTick();
-}
-
 void audio_diagnostics_record_usb_in_start_boundary(uint32_t discarded_words)
 {
     g_audio_rx_diagnostics.usb_in_start_boundaries++;
@@ -576,9 +556,15 @@ void audio_diagnostics_record_usb_in_fifo_level(uint32_t judged_count, uint32_t 
     }
 }
 
-void audio_diagnostics_record_usb_in_fifo_defer(void)
+void audio_diagnostics_record_usb_in_fifo_trim(uint32_t trimmed_bytes)
 {
-    g_audio_rx_diagnostics.usb_in_fifo_defer_events++;
+    g_audio_rx_diagnostics.usb_in_fifo_trim_events++;
+    g_audio_rx_diagnostics.usb_in_fifo_trim_bytes += trimmed_bytes;
+}
+
+void audio_diagnostics_record_usb_in_fifo_full_drop(void)
+{
+    g_audio_rx_diagnostics.usb_in_fifo_full_drops++;
 }
 
 void audio_diagnostics_record_usb_in_stale_request_skip(void)
@@ -586,10 +572,10 @@ void audio_diagnostics_record_usb_in_stale_request_skip(void)
     g_audio_rx_diagnostics.usb_in_stale_request_skips++;
 }
 
-void audio_diagnostics_record_usb_in_backlog_discard(uint32_t dropped_words)
+void audio_diagnostics_record_usb_in_chunk_drop(uint32_t chunk_bytes)
 {
-    g_audio_rx_diagnostics.usb_in_backlog_discard_events++;
-    g_audio_rx_diagnostics.usb_in_backlog_discard_words += dropped_words;
+    g_audio_rx_diagnostics.usb_in_chunk_drop_events++;
+    g_audio_rx_diagnostics.usb_in_chunk_drop_bytes += chunk_bytes;
 }
 
 void audio_diagnostics_record_usb_in_write_error(bool partial)
@@ -880,16 +866,6 @@ void audio_diagnostics_record_usb_in_packet(uint16_t bytes)
     }
 }
 
-void audio_diagnostics_record_usb_in_notify(void)
-{
-    dbg_usb_in_notify_events++;
-}
-
-void audio_diagnostics_record_usb_in_source_wait(void)
-{
-    dbg_usb_in_source_wait_events++;
-}
-
 void audio_diagnostics_record_usb_in_write(uint16_t written, uint16_t requested)
 {
     dbg_usb_in_write_bytes += written;
@@ -1019,9 +995,7 @@ void audio_diagnostics_log_periodic(uint32_t sample_rate_hz,
                       (unsigned int) ((dbg_usb_in_packet_size_min == DBG_MIN_U16_INIT) ? 0u : dbg_usb_in_packet_size_min),
                       (unsigned int) dbg_usb_in_packet_size_max);
     SEGGER_RTT_printf(0,
-                      "[AUD][USB-IN-WR] notify=%lu wait=%lu zero=%lu partial=%lu\r\n",
-                      (unsigned long) dbg_usb_in_notify_events,
-                      (unsigned long) dbg_usb_in_source_wait_events,
+                      "[AUD][USB-IN-WR] zero=%lu partial=%lu\r\n",
                       (unsigned long) dbg_usb_in_write_zero_events,
                       (unsigned long) dbg_usb_in_write_partial_events);
     SEGGER_RTT_printf(0,
@@ -1061,11 +1035,20 @@ void audio_diagnostics_log_periodic(uint32_t sample_rate_hz,
                       (unsigned long) g_audio_rx_diagnostics.rx_half_deadline_overruns,
                       (unsigned long) g_audio_rx_diagnostics.rx_cplt_deadline_overruns);
     SEGGER_RTT_printf(0,
-                      "[AUD][RX-RING] discard=%lu words=%lu full=%lu last=%lu\r\n",
-                      (unsigned long) g_audio_rx_diagnostics.rx_ring_discard_events,
-                      (unsigned long) g_audio_rx_diagnostics.rx_ring_discard_words,
-                      (unsigned long) g_audio_rx_diagnostics.rx_ring_full_discards,
-                      (unsigned long) g_audio_rx_diagnostics.rx_last_discard_words);
+                      "[AUD][USB-IN] start=%lu/%lu trim=%lu/%lu drop=%lu/%lu full=%lu stale=%lu zero/partial=%lu/%lu judged_max=%lu post_write_max=%lu section_max=%lu\r\n",
+                      (unsigned long) g_audio_rx_diagnostics.usb_in_start_boundaries,
+                      (unsigned long) g_audio_rx_diagnostics.usb_in_start_discard_words,
+                      (unsigned long) g_audio_rx_diagnostics.usb_in_fifo_trim_events,
+                      (unsigned long) g_audio_rx_diagnostics.usb_in_fifo_trim_bytes,
+                      (unsigned long) g_audio_rx_diagnostics.usb_in_chunk_drop_events,
+                      (unsigned long) g_audio_rx_diagnostics.usb_in_chunk_drop_bytes,
+                      (unsigned long) g_audio_rx_diagnostics.usb_in_fifo_full_drops,
+                      (unsigned long) g_audio_rx_diagnostics.usb_in_stale_request_skips,
+                      (unsigned long) g_audio_rx_diagnostics.usb_in_write_zero_events,
+                      (unsigned long) g_audio_rx_diagnostics.usb_in_write_partial_events,
+                      (unsigned long) g_audio_rx_diagnostics.usb_in_fifo_judged_count_max,
+                      (unsigned long) g_audio_rx_diagnostics.usb_in_fifo_post_write_max,
+                      (unsigned long) g_audio_rx_diagnostics.usb_in_write_section_cycles_max);
     SEGGER_RTT_printf(0,
                       "[AUD][RECOVERY] req=%lu attempt=%lu ok=%lu fail=%lu consec=%lu latched=%lu cause=0x%02lX stage=%lu\r\n",
                       (unsigned long) g_audio_recovery_diagnostics.request_count,
