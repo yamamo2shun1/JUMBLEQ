@@ -366,6 +366,10 @@ static uint32_t s_stream_applied_request_sequence    = 0u;
 // 開始境界を作るために、maskとは別に数える。
 static volatile uint32_t s_stream_in_start_sequence  = 0u;
 static uint32_t s_stream_in_applied_start_sequence   = 0u;  // Audio Task専用
+// OUT開始要求の世代。INと同じ理由で、streaming中の再SET_INTERFACEや適用前に集約された
+// stop→startでも再生開始境界（priming・補正履歴のリセット）を作るために数える。
+static volatile uint32_t s_stream_out_start_sequence  = 0u;
+static uint32_t s_stream_out_applied_start_sequence   = 0u;  // Audio Task専用
 
 // USB再生(OUT)のprimingとドリフト補正の状態。Audio Taskだけが更新する。
 // primedは「USB OUT FIFOの水位がpriming水位へ到達した」ことを示す。FIFOはOUT開始境界で
@@ -1027,6 +1031,10 @@ void audio_transport_request_stream(audio_transport_stream_t stream, bool enable
         {
             s_stream_in_start_sequence++;
         }
+        else
+        {
+            s_stream_out_start_sequence++;
+        }
     }
     else
     {
@@ -1054,7 +1062,9 @@ void audio_transport_request_stream(audio_transport_stream_t stream, bool enable
     audio_transport_notify_task();
 }
 
-static bool audio_stream_take_requested_state(uint32_t* requested_mask, bool* in_start_requested)
+static bool audio_stream_take_requested_state(uint32_t* requested_mask,
+                                              bool* in_start_requested,
+                                              bool* out_start_requested)
 {
     const uint32_t primask = __get_PRIMASK();
     __disable_irq();
@@ -1073,21 +1083,35 @@ static bool audio_stream_take_requested_state(uint32_t* requested_mask, bool* in
     const uint32_t in_start_sequence = s_stream_in_start_sequence;
     *in_start_requested = (in_start_sequence != s_stream_in_applied_start_sequence);
     s_stream_in_applied_start_sequence = in_start_sequence;
+    const uint32_t out_start_sequence = s_stream_out_start_sequence;
+    *out_start_requested = (out_start_sequence != s_stream_out_applied_start_sequence);
+    s_stream_out_applied_start_sequence = out_start_sequence;
 
     __set_PRIMASK(primask);
     return true;
 }
 
-static void audio_stream_apply_out_state(bool enabled)
+// start_requested: 未適用のOUT開始要求（alt≠0のSET_INTERFACE）があったか。
+// streaming中の開き直しでも、TinyUSBが開始境界でclearしたFIFOをpriming水位から
+// 再生し直す（FIFOはclearし直さず、clear後に受信した新しいデータは保持する）。
+// 開始要求なしの再適用（IN要求のみ等）ではOUTの再生状態に触れない。
+static void audio_stream_apply_out_state(bool enabled, bool start_requested)
 {
-    if (enabled == s_streaming_out)
+    if (enabled && (!s_streaming_out || start_requested))
     {
-        return;
-    }
-
-    if (enabled)
-    {
-        audio_transport_reset_tx_diagnostics();
+        if (s_streaming_out)
+        {
+            // 再生中の開き直し。処理待ちのTX DMAイベントを破棄すると、直前に旧streamの
+            // 音声を書いたhalfが再度出力されるため、イベントは残してpriming（無音）で埋める。
+            const uint32_t primask = __get_PRIMASK();
+            __disable_irq();
+            audio_diagnostics_reset_tx_locked();
+            __set_PRIMASK(primask);
+        }
+        else
+        {
+            audio_transport_reset_tx_diagnostics();
+        }
         audio_tx_playback_state_reset();
 
         const uint32_t primask = __get_PRIMASK();
@@ -1095,7 +1119,7 @@ static void audio_stream_apply_out_state(bool enabled)
         s_streaming_out = true;
         __set_PRIMASK(primask);
     }
-    else
+    else if (!enabled && s_streaming_out)
     {
         const uint32_t primask = __get_PRIMASK();
         __disable_irq();
@@ -1104,6 +1128,10 @@ static void audio_stream_apply_out_state(bool enabled)
         __set_PRIMASK(primask);
 
         audio_tx_playback_state_reset();
+    }
+    else
+    {
+        return;
     }
 
 #if AUDIO_DIAG_LOG
@@ -1161,7 +1189,8 @@ bool audio_transport_apply_requested_stream_state(void)
 {
     uint32_t requested_mask;
     bool in_start_requested = false;
-    if (!audio_stream_take_requested_state(&requested_mask, &in_start_requested))
+    bool out_start_requested = false;
+    if (!audio_stream_take_requested_state(&requested_mask, &in_start_requested, &out_start_requested))
     {
         return false;
     }
@@ -1170,7 +1199,7 @@ bool audio_transport_apply_requested_stream_state(void)
     const bool previous_out = s_streaming_out;
     const bool previous_in  = s_streaming_in;
 #endif
-    audio_stream_apply_out_state((requested_mask & AUDIO_STREAM_OUT_BIT) != 0u);
+    audio_stream_apply_out_state((requested_mask & AUDIO_STREAM_OUT_BIT) != 0u, out_start_requested);
     audio_stream_apply_in_state((requested_mask & AUDIO_STREAM_IN_BIT) != 0u, in_start_requested);
 
 #if AUDIO_DIAG_LOG
@@ -1527,7 +1556,8 @@ static void fill_tx_half(uint32_t dst_half_offset_words, uint32_t sample_rate_hz
 
     if (outcome.result == AUDIO_USB_OUT_TAKE_STALE)
     {
-        // 次の要求適用で停止か開始境界（primingからやり直し）になる。
+        // 次の要求適用で停止か開始境界（primingからやり直し）になる。開き直しで最終maskが
+        // 有効のままでも、OUT開始世代により開始境界として適用される。
         audio_diagnostics_record_out_stale_request_skip();
         audio_tx_fill_silence(dst_half_offset_words, half_words);
         return;
