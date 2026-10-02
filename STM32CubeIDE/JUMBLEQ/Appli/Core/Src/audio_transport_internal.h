@@ -1,8 +1,8 @@
 /*
  * audio_transport_internal.h
  *
- * Private API of the realtime audio transport module (USB OUT/IN <-> ring
- * buffers <-> SAI TX/RX). Requests may be published from TinyUSB callbacks;
+ * Private API of the realtime audio transport module (USB OUT/IN FIFOs <->
+ * SAI TX/RX DMA). Requests may be published from TinyUSB callbacks;
  * the Audio Task applies them via audio_transport_service().
  */
 
@@ -15,20 +15,11 @@
 #include "stm32h7rsxx_hal.h"
 #include "audio_diagnostics_internal.h"
 
-// バッファサイズ設定 - 小さいほど低レイテンシーだがアンダーラン/オーバーランのリスク増
-// 96kHz再生の安定性を優先し、TX/RING は余裕を持たせる。
-// サイズはすべてword単位で、1 frame = 4ch × 32bit = 4 word = 16 byte。
-// リング容量相当は AUDIO_RING_CAPACITY_WORDS / 4 / sample_rate 秒。8192 word = 2048 frame なので
-// 48kHzで約42.67ms、96kHzで約21.33ms。これは滞留可能な上限であり、通常の滞留水位や
-// end-to-end遅延を表す値ではない。
-#define AUDIO_RING_CAPACITY_WORDS 8192  // TXリング容量（word単位、2のべき乗必須）
+// バッファサイズ設定。サイズはすべてword単位で、1 frame = 4ch × 32bit = 4 word = 16 byte。
+// 再生側の弾性バッファはTinyUSBのUSB OUT FIFOだけ、録音側はUSB IN FIFOだけで、
+// SAI DMAとの間に中間リングは持たない（#259/#260）。
 #define SAI_TX_DMA_BUF_WORDS  256  // 4ch DMAバッファの確保長 (USB OUT->SAI TX, word単位)
 #define SAI_RX_DMA_BUF_WORDS  256  // 4ch DMAバッファの確保長 (SAI RX->USB IN, word単位)
-// DMA halfを消費した後のTXリング目標水位（word単位、24 frame）。
-// 消費前の判定基準は、この値にDMA half-buffer分を加えた水位になる。
-// 0.5ms相当（48kHz、24 frame）／0.25ms相当（96kHz）で、DMA half期間（約0.333ms、
-// 48kHzで16 frame／96kHzで32 frame）や容量相当時間とは合算しない。
-#define SAI_TX_TARGET_LEVEL_WORDS 96
 
 // SAI DMAノードの転送長（byte単位）。JUMBLEQ.iocのLinkedlist DataSizeと対応する。
 // 確保長の先頭から、DMA構築時のサンプルレートで決めたhalf×2だけを循環転送する。
@@ -166,6 +157,7 @@ void audio_transport_clear_usb_fifos(void);
 // 診断ログ・LED制御用。
 bool audio_transport_is_output_streaming(void);
 bool audio_transport_is_input_streaming(void);
+// USB OUT FIFOの水位（word）。ISRからも呼べる（読取りのみ）。
 int32_t audio_transport_tx_used_words(void);
 
 // USB OUT feedback用の目標FIFO水位(byte単位)。現在のサンプルレートから

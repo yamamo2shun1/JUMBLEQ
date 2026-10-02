@@ -5,8 +5,10 @@
  * called from USB/DMA ISR context (transport) and from the Audio Task; they
  * only update fixed-size counters, min/max values and timestamps.
  *
- * AUDIO_DIAG_LOG selects the RTT interval summary. The default lives here so
- * every audio module sees the same value from the build flags.
+ * AUDIO_DIAG_LOG selects the RTT interval summary. AUDIO_DIAG_DMA_TIME_REPORT
+ * (measurement builds only) prints the DMA timing once when both streams stop.
+ * The defaults live here so every audio module sees the same value from the
+ * build flags.
  */
 
 #ifndef AUDIO_DIAGNOSTICS_INTERNAL_H_
@@ -18,6 +20,13 @@
 
 #ifndef AUDIO_DIAG_LOG
 #define AUDIO_DIAG_LOG 0
+#endif
+
+// 1の場合、OUT/INの両方が停止した遷移時に一度だけ、DMA処理時間とOUT診断をRTTへ
+// 出力する。周期ログ（AUDIO_DIAG_LOG）を出さずに、CPUから読んだ値で測定するための
+// 確認用ビルドで使う。
+#ifndef AUDIO_DIAG_DMA_TIME_REPORT
+#define AUDIO_DIAG_DMA_TIME_REPORT 0
 #endif
 
 // USB OUT -> SAI TX経路の軽量診断。RTT出力は行わず、デバッガから参照する。
@@ -49,6 +58,7 @@ typedef struct
     uint32_t drift_down_events;
     uint32_t dma_error_events;
     uint32_t sai_error_events;
+    // tx_used_*/last_event_used_words: USB OUT FIFO水位（word、half処理開始時＝読出し直前）。
     uint32_t tx_used_min_words;
     uint32_t tx_used_max_words;
     int32_t  last_event_used_words;
@@ -85,6 +95,20 @@ typedef struct
     uint32_t last_process_cycles;
     uint32_t last_complete_cycles;
     uint32_t last_complete_deadline_cycles;
+    // USB OUT FIFOの直接読出し（#260）。
+    uint32_t out_stale_request_skips;          // 未適用のstream要求があり読まなかったhalf数
+    uint32_t out_fifo_full_events;             // packet書込み後にFIFOが満杯（上書きの可能性。USB ISRで検出）
+    uint32_t out_fifo_overflow_recoveries;     // 満杯・overflowを検出してFIFOをclearした回数
+    uint32_t out_fifo_overflow_discard_bytes;  // そのclearでアプリが破棄した有効データ(byte)の累計
+    // raw count > depthで観測できた上書き量(byte)の累計。二重overflowで失われた量は
+    // 観測できないため、上書きによる累積喪失量の下限として扱う。
+    uint32_t out_fifo_overflow_lost_bytes;
+    // raw count == depthの満杯でclearした回数（二重overflowの可能性があり喪失量不明）。
+    // 二重overflow後にさらに書き込まれるとraw count > depthに戻るため、二重overflowの
+    // 全件を数えるものではない。
+    uint32_t out_fifo_overflow_unknown_events;
+    uint32_t out_reprime_events;               // FIFOが空になりprimingへ戻した回数
+    uint32_t out_take_section_cycles_max;      // FIFO読出しPRIMASK区間の最大サイクル数
 } audio_tx_diagnostics_t;
 
 extern volatile audio_tx_diagnostics_t g_audio_tx_diagnostics;
@@ -307,9 +331,17 @@ void audio_diagnostics_reset_tx_locked(void);
 void audio_diagnostics_reset_interval(void);
 void audio_diagnostics_reset_session(void);
 
-// TXリング水位。streaming は transport の s_streaming_out を渡す。
+// USB OUT FIFO水位（word）。streaming は transport の s_streaming_out を渡す。
 void audio_diagnostics_record_tx_level(bool streaming, int32_t used);
 void audio_diagnostics_record_tx_interval_level(int32_t used);
+
+// USB OUT FIFOの直接読出し（#260）。full_eventはUSB ISR、それ以外はAudio Task context。
+// overflow_recoveryの値はFIFO読出しPRIMASK区間内で取得したものを区間外で渡す。
+void audio_diagnostics_record_out_stale_request_skip(void);
+void audio_diagnostics_record_out_fifo_full_event(void);
+void audio_diagnostics_record_out_fifo_overflow_recovery(uint32_t raw_count_bytes, uint32_t depth_bytes);
+void audio_diagnostics_record_out_reprime(void);
+void audio_diagnostics_record_out_take_section(uint32_t cycles);
 
 // USB再生priming。待機half数と完了回数を区別して記録する。
 void audio_diagnostics_record_tx_priming_wait(void);
@@ -320,7 +352,7 @@ void audio_diagnostics_record_tx_priming_complete(void);
 void audio_diagnostics_record_tx_drift_threshold(bool upward);
 void audio_diagnostics_record_tx_drift_suppressed(bool upward);
 
-// TXリングイベント。flags は AUDIO_TX_DIAG_EVENT_* のビット和。
+// TXイベント。flags は AUDIO_TX_DIAG_EVENT_* のビット和。used はUSB OUT FIFO水位（word）。
 void audio_diagnostics_record_tx_event(bool streaming, uint32_t flags, int32_t used);
 
 // DMA callback / overwrite / drop / error
@@ -392,20 +424,21 @@ void audio_diagnostics_record_sai_tx_error(uint32_t error_code,
 void audio_diagnostics_record_sai_rx_error(uint32_t error_code,
                                            uint32_t status_flags);
 
-// USB OUT packet / FIFO / service time
-void audio_diagnostics_record_usb_out_packet(uint16_t bytes,
-                                             uint32_t rx_cycle,
-                                             bool pending);
+// USB OUT packet / FIFO / feedback
+void audio_diagnostics_record_usb_out_packet(uint16_t bytes, uint32_t rx_cycle);
 void audio_diagnostics_record_usb_out_fifo(uint16_t fifo_count);
 void audio_diagnostics_reset_usb_out_gap(void);
-uint32_t audio_diagnostics_usb_out_pending_cycle(void);
-void audio_diagnostics_record_usb_out_service(uint32_t pending_cycle);
-void audio_diagnostics_record_usb_out_read(bool streaming, uint16_t bytes);
+// アプリ側feedback値（16.16）。USB ISR context。
+void audio_diagnostics_record_usb_out_feedback(uint32_t feedback);
 
 // USB IN packet / FIFO / write result
 void audio_diagnostics_record_usb_in_packet(uint16_t bytes);
 void audio_diagnostics_record_usb_in_write(uint16_t written, uint16_t requested);
 void audio_diagnostics_record_usb_in_fifo(uint16_t fifo_count);
+
+// AUDIO_DIAG_DMA_TIME_REPORT=1の場合だけ有効。OUT/INの両方が停止した遷移時に
+// Audio Taskから一度だけ呼び出し、DMA処理時間とOUT診断を出力する。
+void audio_diagnostics_report_dma_time(void);
 
 // 1秒周期のRTTサマリー。Audio Taskから一度だけ呼び出す。
 // streaming_out/streaming_inが両方falseの場合は出力しない。

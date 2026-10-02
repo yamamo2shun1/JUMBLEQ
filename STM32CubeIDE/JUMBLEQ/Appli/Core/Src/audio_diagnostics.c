@@ -5,7 +5,7 @@
  *
  * All record functions are called from ISR context and only update fixed-size
  * counters/min-max values. RTT output happens exclusively in the Audio Task
- * through audio_diagnostics_log_periodic().
+ * through audio_diagnostics_log_periodic() and audio_diagnostics_report_dma_time().
  */
 
 #include "audio_diagnostics_internal.h"
@@ -41,8 +41,6 @@ static volatile uint32_t dbg_tx_underrun_events     = 0u;
 static volatile uint32_t dbg_tx_partial_fill_events = 0u;
 static volatile uint32_t dbg_tx_drift_up_events     = 0u;
 static volatile uint32_t dbg_tx_drift_dn_events     = 0u;
-static volatile uint32_t dbg_usb_read_zero_events   = 0u;
-static volatile uint32_t dbg_usb_read_bytes         = 0u;
 static volatile uint32_t dbg_dma_err_events         = 0u;
 static volatile uint32_t dbg_sai_tx_err_events      = 0u;
 static volatile uint32_t dbg_sai_rx_err_events      = 0u;
@@ -58,8 +56,9 @@ static volatile uint32_t dbg_tx_half_rewrite_events = 0u;
 static volatile uint32_t dbg_tx_cplt_rewrite_events = 0u;
 static volatile uint32_t dbg_rx_half_rewrite_events = 0u;
 static volatile uint32_t dbg_rx_cplt_rewrite_events = 0u;
-static volatile uint16_t dbg_usb_read_size_min      = DBG_MIN_U16_INIT;
-static volatile uint16_t dbg_usb_read_size_max      = 0u;
+static volatile uint32_t dbg_usb_out_fb_min         = DBG_MIN_U32_INIT;
+static volatile uint32_t dbg_usb_out_fb_max         = 0u;
+static volatile uint32_t dbg_usb_out_fb_last        = 0u;
 static volatile uint32_t dbg_usb_out_packet_events  = 0u;
 static volatile uint32_t dbg_usb_out_packet_bytes   = 0u;
 static volatile uint16_t dbg_usb_out_packet_size_min = DBG_MIN_U16_INIT;
@@ -69,10 +68,6 @@ static volatile uint32_t dbg_usb_out_gap_cycles_max = 0u;
 static volatile uint32_t dbg_usb_out_gap_late_events = 0u;
 static volatile uint32_t dbg_usb_out_prev_cycle     = 0u;
 static volatile bool dbg_usb_out_prev_cycle_valid   = false;
-static volatile uint32_t dbg_usb_out_coalesced_events = 0u;
-static volatile uint32_t dbg_usb_out_pending_cycle  = 0u;
-static volatile uint32_t dbg_usb_out_service_cycles_min = DBG_MIN_U32_INIT;
-static volatile uint32_t dbg_usb_out_service_cycles_max = 0u;
 static volatile uint16_t dbg_usb_out_fifo_min       = DBG_MIN_U16_INIT;
 static volatile uint16_t dbg_usb_out_fifo_max       = 0u;
 static volatile uint32_t dbg_usb_in_packet_events   = 0u;
@@ -94,8 +89,6 @@ static void audio_diagnostics_reset_interval_locked(void)
     dbg_tx_partial_fill_events = 0u;
     dbg_tx_drift_up_events     = 0u;
     dbg_tx_drift_dn_events     = 0u;
-    dbg_usb_read_zero_events   = 0u;
-    dbg_usb_read_bytes         = 0u;
     dbg_dma_err_events         = 0u;
     dbg_sai_tx_err_events      = 0u;
     dbg_sai_rx_err_events      = 0u;
@@ -107,8 +100,8 @@ static void audio_diagnostics_reset_interval_locked(void)
     dbg_tx_cplt_rewrite_events = 0u;
     dbg_rx_half_rewrite_events = 0u;
     dbg_rx_cplt_rewrite_events = 0u;
-    dbg_usb_read_size_min      = DBG_MIN_U16_INIT;
-    dbg_usb_read_size_max      = 0u;
+    dbg_usb_out_fb_min         = DBG_MIN_U32_INIT;
+    dbg_usb_out_fb_max         = 0u;
     dbg_usb_out_packet_events  = 0u;
     dbg_usb_out_packet_bytes   = 0u;
     dbg_usb_out_packet_size_min = DBG_MIN_U16_INIT;
@@ -116,9 +109,6 @@ static void audio_diagnostics_reset_interval_locked(void)
     dbg_usb_out_gap_cycles_min = DBG_MIN_U32_INIT;
     dbg_usb_out_gap_cycles_max = 0u;
     dbg_usb_out_gap_late_events = 0u;
-    dbg_usb_out_coalesced_events = 0u;
-    dbg_usb_out_service_cycles_min = DBG_MIN_U32_INIT;
-    dbg_usb_out_service_cycles_max = 0u;
     dbg_usb_out_fifo_min       = DBG_MIN_U16_INIT;
     dbg_usb_out_fifo_max       = 0u;
     dbg_usb_in_packet_events   = 0u;
@@ -132,7 +122,9 @@ static void audio_diagnostics_reset_interval_locked(void)
     dbg_usb_in_fifo_min        = DBG_MIN_U16_INIT;
     dbg_usb_in_fifo_max        = 0u;
 }
+#endif
 
+#if AUDIO_DIAG_LOG || AUDIO_DIAG_DMA_TIME_REPORT
 static uint32_t audio_diagnostics_cycles_to_us(uint32_t cycles)
 {
     if (SystemCoreClock == 0u)
@@ -172,7 +164,7 @@ void audio_diagnostics_reset_session(void)
     audio_diagnostics_reset_interval_locked();
     dbg_usb_out_prev_cycle       = 0u;
     dbg_usb_out_prev_cycle_valid = false;
-    dbg_usb_out_pending_cycle    = 0u;
+    dbg_usb_out_fb_last          = 0u;
 
     __set_PRIMASK(primask);
 }
@@ -229,6 +221,47 @@ void audio_diagnostics_record_tx_priming_wait(void)
 void audio_diagnostics_record_tx_priming_complete(void)
 {
     g_audio_tx_diagnostics.priming_completed_events++;
+}
+
+void audio_diagnostics_record_out_stale_request_skip(void)
+{
+    g_audio_tx_diagnostics.out_stale_request_skips++;
+}
+
+void audio_diagnostics_record_out_fifo_full_event(void)
+{
+    g_audio_tx_diagnostics.out_fifo_full_events++;
+}
+
+void audio_diagnostics_record_out_fifo_overflow_recovery(uint32_t raw_count_bytes, uint32_t depth_bytes)
+{
+    g_audio_tx_diagnostics.out_fifo_overflow_recoveries++;
+    // clearで破棄した有効データはdepthまで。raw countがdepthを超える分は上書き済み。
+    g_audio_tx_diagnostics.out_fifo_overflow_discard_bytes +=
+        (raw_count_bytes < depth_bytes) ? raw_count_bytes : depth_bytes;
+    if (raw_count_bytes > depth_bytes)
+    {
+        // 観測できた上書き量。二重overflowで失われた分は含まれない（下限）。
+        g_audio_tx_diagnostics.out_fifo_overflow_lost_bytes += raw_count_bytes - depth_bytes;
+    }
+    else
+    {
+        // ちょうど満杯。二重overflow後の可能性があり喪失量は不明。
+        g_audio_tx_diagnostics.out_fifo_overflow_unknown_events++;
+    }
+}
+
+void audio_diagnostics_record_out_reprime(void)
+{
+    g_audio_tx_diagnostics.out_reprime_events++;
+}
+
+void audio_diagnostics_record_out_take_section(uint32_t cycles)
+{
+    if (cycles > g_audio_tx_diagnostics.out_take_section_cycles_max)
+    {
+        g_audio_tx_diagnostics.out_take_section_cycles_max = cycles;
+    }
 }
 
 void audio_diagnostics_record_tx_drift_threshold(bool upward)
@@ -754,9 +787,7 @@ void audio_diagnostics_record_rate_switch_cleanup(uint32_t cleanup_status)
 }
 
 #if AUDIO_DIAG_LOG
-void audio_diagnostics_record_usb_out_packet(uint16_t bytes,
-                                             uint32_t rx_cycle,
-                                             bool pending)
+void audio_diagnostics_record_usb_out_packet(uint16_t bytes, uint32_t rx_cycle)
 {
     dbg_usb_out_packet_events++;
     dbg_usb_out_packet_bytes += bytes;
@@ -790,15 +821,6 @@ void audio_diagnostics_record_usb_out_packet(uint16_t bytes,
     }
     dbg_usb_out_prev_cycle       = rx_cycle;
     dbg_usb_out_prev_cycle_valid = true;
-
-    if (pending)
-    {
-        dbg_usb_out_coalesced_events++;
-    }
-    else
-    {
-        dbg_usb_out_pending_cycle = rx_cycle;
-    }
 }
 
 void audio_diagnostics_record_usb_out_fifo(uint16_t fifo_count)
@@ -813,38 +835,16 @@ void audio_diagnostics_record_usb_out_fifo(uint16_t fifo_count)
     }
 }
 
-uint32_t audio_diagnostics_usb_out_pending_cycle(void)
+void audio_diagnostics_record_usb_out_feedback(uint32_t feedback)
 {
-    return dbg_usb_out_pending_cycle;
-}
-
-void audio_diagnostics_record_usb_out_service(uint32_t pending_cycle)
-{
-    const uint32_t service_cycles = DWT->CYCCNT - pending_cycle;
-    if (service_cycles < dbg_usb_out_service_cycles_min)
+    dbg_usb_out_fb_last = feedback;
+    if (feedback < dbg_usb_out_fb_min)
     {
-        dbg_usb_out_service_cycles_min = service_cycles;
+        dbg_usb_out_fb_min = feedback;
     }
-    if (service_cycles > dbg_usb_out_service_cycles_max)
+    if (feedback > dbg_usb_out_fb_max)
     {
-        dbg_usb_out_service_cycles_max = service_cycles;
-    }
-}
-
-void audio_diagnostics_record_usb_out_read(bool streaming, uint16_t bytes)
-{
-    dbg_usb_read_bytes += bytes;
-    if (streaming && bytes == 0u)
-    {
-        dbg_usb_read_zero_events++;
-    }
-    if (bytes < dbg_usb_read_size_min)
-    {
-        dbg_usb_read_size_min = bytes;
-    }
-    if (bytes > dbg_usb_read_size_max)
-    {
-        dbg_usb_read_size_max = bytes;
+        dbg_usb_out_fb_max = feedback;
     }
 }
 
@@ -892,7 +892,7 @@ void audio_diagnostics_record_usb_in_fifo(uint16_t fifo_count)
 }
 #endif
 
-#if AUDIO_DIAG_LOG
+#if AUDIO_DIAG_LOG || AUDIO_DIAG_DMA_TIME_REPORT
 // deadline_cyclesの表示用換算。未計測(0)と期限なし(UINT32_MAX)は0で表示する。
 static uint32_t audio_diagnostics_deadline_us(uint32_t deadline_cycles)
 {
@@ -903,35 +903,76 @@ static uint32_t audio_diagnostics_deadline_us(uint32_t deadline_cycles)
     return audio_diagnostics_cycles_to_us(deadline_cycles);
 }
 
-// DMA処理完了時間の1秒周期サマリー。計測値はAudio Task contextだけが更新する。
-static void audio_diagnostics_log_tx_dma_time(void)
+// DMA処理完了時間の出力。計測値はAudio Task contextだけが更新する。
+// 呼出側は出力前に値を確定したスナップショットを渡す。
+static void audio_diagnostics_log_tx_dma_time(const audio_tx_diagnostics_t* tx)
 {
     SEGGER_RTT_printf(0,
                       "[AUD][TX-DMA-TIME] proc_us half/cplt=%lu/%lu complete_us half/cplt=%lu/%lu complete_deadline_us half/cplt=%lu/%lu overruns half/cplt=%lu/%lu\r\n",
-                      (unsigned long) audio_diagnostics_cycles_to_us(g_audio_tx_diagnostics.half_process_cycles_max),
-                      (unsigned long) audio_diagnostics_cycles_to_us(g_audio_tx_diagnostics.cplt_process_cycles_max),
-                      (unsigned long) audio_diagnostics_cycles_to_us(g_audio_tx_diagnostics.half_complete_cycles_max),
-                      (unsigned long) audio_diagnostics_cycles_to_us(g_audio_tx_diagnostics.cplt_complete_cycles_max),
-                      (unsigned long) audio_diagnostics_deadline_us(g_audio_tx_diagnostics.half_complete_deadline_cycles_at_max),
-                      (unsigned long) audio_diagnostics_deadline_us(g_audio_tx_diagnostics.cplt_complete_deadline_cycles_at_max),
-                      (unsigned long) g_audio_tx_diagnostics.half_complete_deadline_overruns,
-                      (unsigned long) g_audio_tx_diagnostics.cplt_complete_deadline_overruns);
+                      (unsigned long) audio_diagnostics_cycles_to_us(tx->half_process_cycles_max),
+                      (unsigned long) audio_diagnostics_cycles_to_us(tx->cplt_process_cycles_max),
+                      (unsigned long) audio_diagnostics_cycles_to_us(tx->half_complete_cycles_max),
+                      (unsigned long) audio_diagnostics_cycles_to_us(tx->cplt_complete_cycles_max),
+                      (unsigned long) audio_diagnostics_deadline_us(tx->half_complete_deadline_cycles_at_max),
+                      (unsigned long) audio_diagnostics_deadline_us(tx->cplt_complete_deadline_cycles_at_max),
+                      (unsigned long) tx->half_complete_deadline_overruns,
+                      (unsigned long) tx->cplt_complete_deadline_overruns);
 }
 
-static void audio_diagnostics_log_rx_dma_time(void)
+static void audio_diagnostics_log_rx_dma_time(const audio_rx_diagnostics_t* rx)
 {
     SEGGER_RTT_printf(0,
                       "[AUD][RX-DMA-TIME] proc_us half/cplt=%lu/%lu complete_us half/cplt=%lu/%lu complete_deadline_us half/cplt=%lu/%lu overruns half/cplt=%lu/%lu\r\n",
-                      (unsigned long) audio_diagnostics_cycles_to_us(g_audio_rx_diagnostics.rx_half_process_cycles_max),
-                      (unsigned long) audio_diagnostics_cycles_to_us(g_audio_rx_diagnostics.rx_cplt_process_cycles_max),
-                      (unsigned long) audio_diagnostics_cycles_to_us(g_audio_rx_diagnostics.rx_half_complete_cycles_max),
-                      (unsigned long) audio_diagnostics_cycles_to_us(g_audio_rx_diagnostics.rx_cplt_complete_cycles_max),
-                      (unsigned long) audio_diagnostics_deadline_us(g_audio_rx_diagnostics.rx_half_complete_deadline_cycles_at_max),
-                      (unsigned long) audio_diagnostics_deadline_us(g_audio_rx_diagnostics.rx_cplt_complete_deadline_cycles_at_max),
-                      (unsigned long) g_audio_rx_diagnostics.rx_half_complete_deadline_overruns,
-                      (unsigned long) g_audio_rx_diagnostics.rx_cplt_complete_deadline_overruns);
+                      (unsigned long) audio_diagnostics_cycles_to_us(rx->rx_half_process_cycles_max),
+                      (unsigned long) audio_diagnostics_cycles_to_us(rx->rx_cplt_process_cycles_max),
+                      (unsigned long) audio_diagnostics_cycles_to_us(rx->rx_half_complete_cycles_max),
+                      (unsigned long) audio_diagnostics_cycles_to_us(rx->rx_cplt_complete_cycles_max),
+                      (unsigned long) audio_diagnostics_deadline_us(rx->rx_half_complete_deadline_cycles_at_max),
+                      (unsigned long) audio_diagnostics_deadline_us(rx->rx_cplt_complete_deadline_cycles_at_max),
+                      (unsigned long) rx->rx_half_complete_deadline_overruns,
+                      (unsigned long) rx->rx_cplt_complete_deadline_overruns);
+}
+
+// USB OUT FIFOの直接読出し（#260）の累計。TX診断と同じくOUT開始・レート変更以降の値。
+static void audio_diagnostics_log_tx_out(const audio_tx_diagnostics_t* tx)
+{
+    SEGGER_RTT_printf(0,
+                      "[AUD][TX-OUT] underrun=%lu drift_up/down=%lu/%lu stale=%lu full=%lu overflow=%lu discard=%lu lost_min=%lu unknown=%lu reprime=%lu take_max_us=%lu fifo_words_min/max=%lu/%lu\r\n",
+                      (unsigned long) tx->underrun_events,
+                      (unsigned long) tx->drift_up_events,
+                      (unsigned long) tx->drift_down_events,
+                      (unsigned long) tx->out_stale_request_skips,
+                      (unsigned long) tx->out_fifo_full_events,
+                      (unsigned long) tx->out_fifo_overflow_recoveries,
+                      (unsigned long) tx->out_fifo_overflow_discard_bytes,
+                      (unsigned long) tx->out_fifo_overflow_lost_bytes,
+                      (unsigned long) tx->out_fifo_overflow_unknown_events,
+                      (unsigned long) tx->out_reprime_events,
+                      (unsigned long) audio_diagnostics_cycles_to_us(tx->out_take_section_cycles_max),
+                      (unsigned long) ((tx->tx_used_min_words == UINT32_MAX) ? 0u : tx->tx_used_min_words),
+                      (unsigned long) tx->tx_used_max_words);
 }
 #endif
+
+void audio_diagnostics_report_dma_time(void)
+{
+#if AUDIO_DIAG_DMA_TIME_REPORT
+    // 出力前に値を確定する。出力中に値は変わらない（更新するのは同じAudio Task）が、
+    // 出力と同じ時点の値であることを明示するため、先にスナップショットを取る。
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    const audio_tx_diagnostics_t tx = g_audio_tx_diagnostics;
+    const audio_rx_diagnostics_t rx = g_audio_rx_diagnostics;
+    __set_PRIMASK(primask);
+
+    SEGGER_RTT_printf(0,
+                      "[AUD][DMA-TIME-REPORT] tick=%lu\r\n",
+                      (unsigned long) HAL_GetTick());
+    audio_diagnostics_log_tx_dma_time(&tx);
+    audio_diagnostics_log_rx_dma_time(&rx);
+    audio_diagnostics_log_tx_out(&tx);
+#endif
+}
 
 void audio_diagnostics_log_periodic(uint32_t sample_rate_hz,
                                     uint32_t task_frequency_hz,
@@ -949,8 +990,8 @@ void audio_diagnostics_log_periodic(uint32_t sample_rate_hz,
     // TX/RX両方向の完了時間を出力する。
     if (!streaming_out)
     {
-        audio_diagnostics_log_tx_dma_time();
-        audio_diagnostics_log_rx_dma_time();
+        audio_diagnostics_log_tx_dma_time((const audio_tx_diagnostics_t*) &g_audio_tx_diagnostics);
+        audio_diagnostics_log_rx_dma_time((const audio_rx_diagnostics_t*) &g_audio_rx_diagnostics);
         return;
     }
 
@@ -963,7 +1004,7 @@ void audio_diagnostics_log_periodic(uint32_t sample_rate_hz,
                       (unsigned long) sample_rate_hz,
                       (unsigned long) task_frequency_hz);
     SEGGER_RTT_printf(0,
-                      "[AUD][TX-BUF] used=%ld min/max=%lu/%lu\r\n",
+                      "[AUD][TX-BUF] out_fifo_words=%ld min/max=%lu/%lu\r\n",
                       (long) tx_used_words,
                       (unsigned long) ((dbg_tx_used_min == DBG_MIN_U32_INIT) ? 0u : dbg_tx_used_min),
                       (unsigned long) dbg_tx_used_max);
@@ -982,11 +1023,11 @@ void audio_diagnostics_log_periodic(uint32_t sample_rate_hz,
                       (unsigned long) g_audio_tx_diagnostics.drift_up_suppressed_events,
                       (unsigned long) g_audio_tx_diagnostics.drift_down_suppressed_events);
     SEGGER_RTT_printf(0,
-                      "[AUD][USB-READ] zero=%lu bytes=%lu size_min/max=%u/%u\r\n",
-                      (unsigned long) dbg_usb_read_zero_events,
-                      (unsigned long) dbg_usb_read_bytes,
-                      (unsigned int) ((dbg_usb_read_size_min == DBG_MIN_U16_INIT) ? 0u : dbg_usb_read_size_min),
-                      (unsigned int) dbg_usb_read_size_max);
+                      "[AUD][USB-OUT-FB] min/max/last=%lu/%lu/%lu\r\n",
+                      (unsigned long) ((dbg_usb_out_fb_min == DBG_MIN_U32_INIT) ? 0u : dbg_usb_out_fb_min),
+                      (unsigned long) dbg_usb_out_fb_max,
+                      (unsigned long) dbg_usb_out_fb_last);
+    audio_diagnostics_log_tx_out((const audio_tx_diagnostics_t*) &g_audio_tx_diagnostics);
     SEGGER_RTT_printf(0,
                       "[AUD][USB-IN-PKT] count=%lu zero=%lu bytes=%lu size_min/max=%u/%u\r\n",
                       (unsigned long) dbg_usb_in_packet_events,
@@ -1093,23 +1134,18 @@ void audio_diagnostics_log_periodic(uint32_t sample_rate_hz,
                       (unsigned int) ((dbg_usb_out_fifo_min == DBG_MIN_U16_INIT) ? 0u : dbg_usb_out_fifo_min),
                       (unsigned int) dbg_usb_out_fifo_max);
     SEGGER_RTT_printf(0,
-                      "[AUD][USB-OUT-GAP] us_min/max=%lu/%lu late=%lu coalesced=%lu\r\n",
+                      "[AUD][USB-OUT-GAP] us_min/max=%lu/%lu late=%lu\r\n",
                       (unsigned long) ((dbg_usb_out_gap_cycles_min == DBG_MIN_U32_INIT) ? 0u : audio_diagnostics_cycles_to_us(dbg_usb_out_gap_cycles_min)),
                       (unsigned long) audio_diagnostics_cycles_to_us(dbg_usb_out_gap_cycles_max),
-                      (unsigned long) dbg_usb_out_gap_late_events,
-                      (unsigned long) dbg_usb_out_coalesced_events);
-    SEGGER_RTT_printf(0,
-                      "[AUD][USB-OUT-SERVICE] us_min/max=%lu/%lu\r\n",
-                      (unsigned long) ((dbg_usb_out_service_cycles_min == DBG_MIN_U32_INIT) ? 0u : audio_diagnostics_cycles_to_us(dbg_usb_out_service_cycles_min)),
-                      (unsigned long) audio_diagnostics_cycles_to_us(dbg_usb_out_service_cycles_max));
+                      (unsigned long) dbg_usb_out_gap_late_events);
     dbg_sigma_calls_prev = sigma_calls;
     dbg_sigma_err_prev   = sigma_err;
     dbg_sigma_to_prev    = sigma_to;
     dbg_sigma_mto_prev   = sigma_mto;
 
     // 両方向の完了時間。いずれかのstream動作中に出力する。
-    audio_diagnostics_log_tx_dma_time();
-    audio_diagnostics_log_rx_dma_time();
+    audio_diagnostics_log_tx_dma_time((const audio_tx_diagnostics_t*) &g_audio_tx_diagnostics);
+    audio_diagnostics_log_rx_dma_time((const audio_rx_diagnostics_t*) &g_audio_rx_diagnostics);
 #else
     (void) sample_rate_hz;
     (void) task_frequency_hz;
