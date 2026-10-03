@@ -7,6 +7,8 @@
  *
  * ISR callbacks only publish the latest DMA event and pending flags; the
  * Audio Task applies stream requests and performs all buffer copies.
+ * The DMA halves are accessed only by one copy each (TX commit / RX snapshot)
+ * while the GPDMA channel is suspended (#251).
  */
 
 #include "audio_control.h"
@@ -305,6 +307,21 @@ static void recovery_request_publish_from_isr(uint32_t cause_bit,
     audio_transport_notify_from_isr();
 }
 
+// Audio Task context. ISR用と同じpayload・sequenceの更新をPRIMASK区間で行い、
+// 通知はTask用APIで行う（ISR用の通知をTaskから呼ばない）。エラーコードは記録しない。
+static void recovery_request_publish_from_task(uint32_t cause_bit)
+{
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    s_recovery_request.cause_mask |= cause_bit;
+    __DMB();
+    s_recovery_request.published_sequence++;
+
+    __set_PRIMASK(primask);
+    audio_transport_notify_task();
+}
+
 bool audio_transport_take_recovery_request(audio_transport_recovery_request_t* request)
 {
     const uint32_t primask = __get_PRIMASK();
@@ -394,6 +411,16 @@ static void audio_tx_playback_state_reset(void)
     s_tx_last_correction_tick = 0u;
 }
 
+// DMA half所有権確認（#251）の作業バッファ。CPUだけが使い、DMAはアクセスしない
+// （キャッシュ保守は不要）。DMA共有領域へのアクセスは、TXはs_tx_stage_buf→halfのcommit、
+// RXはhalf→s_rx_stage_bufのsnapshotだけにし、どちらもGPDMA一時停止中に行う。
+static __attribute__((aligned(32))) int32_t s_tx_stage_buf[AUDIO_SAI_DMA_HALF_WORDS_MAX] = {0};
+static __attribute__((aligned(32))) int32_t s_rx_stage_buf[AUDIO_SAI_DMA_HALF_WORDS_MAX] = {0};
+// s_tx_stage_bufの内容。Audio Taskだけが更新する。has_stream_audio: USB OUT FIFOのデータを含む。
+// timecode_mask: timecode合成が上書きしたch（bit n = ch n、L/Rの組）。
+static bool s_tx_stage_has_stream_audio = false;
+static uint32_t s_tx_stage_timecode_mask = 0u;
+
 // USB IN FIFOへ書き込む1チャンク（DMA half 1回分）の組立て領域。
 static __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t s_usb_capture_buf[AUDIO_SAI_DMA_HALF_WORDS_MAX] = {0};
 // USB OUT FIFOからpeekするドリフト補正用の作業領域（DMA half＋1 frame）。
@@ -405,6 +432,11 @@ __attribute__((section("noncacheable_buffer"), aligned(32))) int32_t sai_rx_dma_
 // TX/RX共通のDMA half長（word単位）。SAI/GPDMA停止中にAudio Taskだけが
 // audio_transport_configure_dma_period()で更新し、DMA動作中は変更しない。ISRは参照しない。
 static uint32_t s_sai_dma_half_words = AUDIO_SAI_DMA_HALF_WORDS_MAX;
+
+// 停止状態異常のラッチ（#251）。Audio Taskだけが更新する。立った経路のDMA共有領域へは
+// 以後アクセスせず、復旧・レート変更でDMAを停止確認・再構築できたときにだけ解除する。
+static bool s_tx_dma_suspend_fault = false;
+static bool s_rx_dma_suspend_fault = false;
 
 // DMA構築前に、サンプルレートからhalf長を約0.333ms相当へ確定する。
 // 3000で割り切れないレートや、half長がMIN..MAXの範囲外になるレートは、
@@ -816,6 +848,10 @@ void audio_transport_reset_buffers(void)
         sai_rx_dma_buf[i] = 0;
     }
 
+    memset(s_tx_stage_buf, 0, sizeof(s_tx_stage_buf));
+    memset(s_rx_stage_buf, 0, sizeof(s_rx_stage_buf));
+    s_tx_stage_has_stream_audio = false;
+
     audio_tx_playback_state_reset();
 
     __DSB();
@@ -889,6 +925,9 @@ bool audio_transport_stop_and_clear_paths(audio_transport_failure_t* failure)
     memset(sai_rx_dma_buf, 0, sizeof(sai_rx_dma_buf));
     memset(s_usb_playback_buf, 0, sizeof(s_usb_playback_buf));
     memset(s_usb_capture_buf, 0, sizeof(s_usb_capture_buf));
+    memset(s_tx_stage_buf, 0, sizeof(s_tx_stage_buf));
+    memset(s_rx_stage_buf, 0, sizeof(s_rx_stage_buf));
+    s_tx_stage_has_stream_audio = false;
     __DSB();
 
     return true;
@@ -970,6 +1009,8 @@ bool audio_transport_rebuild_and_start_tx(audio_transport_failure_t* failure)
         return false;
     }
 
+    // 停止確認（HAL_DMA_Abort）と再初期化を経てTXチャネルの状態が確定した。
+    s_tx_dma_suspend_fault = false;
     return true;
 }
 
@@ -985,6 +1026,9 @@ bool audio_transport_start_rx_after_tx_sync(audio_transport_failure_t* failure)
         (void) audio_transport_stop_sai_paths(failure);
         return false;
     }
+
+    // 停止確認と再初期化を経てRXチャネルの状態が確定した。
+    s_rx_dma_suspend_fault = false;
 
     // 復旧後もalt settingが維持される場合があるため、IN FIFO目標を再適用する。
     audio_transport_apply_usb_in_fifo_target(audio_control_transport_sample_rate_hz());
@@ -1221,6 +1265,385 @@ void audio_transport_clear_pending_events(void)
 }
 
 // ==============================
+// DMA half ownership (#251)
+// ==============================
+//
+// TX/RXのDMA共有領域へは、GPDMAチャネルを一時停止（CCR.SUSP）し、停止の完了を
+// イベントフラグ（SUSPF）と状態フラグ（IDLEF）で確かめてからアクセスする。停止中は
+// チャネルがマスタポートで転送しないため（RM0477 12.4.3）、アクセスにかかる時間や
+// プリエンプト・バス競合に関係なく、DMAと同じwordへ同時にアクセスしない。位置は
+// 停止中に1回だけ読み、その状態のまま判定・コピーする。
+// 停止が長引いた場合に起きるのはSAIのunder/overrun（既存の復旧要求へ進む）で、
+// DMA共有領域での競合ではない。
+
+enum
+{
+    // GPDMA1 Ch0〜11のFIFO容量（RM0477 12.3.1 Table 88）。RXの宛先への書込みは、
+    // ソースからの読出し（BNDT）より最大この語数だけ遅れる。
+    AUDIO_DMA_FIFO_WORDS          = 2u,
+    AUDIO_DMA_SUSPEND_TIMEOUT_US  = 1u,
+    // RXのnot_readyでやり直す前に待つ上限（frame数）。
+    AUDIO_DMA_RX_NOT_READY_WAIT_FRAMES = 2u,
+};
+
+#define AUDIO_DMA_CSR_ERROR_MASK (DMA_CSR_DTEF | DMA_CSR_ULEF | DMA_CSR_USEF)
+
+#ifndef AUDIO_TRANSPORT_DMA_ACCESS_HOOKS
+// GPDMAレジスタとDMA共有領域へのアクセス。ホストテストはDMAの模擬へ差し替える。
+static inline uint32_t audio_dma_reg_read(volatile uint32_t* reg)
+{
+    return *reg;
+}
+
+static inline void audio_dma_reg_write(volatile uint32_t* reg, uint32_t value)
+{
+    *reg = value;
+}
+
+static inline void audio_dma_copy_words(int32_t* dst, const int32_t* src, uint32_t words)
+{
+    memcpy(dst, src, words * sizeof(int32_t));
+}
+#endif
+
+// BNDT（ソースから転送する残りbyte数）から、次にソースから読むword位置を求める。
+// 0（再ロード直前）と転送長（再ロード直後）はどちらも先頭。転送長を超える値と
+// 4の倍数でない値は不正としてfalseを返す。
+static bool audio_dma_position_words(uint32_t bndt_bytes, uint32_t xfer_words, uint32_t* pos_words)
+{
+    const uint32_t xfer_bytes = xfer_words * (uint32_t) sizeof(int32_t);
+    if ((bndt_bytes > xfer_bytes) || ((bndt_bytes % (uint32_t) sizeof(int32_t)) != 0u))
+    {
+        return false;
+    }
+
+    *pos_words = (bndt_bytes == 0u) ? 0u : ((xfer_bytes - bndt_bytes) / (uint32_t) sizeof(int32_t));
+    return true;
+}
+
+// 相手half（half_indexでない方）の先頭から数えたDMA位置q（word）。
+// 0 ≦ q < half_wordsならDMAは相手halfにいる。q == half_wordsは対象halfの先頭。
+static uint32_t audio_dma_offset_from_other_half(uint32_t pos_words, uint32_t half_index, uint32_t half_words)
+{
+    const uint32_t xfer_words  = half_words * 2u;
+    const uint32_t other_start = (half_index == 0u) ? half_words : 0u;
+    return (pos_words + xfer_words - other_start) % xfer_words;
+}
+
+// TX（対象halfへ書く）: 停止中のDMAが対象halfの先頭wordをまだ読んでいなければ、
+// 対象half全体を書ける。書いた内容はDMAが次に対象halfを読むときに使われる。
+static uint32_t audio_dma_judge_tx(uint32_t q, uint32_t half_words)
+{
+    return (q <= half_words) ? AUDIO_DIAG_DMA_OWN_OK : AUDIO_DIAG_DMA_OWN_BUSY;
+}
+
+// RX（対象halfを読む）: 宛先の書込み位置dは p − FIFO ≦ d ≦ p。q ≧ FIFOなら対象halfの
+// 末尾まで宛先へ書き終わっていて、q ≦ half_wordsなら次の周回の書込みはまだ始まっていない。
+static uint32_t audio_dma_judge_rx(uint32_t q, uint32_t half_words)
+{
+    if (q > half_words)
+    {
+        return AUDIO_DIAG_DMA_OWN_BUSY;
+    }
+    if (q < AUDIO_DMA_FIFO_WORDS)
+    {
+        return AUDIO_DIAG_DMA_OWN_NOT_READY;
+    }
+    return AUDIO_DIAG_DMA_OWN_OK;
+}
+
+typedef struct
+{
+    uint32_t result;          // AUDIO_DIAG_DMA_OWN_*
+    uint32_t q;               // 停止位置（停止後の状態確認とBNDTが正しいときだけ有効）
+    uint32_t suspend_cycles;  // SUSP書込み→解除完了。停止を要求しなかった経路は0
+    bool stale_flag_cleared;  // 開始前に古いSUSPFをクリアした
+    bool fault;               // 今回、停止状態異常を新たに検出した
+#if AUDIO_DMA_OWNERSHIP_TEST
+    uint32_t ccr_before;
+    uint32_t csr_before;
+    uint32_t bndt;
+    uint32_t sai_flvl;
+#endif
+} audio_dma_own_outcome_t;
+
+#if AUDIO_DMA_OWNERSHIP_TEST
+// 試験用の遅延注入とトレース（#251）。デバッガから書き換える。製品ビルドでは生成しない。
+typedef struct
+{
+    uint32_t period_events;    // 何回のcommit/snapshotごとに注入するか（0: 注入しない）
+    uint32_t tx_delay_us;      // 区間に入る前のビジーウェイト
+    uint32_t rx_delay_us;
+    uint32_t tx_target_q_enable;  // 1: 区間に入る前に、停止せずに読んだqがtargetになるまで待つ
+    uint32_t tx_target_q;
+    uint32_t rx_target_q_enable;
+    uint32_t rx_target_q;
+    uint32_t suspend_hold_us;  // 停止中（判定の後、解除の前）のビジーウェイト
+    uint32_t tx_event_count;
+    uint32_t rx_event_count;
+    uint32_t injected_count;
+    uint32_t target_q_timeouts;
+} audio_dma_ownership_test_t;
+
+typedef struct
+{
+    uint32_t tx;           // 1: TX commit、0: RX snapshot
+    uint32_t half_index;
+    uint32_t half_words;
+    uint32_t ccr_before;
+    uint32_t csr_before;
+    uint32_t bndt;
+    uint32_t q;
+    uint32_t sai_flvl;     // 停止時のSAI_xSR.FLVL
+    uint32_t result;
+    uint32_t suspend_cycles;
+} audio_dma_ownership_trace_t;
+
+enum
+{
+    AUDIO_DMA_OWNERSHIP_TRACE_COUNT = 16u,
+};
+
+volatile audio_dma_ownership_test_t g_audio_dma_ownership_test = {0};
+volatile audio_dma_ownership_trace_t g_audio_dma_ownership_trace[AUDIO_DMA_OWNERSHIP_TRACE_COUNT] = {0};
+volatile uint32_t g_audio_dma_ownership_trace_count = 0u;
+static bool s_dma_test_hold_active = false;
+
+static void audio_dma_test_busy_wait_us(uint32_t us)
+{
+    const uint32_t start  = DWT->CYCCNT;
+    const uint32_t cycles = (SystemCoreClock / 1000000u) * us;
+    while ((DWT->CYCCNT - start) < cycles)
+    {
+    }
+}
+
+// 区間に入る前の注入。注入した回はtrueを返し、停止中の保持（suspend_hold_us）も有効にする。
+static bool audio_dma_test_before(bool tx, DMA_HandleTypeDef* hdma, uint32_t half_index,
+                                  uint32_t half_words, uint32_t sample_rate_hz)
+{
+    volatile audio_dma_ownership_test_t* const t = &g_audio_dma_ownership_test;
+    const uint32_t count = tx ? ++t->tx_event_count : ++t->rx_event_count;
+    if ((t->period_events == 0u) || ((count % t->period_events) != 0u))
+    {
+        s_dma_test_hold_active = false;
+        return false;
+    }
+
+    t->injected_count++;
+    audio_dma_test_busy_wait_us(tx ? t->tx_delay_us : t->rx_delay_us);
+
+    if (tx ? (t->tx_target_q_enable != 0u) : (t->rx_target_q_enable != 0u))
+    {
+        // 停止せずに読んだ位置で待つ（判定させる位相の指定にだけ使う）。上限は4 half期間。
+        const uint32_t target = tx ? t->tx_target_q : t->rx_target_q;
+        const uint32_t start  = DWT->CYCCNT;
+        const uint32_t limit  = (sample_rate_hz != 0u) ?
+                                    (uint32_t) (((uint64_t) SystemCoreClock * 4u * (half_words / AUDIO_RING_FRAME_WORDS)) /
+                                                sample_rate_hz) :
+                                    0u;
+        for (;;)
+        {
+            uint32_t pos;
+            if (audio_dma_position_words(hdma->Instance->CBR1 & DMA_CBR1_BNDT, half_words * 2u, &pos) &&
+                (audio_dma_offset_from_other_half(pos, half_index, half_words) == target))
+            {
+                break;
+            }
+            if ((DWT->CYCCNT - start) > limit)
+            {
+                t->target_q_timeouts++;
+                break;
+            }
+        }
+    }
+
+    s_dma_test_hold_active = true;
+    return true;
+}
+
+static void audio_dma_test_trace(bool tx, uint32_t half_index, uint32_t half_words,
+                                 const audio_dma_own_outcome_t* outcome)
+{
+    const uint32_t index = g_audio_dma_ownership_trace_count % AUDIO_DMA_OWNERSHIP_TRACE_COUNT;
+    volatile audio_dma_ownership_trace_t* const e = &g_audio_dma_ownership_trace[index];
+    e->tx             = tx ? 1u : 0u;
+    e->half_index     = half_index;
+    e->half_words     = half_words;
+    e->ccr_before     = outcome->ccr_before;
+    e->csr_before     = outcome->csr_before;
+    e->bndt           = outcome->bndt;
+    e->q              = outcome->q;
+    e->sai_flvl       = outcome->sai_flvl;
+    e->result         = outcome->result;
+    e->suspend_cycles = outcome->suspend_cycles;
+    g_audio_dma_ownership_trace_count++;
+    s_dma_test_hold_active = false;
+}
+#endif
+
+// GPDMAチャネルを一時停止し、停止位置で所有権を確かめた場合だけhalfをコピーする。
+// 呼出側がPRIMASK区間を保持すること。区間内でHAL・ログ・待機APIを呼ばず、途中で
+// returnするのは停止を要求する前の経路だけ。停止を要求した後は、どの経路でも共通の
+// 解除（SUSP=0 → 読み戻し → SUSPFクリア → 読み戻し。HAL_DMAEx_Resume()と同じ順）を通る。
+// to_dma: true=TX（src→対象half）、false=RX（対象half→dst）。
+static void audio_dma_owned_copy(DMA_HandleTypeDef* hdma,
+                                 bool* fault_latch,
+                                 bool to_dma,
+                                 uint32_t half_index,
+                                 uint32_t half_words,
+                                 int32_t* dst,
+                                 const int32_t* src,
+                                 audio_dma_own_outcome_t* outcome)
+{
+    outcome->result             = AUDIO_DIAG_DMA_OWN_UNKNOWN;
+    outcome->q                  = 0u;
+    outcome->suspend_cycles     = 0u;
+    outcome->stale_flag_cleared = false;
+    outcome->fault              = false;
+
+    if (*fault_latch)
+    {
+        outcome->result = AUDIO_DIAG_DMA_OWN_SUSPEND_FAULT;
+        return;
+    }
+
+    DMA_Channel_TypeDef* const ch = hdma->Instance;
+
+    // 開始前の状態確認。SUSP=0かつSUSPF=0を確かめてから停止を要求する。
+    const uint32_t ccr = audio_dma_reg_read(&ch->CCR);
+    const uint32_t csr = audio_dma_reg_read(&ch->CSR);
+#if AUDIO_DMA_OWNERSHIP_TEST
+    outcome->ccr_before = ccr;
+    outcome->csr_before = csr;
+    outcome->bndt       = 0u;
+    outcome->sai_flvl   = 0u;
+#endif
+    if ((ccr & DMA_CCR_SUSP) != 0u)
+    {
+        // 前回の解除が終わっていない。チャネルの状態は既存の復旧で確定させる。
+        *fault_latch    = true;
+        outcome->fault  = true;
+        outcome->result = AUDIO_DIAG_DMA_OWN_SUSPEND_FAULT;
+        return;
+    }
+    if (((ccr & DMA_CCR_EN) == 0u) || ((csr & AUDIO_DMA_CSR_ERROR_MASK) != 0u))
+    {
+        return;
+    }
+    if ((csr & DMA_CSR_SUSPF) != 0u)
+    {
+        audio_dma_reg_write(&ch->CFCR, DMA_CFCR_SUSPF);
+        __DSB();
+        if ((audio_dma_reg_read(&ch->CSR) & DMA_CSR_SUSPF) != 0u)
+        {
+            *fault_latch    = true;
+            outcome->fault  = true;
+            outcome->result = AUDIO_DIAG_DMA_OWN_SUSPEND_FAULT;
+            return;
+        }
+        outcome->stale_flag_cleared = true;
+    }
+
+    // 一時停止の要求。開始前にSUSPF=0を確かめているので、ここで見るSUSPF=1は今回の
+    // 要求に対する停止完了を表す。期限の直後に完了した場合もアクセスしない。
+    const uint32_t timeout_cycles = (SystemCoreClock / 1000000u) * AUDIO_DMA_SUSPEND_TIMEOUT_US;
+    const uint32_t start_cycle    = DWT->CYCCNT;
+    audio_dma_reg_write(&ch->CCR, audio_dma_reg_read(&ch->CCR) | DMA_CCR_SUSP);
+    __DSB();
+
+    bool suspended = false;
+    for (;;)
+    {
+        if ((audio_dma_reg_read(&ch->CSR) & DMA_CSR_SUSPF) != 0u)
+        {
+            suspended = true;
+            break;
+        }
+        if ((DWT->CYCCNT - start_cycle) > timeout_cycles)
+        {
+            break;
+        }
+    }
+
+    if (!suspended)
+    {
+        outcome->result = AUDIO_DIAG_DMA_OWN_SUSPEND_TIMEOUT;
+    }
+    else
+    {
+        // 停止した定常状態（RM0477 12.8.7: SUSPF=1、IDLEF=EN=1）を状態フラグでも確かめる。
+        // 古いSUSPFを取り違えても、チャネルが転送中ならIDLEF=0で検出できる。
+        const uint32_t ccr_s = audio_dma_reg_read(&ch->CCR);
+        const uint32_t csr_s = audio_dma_reg_read(&ch->CSR);
+        const bool steady = ((ccr_s & DMA_CCR_EN) != 0u) && ((ccr_s & DMA_CCR_SUSP) != 0u) &&
+                            ((csr_s & DMA_CSR_IDLEF) != 0u) && ((csr_s & DMA_CSR_SUSPF) != 0u) &&
+                            ((csr_s & AUDIO_DMA_CSR_ERROR_MASK) == 0u);
+        if (steady)
+        {
+            // 停止中はBNDTが変わらない（RM0477 12.4.3）。
+            const uint32_t bndt = audio_dma_reg_read(&ch->CBR1) & DMA_CBR1_BNDT;
+            uint32_t pos;
+#if AUDIO_DMA_OWNERSHIP_TEST
+            outcome->bndt = bndt;
+            if (hdma->Parent != NULL)
+            {
+                outcome->sai_flvl = (((SAI_HandleTypeDef*) hdma->Parent)->Instance->SR & SAI_xSR_FLVL) >>
+                                    SAI_xSR_FLVL_Pos;
+            }
+#endif
+            if (audio_dma_position_words(bndt, half_words * 2u, &pos))
+            {
+                outcome->q      = audio_dma_offset_from_other_half(pos, half_index, half_words);
+                outcome->result = to_dma ? audio_dma_judge_tx(outcome->q, half_words) :
+                                           audio_dma_judge_rx(outcome->q, half_words);
+                if (outcome->result == AUDIO_DIAG_DMA_OWN_OK)
+                {
+                    // コピーを停止確認（SUSPF・IDLEF・BNDTの読取り）より前に行わず、
+                    // 解除より前に完了させる。
+                    __DMB();
+                    audio_dma_copy_words(dst, src, half_words);
+                    __DSB();
+                }
+            }
+        }
+#if AUDIO_DMA_OWNERSHIP_TEST
+        if (s_dma_test_hold_active)
+        {
+            audio_dma_test_busy_wait_us(g_audio_dma_ownership_test.suspend_hold_us);
+        }
+#endif
+    }
+
+    // 解除（すべての経路で共通）。SUSP=0を確かめてからSUSPFをクリアするので、期限の直後や
+    // 解除の途中に遅れて停止が完了しても、そのフラグは次の要求へ残らない。
+    audio_dma_reg_write(&ch->CCR, audio_dma_reg_read(&ch->CCR) & ~DMA_CCR_SUSP);
+    __DSB();
+    bool released = ((audio_dma_reg_read(&ch->CCR) & DMA_CCR_SUSP) == 0u);
+    audio_dma_reg_write(&ch->CFCR, DMA_CFCR_SUSPF);
+    __DSB();
+    released = released && ((audio_dma_reg_read(&ch->CSR) & DMA_CSR_SUSPF) == 0u);
+    outcome->suspend_cycles = DWT->CYCCNT - start_cycle;
+
+    if (!released)
+    {
+        // 停止中に行ったコピーは有効だが、以後はこの経路のDMA共有領域へアクセスしない。
+        *fault_latch   = true;
+        outcome->fault = true;
+    }
+}
+
+// 停止期間がframe周期の半分を超えたか（性能目標。音切れしない保証ではない）。
+static bool audio_dma_suspend_over_budget(uint32_t suspend_cycles, uint32_t sample_rate_hz)
+{
+    if (sample_rate_hz == 0u)
+    {
+        return false;
+    }
+    return suspend_cycles > ((SystemCoreClock / sample_rate_hz) / 2u);
+}
+
+// ==============================
 // USB(OUT) FIFO -> SAI(TX) path
 // ==============================
 
@@ -1434,34 +1857,62 @@ static void audio_usb_out_take(tu_fifo_t* ep_out_ff,
     __set_PRIMASK(primask);
 }
 
-static void audio_tx_fill_silence(uint32_t dst_half_offset_words, uint32_t half_words)
+// 作業バッファへtimecodeを合成し、上書きしたchを記録する（stream境界での無音化に使う）。
+static void audio_tx_render_timecode_stage(uint32_t half_words)
 {
-    memset(sai_tx_dma_buf + dst_half_offset_words, 0, half_words * sizeof(int32_t));
-    timecode_synth_render_output(sai_tx_dma_buf + dst_half_offset_words,
-                                 AUDIO_RING_FRAME_WORDS,
-                                 half_words / AUDIO_RING_FRAME_WORDS);
+    uint32_t mask = 0u;
+    for (uint32_t channel = 0u; channel < TIMECODE_SYNTH_CHANNEL_COUNT; channel++)
+    {
+        if (timecode_synth_is_channel_enabled(channel))
+        {
+            mask |= (1u << channel);
+        }
+    }
+    s_tx_stage_timecode_mask = mask;
+    timecode_synth_render_output(s_tx_stage_buf, AUDIO_RING_FRAME_WORDS, half_words / AUDIO_RING_FRAME_WORDS);
 }
 
-static void fill_tx_half(uint32_t dst_half_offset_words, uint32_t sample_rate_hz)
+static void audio_tx_fill_silence(uint32_t half_words)
+{
+    memset(s_tx_stage_buf, 0, half_words * sizeof(int32_t));
+    audio_tx_render_timecode_stage(half_words);
+}
+
+// 作業バッファのUSB OUT由来の音声を無音にし、timecodeが上書きしたchだけを残す。
+// audio_tx_fill_silence()と同じ出力になる（timecodeを再合成しない）。
+static void audio_tx_stage_strip_stream_audio(uint32_t half_words)
+{
+    for (uint32_t i = 0u; i < half_words; i += AUDIO_RING_FRAME_WORDS)
+    {
+        for (uint32_t channel = 0u; channel < TIMECODE_SYNTH_CHANNEL_COUNT; channel++)
+        {
+            if ((s_tx_stage_timecode_mask & (1u << channel)) == 0u)
+            {
+                s_tx_stage_buf[i + (channel * 2u)]      = 0;
+                s_tx_stage_buf[i + (channel * 2u) + 1u] = 0;
+            }
+        }
+    }
+    s_tx_stage_has_stream_audio = false;
+}
+
+// 1 half分の出力をs_tx_stage_bufへ作る。DMA共有領域には触れない（commitは
+// audio_tx_commit_half()）。分岐・FIFOの読出し量・診断・timecode合成は#260と同じ。
+static void audio_tx_build_stage(uint32_t sample_rate_hz)
 {
     const uint32_t half_words  = s_sai_dma_half_words;
     const uint32_t frame_words = AUDIO_RING_FRAME_WORDS;
     uint32_t diagnostic_event_flags = 0u;
     const bool streaming       = s_streaming_out;
 
-    // dst_half_offset_wordsの範囲チェック（有効なDMA転送長の内側だけを更新する）
-    if (dst_half_offset_words > (audio_transport_sai_dma_xfer_words() - half_words))
-    {
-        return;
-    }
-
-    int32_t* const dst = sai_tx_dma_buf + dst_half_offset_words;
+    int32_t* const dst = s_tx_stage_buf;
+    s_tx_stage_has_stream_audio = false;
 
     // OUT停止中（またはFIFO未構成）は無音。primingはOUT開始境界でリセット済み。
     tu_fifo_t* ep_out_ff = streaming ? tud_audio_n_get_ep_out_ff(AUDIO_FUNC_ID) : NULL;
     if (ep_out_ff == NULL)
     {
-        audio_tx_fill_silence(dst_half_offset_words, half_words);
+        audio_tx_fill_silence(half_words);
         return;
     }
 
@@ -1487,7 +1938,7 @@ static void fill_tx_half(uint32_t dst_half_offset_words, uint32_t sample_rate_hz
         else
         {
             audio_diagnostics_record_tx_priming_wait();
-            audio_tx_fill_silence(dst_half_offset_words, half_words);
+            audio_tx_fill_silence(half_words);
             return;
         }
     }
@@ -1509,7 +1960,7 @@ static void fill_tx_half(uint32_t dst_half_offset_words, uint32_t sample_rate_hz
             s_tx_primed = false;
             audio_diagnostics_record_out_reprime();
             audio_diagnostics_record_tx_event(streaming, diagnostic_event_flags, 0);
-            audio_tx_fill_silence(dst_half_offset_words, half_words);
+            audio_tx_fill_silence(half_words);
             return;
         }
         // 読める分だけ再生し、残りは末尾フレーム保持で埋める（クリック感を抑える）。
@@ -1559,7 +2010,7 @@ static void fill_tx_half(uint32_t dst_half_offset_words, uint32_t sample_rate_hz
         // 次の要求適用で停止か開始境界（primingからやり直し）になる。開き直しで最終maskが
         // 有効のままでも、OUT開始世代により開始境界として適用される。
         audio_diagnostics_record_out_stale_request_skip();
-        audio_tx_fill_silence(dst_half_offset_words, half_words);
+        audio_tx_fill_silence(half_words);
         return;
     }
     if (outcome.result == AUDIO_USB_OUT_TAKE_OVERFLOW)
@@ -1568,7 +2019,7 @@ static void fill_tx_half(uint32_t dst_half_offset_words, uint32_t sample_rate_hz
         s_tx_primed = false;
         audio_tx_drift_history_clear();
         audio_diagnostics_record_out_fifo_overflow_recovery(outcome.raw_count_bytes, outcome.depth_bytes);
-        audio_tx_fill_silence(dst_half_offset_words, half_words);
+        audio_tx_fill_silence(half_words);
         return;
     }
 
@@ -1636,7 +2087,82 @@ static void fill_tx_half(uint32_t dst_half_offset_words, uint32_t sample_rate_hz
     {
         audio_diagnostics_record_tx_event(streaming, diagnostic_event_flags, (int32_t) level_words);
     }
-    timecode_synth_render_output(dst, AUDIO_RING_FRAME_WORDS, half_words / AUDIO_RING_FRAME_WORDS);
+    audio_tx_render_timecode_stage(half_words);
+    s_tx_stage_has_stream_audio = true;
+}
+
+// 作業バッファをDMAの対象halfへcommitする。Audio Task context only。
+// 同じPRIMASK区間で、作業バッファを作った後にpublishされたstream要求を確認し、
+// 旧streamの音声はDMAへ書かない（無音とtimecodeへ置き換えてからcommitし直す）。
+// applied側のsequenceはAudio Taskだけが進めるので、作業バッファを作ってから
+// ここまでに新しい要求がpublishされれば、必ず不一致として検出できる。
+static void audio_tx_commit_half(uint32_t dst_half_offset_words, uint32_t sample_rate_hz)
+{
+    const uint32_t half_words = s_sai_dma_half_words;
+    const uint32_t half_index = (dst_half_offset_words == 0u) ? 0u : 1u;
+    audio_dma_own_outcome_t outcome = {0};
+
+    for (uint32_t attempt = 0u; attempt < 2u; attempt++)
+    {
+#if AUDIO_DMA_OWNERSHIP_TEST
+        const bool injected = audio_dma_test_before(true, &handle_GPDMA1_Channel2, half_index, half_words,
+                                                    sample_rate_hz);
+#endif
+        const uint32_t primask = __get_PRIMASK();
+        __disable_irq();
+
+        const bool stream_boundary =
+            s_tx_stage_has_stream_audio &&
+            ((s_stream_request_sequence != s_stream_applied_request_sequence) || !s_streaming_out);
+        if (!stream_boundary)
+        {
+            audio_dma_owned_copy(&handle_GPDMA1_Channel2, &s_tx_dma_suspend_fault, true,
+                                 half_index, half_words,
+                                 sai_tx_dma_buf + dst_half_offset_words, s_tx_stage_buf, &outcome);
+        }
+
+        __set_PRIMASK(primask);
+
+#if AUDIO_DMA_OWNERSHIP_TEST
+        if (injected && !stream_boundary)
+        {
+            audio_dma_test_trace(true, half_index, half_words, &outcome);
+        }
+#endif
+        if (!stream_boundary)
+        {
+            break;
+        }
+
+        // 次の要求適用で停止か開始境界（primingからやり直し）になる。
+        audio_tx_stage_strip_stream_audio(half_words);
+        audio_diagnostics_record_tx_dma_stream_boundary();
+    }
+
+    audio_diagnostics_record_tx_dma_ownership(outcome.result,
+                                              outcome.q,
+                                              outcome.suspend_cycles,
+                                              audio_dma_suspend_over_budget(outcome.suspend_cycles, sample_rate_hz),
+                                              outcome.stale_flag_cleared,
+                                              outcome.fault);
+    if (outcome.fault)
+    {
+        recovery_request_publish_from_task(AUDIO_RECOVERY_CAUSE_TX_DMA);
+    }
+}
+
+// 1 half分を作業バッファへ作り、DMAの対象halfへcommitする。期限逸脱（skip）では
+// 対象halfへ書かず、FIFOから消費した分・timecodeで取り出した分は戻さない。
+static void fill_tx_half(uint32_t dst_half_offset_words, uint32_t sample_rate_hz)
+{
+    // dst_half_offset_wordsの範囲チェック（有効なDMA転送長の内側だけを更新する）
+    if (dst_half_offset_words > (audio_transport_sai_dma_xfer_words() - s_sai_dma_half_words))
+    {
+        return;
+    }
+
+    audio_tx_build_stage(sample_rate_hz);
+    audio_tx_commit_half(dst_half_offset_words, sample_rate_hz);
 }
 
 // DMA half期間（4ch frame単位）をSystemCoreClockサイクルへ換算する。
@@ -1694,7 +2220,8 @@ static void copy_usb_out_to_sai_dma(uint32_t sample_rate_hz)
             audio_dma_half_deadline_cycles(s_sai_dma_half_words, sample_rate_hz);
     }
 
-    // 遅延時は古い要求を処理しない。最新コールバックが示す現在安全なhalfだけを更新する。
+    // 遅延時は古い要求を処理しない。最新コールバックが示すhalfを対象にし、書込みは
+    // GPDMA一時停止中に所有権を確かめてから行う（audio_tx_commit_half()）。
     if (event.event == DMA_AUDIO_EVENT_HALF)
     {
         fill_tx_half(0, sample_rate_hz);
@@ -1715,6 +2242,102 @@ static void copy_usb_out_to_sai_dma(uint32_t sample_rate_hz)
 // ==============================
 // SAI(RX) -> USB(IN) path
 // ==============================
+// not_readyのやり直しの前に、停止せずに読んだ位置で、対象halfの末尾の宛先書込みが
+// 終わる位置（q ≧ FIFO）までDMAが進むのを待つ。上限はAUDIO_DMA_RX_NOT_READY_WAIT_FRAMES。
+// DMA共有領域には触れない。待ったサイクル数を返す。
+static uint32_t audio_rx_wait_not_ready(uint32_t half_index, uint32_t half_words, uint32_t sample_rate_hz)
+{
+    const uint32_t start_cycle = DWT->CYCCNT;
+    const uint32_t limit_cycles =
+        (sample_rate_hz != 0u) ? ((SystemCoreClock / sample_rate_hz) * AUDIO_DMA_RX_NOT_READY_WAIT_FRAMES) : 0u;
+    DMA_Channel_TypeDef* const ch = handle_GPDMA1_Channel3.Instance;
+
+    for (;;)
+    {
+        uint32_t pos;
+        if (!audio_dma_position_words(audio_dma_reg_read(&ch->CBR1) & DMA_CBR1_BNDT, half_words * 2u, &pos) ||
+            (audio_dma_offset_from_other_half(pos, half_index, half_words) >= AUDIO_DMA_FIFO_WORDS))
+        {
+            break;
+        }
+        if ((DWT->CYCCNT - start_cycle) > limit_cycles)
+        {
+            break;
+        }
+    }
+
+    return DWT->CYCCNT - start_cycle;
+}
+
+// snapshot 1回分の結果を記録する。停止状態異常を新たに検出した場合は復旧を要求する。
+static void audio_rx_record_ownership(const audio_dma_own_outcome_t* outcome, uint32_t sample_rate_hz)
+{
+    audio_diagnostics_record_rx_dma_ownership(outcome->result,
+                                              outcome->q,
+                                              outcome->suspend_cycles,
+                                              audio_dma_suspend_over_budget(outcome->suspend_cycles, sample_rate_hz),
+                                              outcome->stale_flag_cleared,
+                                              outcome->fault);
+    if (outcome->fault)
+    {
+        recovery_request_publish_from_task(AUDIO_RECOVERY_CAUSE_RX_DMA);
+    }
+}
+
+// DMAの対象halfをs_rx_stage_bufへsnapshotする。Audio Task context only。
+// 所有権を確認できなかった場合（reject・位置不明・停止タイムアウト・停止状態異常）は
+// 作業バッファを0にし、1チャンクの無音として扱う。
+static void audio_rx_snapshot_half(uint32_t src_half_offset_words, uint32_t sample_rate_hz)
+{
+    const uint32_t half_words = s_sai_dma_half_words;
+    const uint32_t half_index = (src_half_offset_words == 0u) ? 0u : 1u;
+    audio_dma_own_outcome_t outcome = {0};
+
+    for (uint32_t attempt = 0u; attempt < 2u; attempt++)
+    {
+#if AUDIO_DMA_OWNERSHIP_TEST
+        const bool injected = audio_dma_test_before(false, &handle_GPDMA1_Channel3, half_index, half_words,
+                                                    sample_rate_hz);
+#endif
+        const uint32_t primask = __get_PRIMASK();
+        __disable_irq();
+
+        audio_dma_owned_copy(&handle_GPDMA1_Channel3, &s_rx_dma_suspend_fault, false,
+                             half_index, half_words,
+                             s_rx_stage_buf, sai_rx_dma_buf + src_half_offset_words, &outcome);
+
+        __set_PRIMASK(primask);
+
+#if AUDIO_DMA_OWNERSHIP_TEST
+        if (injected)
+        {
+            audio_dma_test_trace(false, half_index, half_words, &outcome);
+        }
+#endif
+        if (outcome.result != AUDIO_DIAG_DMA_OWN_NOT_READY)
+        {
+            break;
+        }
+        if (attempt != 0u)
+        {
+            // やり直しても宛先書込みの完了を確かめられない。
+            outcome.result = AUDIO_DIAG_DMA_OWN_UNKNOWN;
+            break;
+        }
+
+        // 1回目のNOT_READYも停止・解除を行っているため、その結果を記録してから待つ。
+        audio_rx_record_ownership(&outcome, sample_rate_hz);
+        audio_diagnostics_record_rx_dma_not_ready(audio_rx_wait_not_ready(half_index, half_words, sample_rate_hz));
+    }
+
+    audio_rx_record_ownership(&outcome, sample_rate_hz);
+
+    if (outcome.result != AUDIO_DIAG_DMA_OWN_OK)
+    {
+        memset(s_rx_stage_buf, 0, half_words * sizeof(int32_t));
+    }
+}
+
 static void fill_rx_half(uint32_t src_half_offset_words, bool streaming, uint32_t sample_rate_hz)
 {
     const uint32_t half_words = s_sai_dma_half_words;  // 実行時のDMA half長（word数）
@@ -1725,7 +2348,10 @@ static void fill_rx_half(uint32_t src_half_offset_words, bool streaming, uint32_
         return;
     }
 
-    timecode_synth_process_input(sai_rx_dma_buf + src_half_offset_words,
+    // DMA共有領域へのアクセスはこのsnapshotだけ。以降は作業バッファを読む。
+    audio_rx_snapshot_half(src_half_offset_words, sample_rate_hz);
+
+    timecode_synth_process_input(s_rx_stage_buf,
                                  AUDIO_RING_FRAME_WORDS,
                                  half_words / AUDIO_RING_FRAME_WORDS);
 
@@ -1736,8 +2362,8 @@ static void fill_rx_half(uint32_t src_half_offset_words, bool streaming, uint32_
         return;
     }
 
-    // DMA halfをそのまま1チャンクとしてIN FIFOへ書き込む。DMAバッファは書き換えない。
-    copy_rx_half_to_usb_in(sai_rx_dma_buf + src_half_offset_words,
+    // snapshotしたhalfをそのまま1チャンクとしてIN FIFOへ書き込む。
+    copy_rx_half_to_usb_in(s_rx_stage_buf,
                            half_words / AUDIO_RING_FRAME_WORDS,
                            sample_rate_hz);
 }
@@ -1781,7 +2407,8 @@ static void copy_sai_rx_dma_to_usb_in(uint32_t sample_rate_hz)
             audio_dma_half_deadline_cycles(s_sai_dma_half_words, sample_rate_hz);
     }
 
-    // TXと同様に、最新コールバックが示す現在安全なhalfだけを取り込む。
+    // TXと同様に、最新コールバックが示すhalfを対象にし、読出しはGPDMA一時停止中に
+    // 所有権を確かめてから行う（audio_rx_snapshot_half()）。
     if (event.event == DMA_AUDIO_EVENT_HALF)
     {
         fill_rx_half(0, s_streaming_in, sample_rate_hz);
@@ -2003,7 +2630,7 @@ static void audio_usb_in_commit_chunk(tu_fifo_t* ep_in_ff,
 }
 
 // DMA half 1回分（frames）を1チャンクとしてIN FIFOへ書き込む。Audio Task context only。
-// srcはSAI RX DMAバッファの安全なhalf。読むだけで書き換えない。
+// srcはsnapshot済みの作業バッファ（s_rx_stage_buf）。読むだけで書き換えない。
 static void copy_rx_half_to_usb_in(const int32_t* src, uint32_t frames, uint32_t sample_rate_hz)
 {
     if (!tud_audio_n_mounted(AUDIO_FUNC_ID))

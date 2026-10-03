@@ -631,6 +631,115 @@ void audio_diagnostics_record_usb_in_write_section(uint32_t cycles)
     }
 }
 
+void audio_diagnostics_record_tx_dma_ownership(uint32_t result,
+                                               uint32_t q,
+                                               uint32_t suspend_cycles,
+                                               bool over_budget,
+                                               bool stale_flag_cleared,
+                                               bool fault)
+{
+    switch (result)
+    {
+        case AUDIO_DIAG_DMA_OWN_OK:
+            if (q > g_audio_tx_diagnostics.dma_commit_entry_q_max)
+            {
+                g_audio_tx_diagnostics.dma_commit_entry_q_max = q;
+            }
+            break;
+        case AUDIO_DIAG_DMA_OWN_BUSY:
+            g_audio_tx_diagnostics.dma_commit_skips++;
+            break;
+        case AUDIO_DIAG_DMA_OWN_SUSPEND_TIMEOUT:
+            g_audio_tx_diagnostics.dma_suspend_timeouts++;
+            break;
+        case AUDIO_DIAG_DMA_OWN_SUSPEND_FAULT:
+            // ラッチ中の見送りは、新たに検出した回（fault）だけを数える。
+            break;
+        default:
+            g_audio_tx_diagnostics.dma_commit_unknown_position_events++;
+            break;
+    }
+
+    if (suspend_cycles > g_audio_tx_diagnostics.dma_suspend_cycles_max)
+    {
+        g_audio_tx_diagnostics.dma_suspend_cycles_max = suspend_cycles;
+    }
+    if (over_budget)
+    {
+        g_audio_tx_diagnostics.dma_suspend_over_budget_events++;
+    }
+    if (stale_flag_cleared)
+    {
+        g_audio_tx_diagnostics.dma_suspend_stale_flag_clears++;
+    }
+    if (fault)
+    {
+        g_audio_tx_diagnostics.dma_suspend_faults++;
+    }
+}
+
+void audio_diagnostics_record_rx_dma_ownership(uint32_t result,
+                                               uint32_t q,
+                                               uint32_t suspend_cycles,
+                                               bool over_budget,
+                                               bool stale_flag_cleared,
+                                               bool fault)
+{
+    switch (result)
+    {
+        case AUDIO_DIAG_DMA_OWN_OK:
+            if (q > g_audio_rx_diagnostics.rx_dma_snapshot_entry_q_max)
+            {
+                g_audio_rx_diagnostics.rx_dma_snapshot_entry_q_max = q;
+            }
+            break;
+        case AUDIO_DIAG_DMA_OWN_BUSY:
+            g_audio_rx_diagnostics.rx_dma_snapshot_rejects++;
+            break;
+        case AUDIO_DIAG_DMA_OWN_SUSPEND_TIMEOUT:
+            g_audio_rx_diagnostics.rx_dma_suspend_timeouts++;
+            break;
+        case AUDIO_DIAG_DMA_OWN_SUSPEND_FAULT:
+        case AUDIO_DIAG_DMA_OWN_NOT_READY:
+            // NOT_READYはやり直しの前の回。audio_diagnostics_record_rx_dma_not_ready()で数える。
+            break;
+        default:
+            g_audio_rx_diagnostics.rx_dma_snapshot_unknown_position_events++;
+            break;
+    }
+
+    if (suspend_cycles > g_audio_rx_diagnostics.rx_dma_suspend_cycles_max)
+    {
+        g_audio_rx_diagnostics.rx_dma_suspend_cycles_max = suspend_cycles;
+    }
+    if (over_budget)
+    {
+        g_audio_rx_diagnostics.rx_dma_suspend_over_budget_events++;
+    }
+    if (stale_flag_cleared)
+    {
+        g_audio_rx_diagnostics.rx_dma_suspend_stale_flag_clears++;
+    }
+    if (fault)
+    {
+        g_audio_rx_diagnostics.rx_dma_suspend_faults++;
+    }
+}
+
+void audio_diagnostics_record_tx_dma_stream_boundary(void)
+{
+    g_audio_tx_diagnostics.dma_commit_stream_boundary_events++;
+}
+
+void audio_diagnostics_record_rx_dma_not_ready(uint32_t wait_cycles)
+{
+    g_audio_rx_diagnostics.rx_dma_snapshot_not_ready_events++;
+    if (wait_cycles > g_audio_rx_diagnostics.rx_dma_snapshot_wait_cycles_max)
+    {
+        g_audio_rx_diagnostics.rx_dma_snapshot_wait_cycles_max = wait_cycles;
+    }
+}
+
 void audio_diagnostics_record_dma_error(uint32_t error_code,
                                         bool tx_route,
                                         bool streaming,
@@ -954,6 +1063,37 @@ static void audio_diagnostics_log_tx_out(const audio_tx_diagnostics_t* tx)
 }
 #endif
 
+#if AUDIO_DIAG_DMA_TIME_REPORT
+// DMA half所有権確認（#251）の累計。TXはOUT開始・レート変更以降、RXは起動以降の値。
+static void audio_diagnostics_log_dma_ownership(const audio_tx_diagnostics_t* tx,
+                                                const audio_rx_diagnostics_t* rx)
+{
+    SEGGER_RTT_printf(0,
+                      "[AUD][TX-DMA-OWN] skip=%lu boundary=%lu unknown=%lu q_max=%lu timeout=%lu stale=%lu fault=%lu suspend_max_us=%lu over_budget=%lu\r\n",
+                      (unsigned long) tx->dma_commit_skips,
+                      (unsigned long) tx->dma_commit_stream_boundary_events,
+                      (unsigned long) tx->dma_commit_unknown_position_events,
+                      (unsigned long) tx->dma_commit_entry_q_max,
+                      (unsigned long) tx->dma_suspend_timeouts,
+                      (unsigned long) tx->dma_suspend_stale_flag_clears,
+                      (unsigned long) tx->dma_suspend_faults,
+                      (unsigned long) audio_diagnostics_cycles_to_us(tx->dma_suspend_cycles_max),
+                      (unsigned long) tx->dma_suspend_over_budget_events);
+    SEGGER_RTT_printf(0,
+                      "[AUD][RX-DMA-OWN] reject=%lu not_ready=%lu wait_max_us=%lu unknown=%lu q_max=%lu timeout=%lu stale=%lu fault=%lu suspend_max_us=%lu over_budget=%lu\r\n",
+                      (unsigned long) rx->rx_dma_snapshot_rejects,
+                      (unsigned long) rx->rx_dma_snapshot_not_ready_events,
+                      (unsigned long) audio_diagnostics_cycles_to_us(rx->rx_dma_snapshot_wait_cycles_max),
+                      (unsigned long) rx->rx_dma_snapshot_unknown_position_events,
+                      (unsigned long) rx->rx_dma_snapshot_entry_q_max,
+                      (unsigned long) rx->rx_dma_suspend_timeouts,
+                      (unsigned long) rx->rx_dma_suspend_stale_flag_clears,
+                      (unsigned long) rx->rx_dma_suspend_faults,
+                      (unsigned long) audio_diagnostics_cycles_to_us(rx->rx_dma_suspend_cycles_max),
+                      (unsigned long) rx->rx_dma_suspend_over_budget_events);
+}
+#endif
+
 void audio_diagnostics_report_dma_time(void)
 {
 #if AUDIO_DIAG_DMA_TIME_REPORT
@@ -971,6 +1111,7 @@ void audio_diagnostics_report_dma_time(void)
     audio_diagnostics_log_tx_dma_time(&tx);
     audio_diagnostics_log_rx_dma_time(&rx);
     audio_diagnostics_log_tx_out(&tx);
+    audio_diagnostics_log_dma_ownership(&tx, &rx);
 #endif
 }
 
