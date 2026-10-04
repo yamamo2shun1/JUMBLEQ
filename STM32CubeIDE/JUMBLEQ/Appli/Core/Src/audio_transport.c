@@ -1552,16 +1552,19 @@ static void audio_dma_owned_copy(DMA_HandleTypeDef* hdma,
     audio_dma_reg_write(&ch->CCR, audio_dma_reg_read(&ch->CCR) | DMA_CCR_SUSP);
     __DSB();
 
+    // CSRを読んだ後に経過時間を確かめ、期限内に観測したSUSPFだけを停止完了として受理する。
+    // 読取り自体が遅れて期限を過ぎた場合も、SUSPFの値によらずアクセスしない。
     bool suspended = false;
     for (;;)
     {
-        if ((audio_dma_reg_read(&ch->CSR) & DMA_CSR_SUSPF) != 0u)
-        {
-            suspended = true;
-            break;
-        }
+        const uint32_t csr_poll = audio_dma_reg_read(&ch->CSR);
         if ((DWT->CYCCNT - start_cycle) > timeout_cycles)
         {
+            break;
+        }
+        if ((csr_poll & DMA_CSR_SUSPF) != 0u)
+        {
+            suspended = true;
             break;
         }
     }
