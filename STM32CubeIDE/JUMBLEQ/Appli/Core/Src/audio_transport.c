@@ -464,6 +464,9 @@ uint32_t audio_transport_sai_dma_xfer_words(void)
 }
 
 static void fill_tx_half(uint32_t dst_half_offset_words, uint32_t sample_rate_hz);
+#if AUDIO_DMA_OWNERSHIP_TEST
+static void audio_dma_test_reset(void);
+#endif
 static void fill_rx_half(uint32_t src_half_offset_words, bool streaming, uint32_t sample_rate_hz);
 static uint32_t audio_frames_per_usb_in_interval(uint32_t sample_rate_hz);
 static void copy_rx_half_to_usb_in(const int32_t* src, uint32_t frames, uint32_t sample_rate_hz);
@@ -851,6 +854,10 @@ void audio_transport_reset_buffers(void)
     memset(s_tx_stage_buf, 0, sizeof(s_tx_stage_buf));
     memset(s_rx_stage_buf, 0, sizeof(s_rx_stage_buf));
     s_tx_stage_has_stream_audio = false;
+
+#if AUDIO_DMA_OWNERSHIP_TEST
+    audio_dma_test_reset();
+#endif
 
     audio_tx_playback_state_reset();
 
@@ -1443,9 +1450,21 @@ enum
     AUDIO_DMA_OWNERSHIP_TRACE_COUNT = 16u,
 };
 
-volatile audio_dma_ownership_test_t g_audio_dma_ownership_test = {0};
-volatile audio_dma_ownership_trace_t g_audio_dma_ownership_trace[AUDIO_DMA_OWNERSHIP_TRACE_COUNT] = {0};
-volatile uint32_t g_audio_dma_ownership_trace_count = 0u;
+// デバッガ（ST-LINK HOTPLUG）からCPUを止めずに書き換え・読み取るため、非キャッシュ領域に置く。
+// キャッシュ可能な領域では、CPUがキャッシュの古い設定値を使い続けたり、書き戻しでデバッガの
+// 書込みが上書きされたりする。noncacheable_bufferはNOLOADなので、起動時に
+// audio_transport_reset_buffers()で0にする。
+__attribute__((section("noncacheable_buffer"))) volatile audio_dma_ownership_test_t g_audio_dma_ownership_test;
+__attribute__((section("noncacheable_buffer"))) volatile audio_dma_ownership_trace_t g_audio_dma_ownership_trace[AUDIO_DMA_OWNERSHIP_TRACE_COUNT];
+__attribute__((section("noncacheable_buffer"))) volatile uint32_t g_audio_dma_ownership_trace_count;
+
+// 非キャッシュ領域（NOLOAD）に置いた試験用の設定とトレースを起動時に0にする。
+static void audio_dma_test_reset(void)
+{
+    memset((void*) &g_audio_dma_ownership_test, 0, sizeof(g_audio_dma_ownership_test));
+    memset((void*) g_audio_dma_ownership_trace, 0, sizeof(g_audio_dma_ownership_trace));
+    g_audio_dma_ownership_trace_count = 0u;
+}
 static bool s_dma_test_hold_active = false;
 
 static void audio_dma_test_busy_wait_us(uint32_t us)
