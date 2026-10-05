@@ -731,6 +731,25 @@ void audio_diagnostics_record_tx_dma_stream_boundary(void)
     g_audio_tx_diagnostics.dma_commit_stream_boundary_events++;
 }
 
+void audio_diagnostics_record_rx_dma_fifo(uint32_t fifol_raw, bool fifo_valid, bool config_mismatch)
+{
+    if (fifo_valid)
+    {
+        if (fifol_raw > g_audio_rx_diagnostics.rx_dma_snapshot_fifol_max)
+        {
+            g_audio_rx_diagnostics.rx_dma_snapshot_fifol_max = fifol_raw;
+        }
+        if (fifol_raw > 2u)
+        {
+            g_audio_rx_diagnostics.rx_dma_snapshot_fifol_over_capacity_events++;
+        }
+    }
+    if (config_mismatch)
+    {
+        g_audio_rx_diagnostics.rx_dma_snapshot_config_mismatch_events++;
+    }
+}
+
 void audio_diagnostics_record_rx_dma_not_ready(uint32_t wait_cycles)
 {
     g_audio_rx_diagnostics.rx_dma_snapshot_not_ready_events++;
@@ -1080,7 +1099,7 @@ static void audio_diagnostics_log_dma_ownership(const audio_tx_diagnostics_t* tx
                       (unsigned long) audio_diagnostics_cycles_to_us(tx->dma_suspend_cycles_max),
                       (unsigned long) tx->dma_suspend_over_budget_events);
     SEGGER_RTT_printf(0,
-                      "[AUD][RX-DMA-OWN] reject=%lu not_ready=%lu wait_max_us=%lu unknown=%lu q_max=%lu timeout=%lu stale=%lu fault=%lu suspend_max_us=%lu over_budget=%lu\r\n",
+                      "[AUD][RX-DMA-OWN] reject=%lu not_ready=%lu wait_max_us=%lu unknown=%lu q_max=%lu timeout=%lu stale=%lu fault=%lu suspend_max_us=%lu over_budget=%lu fifol_max=%lu fifol_over=%lu config_mismatch=%lu\r\n",
                       (unsigned long) rx->rx_dma_snapshot_rejects,
                       (unsigned long) rx->rx_dma_snapshot_not_ready_events,
                       (unsigned long) audio_diagnostics_cycles_to_us(rx->rx_dma_snapshot_wait_cycles_max),
@@ -1090,7 +1109,10 @@ static void audio_diagnostics_log_dma_ownership(const audio_tx_diagnostics_t* tx
                       (unsigned long) rx->rx_dma_suspend_stale_flag_clears,
                       (unsigned long) rx->rx_dma_suspend_faults,
                       (unsigned long) audio_diagnostics_cycles_to_us(rx->rx_dma_suspend_cycles_max),
-                      (unsigned long) rx->rx_dma_suspend_over_budget_events);
+                      (unsigned long) rx->rx_dma_suspend_over_budget_events,
+                      (unsigned long) rx->rx_dma_snapshot_fifol_max,
+                      (unsigned long) rx->rx_dma_snapshot_fifol_over_capacity_events,
+                      (unsigned long) rx->rx_dma_snapshot_config_mismatch_events);
 }
 #endif
 

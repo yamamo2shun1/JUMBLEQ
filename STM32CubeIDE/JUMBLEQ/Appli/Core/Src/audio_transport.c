@@ -1345,19 +1345,37 @@ static uint32_t audio_dma_judge_tx(uint32_t q, uint32_t half_words)
     return (q <= half_words) ? AUDIO_DIAG_DMA_OWN_OK : AUDIO_DIAG_DMA_OWN_BUSY;
 }
 
-// RX（対象halfを読む）: 宛先の書込み位置dは p − FIFO ≦ d ≦ p。q ≧ FIFOなら対象halfの
-// 末尾まで宛先へ書き終わっていて、q ≦ half_wordsなら次の周回の書込みはまだ始まっていない。
-static uint32_t audio_dma_judge_rx(uint32_t q, uint32_t half_words)
+// RX（対象halfを読む）: fifo_wordsは停止中のDMA FIFOの残量F（実際の残量以上の値）。
+// 宛先の書込み位置は d = p − F 以上、p 以下。q ≧ Fなら対象halfの末尾まで宛先へ書き終わって
+// いて、q ≦ half_wordsなら次の周回の書込みはまだ始まっていない。
+static uint32_t audio_dma_judge_rx(uint32_t q, uint32_t half_words, uint32_t fifo_words)
 {
     if (q > half_words)
     {
         return AUDIO_DIAG_DMA_OWN_BUSY;
     }
-    if (q < AUDIO_DMA_FIFO_WORDS)
+    if (q < fifo_words)
     {
         return AUDIO_DIAG_DMA_OWN_NOT_READY;
     }
     return AUDIO_DIAG_DMA_OWN_OK;
+}
+
+// 停止中に読んだFIFOLの生値から、RX判定に使うFIFO残量F（word）を求める。FIFOの中身は
+// 容量（AUDIO_DMA_FIFO_WORDS）を超えないので、容量で頭打ちにしても実際の残量以上になる。
+// 生値をwordとして読むと、単位がbyte（CMSISのコメント）でも実際のword数以上になる
+// （RM0477 12.8.6は宛先データ幅の単位）。どちらの記述でも過小評価にならない。
+static uint32_t audio_dma_rx_fifo_words(uint32_t fifol_raw)
+{
+    return (fifol_raw < AUDIO_DMA_FIFO_WORDS) ? fifol_raw : AUDIO_DMA_FIFO_WORDS;
+}
+
+// RXのBNDT（ソース側）から求めた位置とFIFO残量が宛先メモリのword位置を表すのは、
+// ソース・宛先とも32bitのときだけ（PAMは同じ幅では無視される: RM0477 12.8.8）。
+static bool audio_dma_rx_width_ok(uint32_t ctr1)
+{
+    return (((ctr1 & DMA_CTR1_SDW_LOG2) >> DMA_CTR1_SDW_LOG2_Pos) == 2u) &&
+           (((ctr1 & DMA_CTR1_DDW_LOG2) >> DMA_CTR1_DDW_LOG2_Pos) == 2u);
 }
 
 typedef struct
@@ -1367,6 +1385,14 @@ typedef struct
     uint32_t suspend_cycles;  // SUSP書込み→解除完了。停止を要求しなかった経路は0
     bool stale_flag_cleared;  // 開始前に古いSUSPFをクリアした
     bool fault;               // 今回、停止状態異常を新たに検出した
+    // RXだけ: 停止の確認に使った同じCSRから取り出したFIFOLの生値と、判定に使ったF。
+    // fifo_validは構成確認（32bit/32bit）を通ってFを判定に使ったときだけtrue。
+    uint32_t fifol_raw;
+    uint32_t fifo_words;
+    bool fifo_valid;
+    bool q_valid;             // qが停止後の状態確認とBNDTで有効
+    bool config_checked;      // RXでCTR1を確認した
+    bool config_mismatch;     // RXでCTR1のデータ幅が32bit/32bitでなかった
 #if AUDIO_DMA_OWNERSHIP_TEST
     uint32_t ccr_before;
     uint32_t csr_before;
@@ -1405,6 +1431,11 @@ typedef struct
     uint32_t sai_flvl;     // 停止時のSAI_xSR.FLVL
     uint32_t result;
     uint32_t suspend_cycles;
+    // RXだけ: 停止の確認に使った同じCSRのFIFOL生値と、判定に使ったF（flagsで有効性を示す）
+    uint32_t fifol_raw;
+    uint32_t fifo_words;
+    // bit0: qが有効、bit1: FIFOL/Fが有効、bit2: CTR1を確認した、bit3: CTR1が32bit/32bit
+    uint32_t flags;
 } audio_dma_ownership_trace_t;
 
 enum
@@ -1485,6 +1516,11 @@ static void audio_dma_test_trace(bool tx, uint32_t half_index, uint32_t half_wor
     e->sai_flvl       = outcome->sai_flvl;
     e->result         = outcome->result;
     e->suspend_cycles = outcome->suspend_cycles;
+    e->fifol_raw      = outcome->fifo_valid ? outcome->fifol_raw : 0u;
+    e->fifo_words     = outcome->fifo_valid ? outcome->fifo_words : 0u;
+    e->flags          = (outcome->q_valid ? 1u : 0u) | (outcome->fifo_valid ? 2u : 0u) |
+                        (outcome->config_checked ? 4u : 0u) |
+                        ((outcome->config_checked && !outcome->config_mismatch) ? 8u : 0u);
     g_audio_dma_ownership_trace_count++;
     s_dma_test_hold_active = false;
 }
@@ -1509,6 +1545,12 @@ static void audio_dma_owned_copy(DMA_HandleTypeDef* hdma,
     outcome->suspend_cycles     = 0u;
     outcome->stale_flag_cleared = false;
     outcome->fault              = false;
+    outcome->fifol_raw          = 0u;
+    outcome->fifo_words         = 0u;
+    outcome->fifo_valid         = false;
+    outcome->q_valid            = false;
+    outcome->config_checked     = false;
+    outcome->config_mismatch    = false;
 
     if (*fault_latch)
     {
@@ -1603,11 +1645,30 @@ static void audio_dma_owned_copy(DMA_HandleTypeDef* hdma,
                                     SAI_xSR_FLVL_Pos;
             }
 #endif
-            if (audio_dma_position_words(bndt, half_words * 2u, &pos))
+            // RXは、BNDTとFIFOLが宛先メモリの位置を表す構成（32bit/32bit）であることを確かめる。
+            // 違えば位置不明としてsnapshotしない。FIFOLは停止の確認に使った同じCSR（csr_s）から取る。
+            bool layout_ok = true;
+            if (!to_dma)
             {
-                outcome->q      = audio_dma_offset_from_other_half(pos, half_index, half_words);
-                outcome->result = to_dma ? audio_dma_judge_tx(outcome->q, half_words) :
-                                           audio_dma_judge_rx(outcome->q, half_words);
+                outcome->config_checked = true;
+                if (!audio_dma_rx_width_ok(audio_dma_reg_read(&ch->CTR1)))
+                {
+                    outcome->config_mismatch = true;
+                    layout_ok                = false;
+                }
+                else
+                {
+                    outcome->fifol_raw  = (csr_s & DMA_CSR_FIFOL) >> DMA_CSR_FIFOL_Pos;
+                    outcome->fifo_words = audio_dma_rx_fifo_words(outcome->fifol_raw);
+                    outcome->fifo_valid = true;
+                }
+            }
+            if (layout_ok && audio_dma_position_words(bndt, half_words * 2u, &pos))
+            {
+                outcome->q       = audio_dma_offset_from_other_half(pos, half_index, half_words);
+                outcome->q_valid = true;
+                outcome->result  = to_dma ? audio_dma_judge_tx(outcome->q, half_words) :
+                                            audio_dma_judge_rx(outcome->q, half_words, outcome->fifo_words);
                 if (outcome->result == AUDIO_DIAG_DMA_OWN_OK)
                 {
                     // コピーを停止確認（SUSPF・IDLEF・BNDTの読取り）より前に行わず、
@@ -2289,6 +2350,7 @@ static void audio_rx_record_ownership(const audio_dma_own_outcome_t* outcome, ui
                                               audio_dma_suspend_over_budget(outcome->suspend_cycles, sample_rate_hz),
                                               outcome->stale_flag_cleared,
                                               outcome->fault);
+    audio_diagnostics_record_rx_dma_fifo(outcome->fifol_raw, outcome->fifo_valid, outcome->config_mismatch);
     if (outcome->fault)
     {
         recovery_request_publish_from_task(AUDIO_RECOVERY_CAUSE_RX_DMA);

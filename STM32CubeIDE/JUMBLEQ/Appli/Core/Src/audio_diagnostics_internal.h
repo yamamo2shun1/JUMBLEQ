@@ -199,6 +199,11 @@ typedef struct
     uint32_t rx_dma_suspend_faults;
     uint32_t rx_dma_suspend_cycles_max;
     uint32_t rx_dma_suspend_over_budget_events;
+    // 停止中に読んだFIFOL（RX判定のFIFO残量）。生値の単位をRM0477（宛先データ幅）と
+    // CMSISのコメント（byte）のどちらか実機で確かめるために残す。
+    uint32_t rx_dma_snapshot_fifol_max;                // FIFOLの生値の最大
+    uint32_t rx_dma_snapshot_fifol_over_capacity_events; // FIFOLの生値がFIFO容量（2 word）を超えた回数
+    uint32_t rx_dma_snapshot_config_mismatch_events;   // CTR1のデータ幅が32bit/32bitでなくsnapshotしなかった回数
 } audio_rx_diagnostics_t;
 
 extern volatile audio_rx_diagnostics_t g_audio_rx_diagnostics;
@@ -457,6 +462,9 @@ void audio_diagnostics_record_rx_dma_ownership(uint32_t result,
 // TX: 旧streamの音声を無音へ置き換えた。RX: not_readyで待ってやり直した（wait_cycles: 待ち時間）。
 void audio_diagnostics_record_tx_dma_stream_boundary(void);
 void audio_diagnostics_record_rx_dma_not_ready(uint32_t wait_cycles);
+// RX snapshotの停止中に読んだFIFOL。fifo_valid: 構成確認を通りFIFOLを判定に使った。
+// config_mismatch: CTR1のデータ幅が32bit/32bitでなく、snapshotしなかった。
+void audio_diagnostics_record_rx_dma_fifo(uint32_t fifol_raw, bool fifo_valid, bool config_mismatch);
 
 void audio_diagnostics_record_dma_error(uint32_t error_code,
                                         bool tx_route,
