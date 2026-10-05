@@ -1300,9 +1300,17 @@ static inline void audio_dma_reg_write(volatile uint32_t* reg, uint32_t value)
     *reg = value;
 }
 
+// 停止中のコピーは32bit単位で行う。newlib-nanoのmemcpyはbyte単位のため、非キャッシュ領域の
+// DMAバッファへのアクセス回数が4倍になり停止期間が延びる。volatileにして、コンパイラが
+// ループをmemcpyへ戻したりアクセス幅を変えたりしないようにする。
 static inline void audio_dma_copy_words(int32_t* dst, const int32_t* src, uint32_t words)
 {
-    memcpy(dst, src, words * sizeof(int32_t));
+    volatile int32_t* const d       = dst;
+    const volatile int32_t* const s = src;
+    for (uint32_t i = 0u; i < words; i++)
+    {
+        d[i] = s[i];
+    }
 }
 #endif
 
