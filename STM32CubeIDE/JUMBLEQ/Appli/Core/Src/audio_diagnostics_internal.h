@@ -232,6 +232,55 @@ typedef struct
 
 extern volatile audio_recovery_diagnostics_t g_audio_recovery_diagnostics;
 
+// 測定区間の判定用の累積カウンタ（#251 改訂2）。stream開始・レート変更・診断のリセットでは
+// 消さない（起動時の0から増えるだけ）。TXの判定項目はTX診断がOUT開始ごとにリセットされる
+// ため、ここに重ねて持つ。RX診断はもともとリセットされないので重ねない。
+typedef struct
+{
+    uint32_t tx_dma_commit_skips;
+    uint32_t tx_dma_commit_unknown_position_events;
+    uint32_t tx_dma_suspend_timeouts;
+    uint32_t tx_dma_suspend_stale_flag_clears;
+    uint32_t tx_dma_suspend_faults;
+    uint32_t tx_dma_error_events;
+    uint32_t tx_sai_error_events;
+    uint32_t tx_half_complete_deadline_overruns;
+    uint32_t tx_cplt_complete_deadline_overruns;
+    uint32_t tx_dma_events_dropped;
+    uint32_t tx_underrun_events;
+    uint32_t tx_dma_commit_stream_boundary_events;
+    // streaming中のcomplete（half/cpltの合計）。half_deadline: complete×2 ≧ 期限（50%以上）。
+    uint32_t tx_streaming_complete_events;
+    uint32_t tx_streaming_complete_half_deadline_events;
+    uint32_t rx_streaming_complete_events;
+    uint32_t rx_streaming_complete_half_deadline_events;
+} audio_window_totals_t;
+
+extern volatile audio_window_totals_t g_audio_window_totals;
+
+// 診断のスナップショット（#251 改訂2）。非キャッシュ領域に置き、Audio Taskが約100msごとに
+// TX/RX/復旧の診断と累積カウンタを写す。デバッガは「先頭sequenceの前読み → 全体 →
+// 先頭sequenceの後読み」の順に読み、前読み・先頭・末尾・後読みが同じ偶数で、
+// snapshot_count > 0 のときだけ使う。写している間は先頭も末尾も奇数になっている。
+typedef struct
+{
+    uint32_t sequence;        // 先頭。偶数: 公開済み、奇数: 書き換え中
+    uint32_t tick_ms;         // 公開した時刻（HAL_GetTick）
+    uint32_t snapshot_count;  // 公開した回数（0: 未公開）
+    audio_tx_diagnostics_t tx;
+    audio_rx_diagnostics_t rx;
+    audio_recovery_diagnostics_t recovery;
+    audio_window_totals_t totals;
+    uint32_t sequence_end;    // 末尾。公開済みなら先頭と同じ値
+} audio_diagnostics_snapshot_t;
+
+extern volatile audio_diagnostics_snapshot_t g_audio_diagnostics_snapshot;
+
+// 起動時の初期化（非キャッシュ領域はNOLOADのため0にする）。Audio Taskの初期化から呼ぶ。
+void audio_diagnostics_snapshot_reset(void);
+// Audio Taskのループから毎回呼ぶ。前回の公開から約100ms以上経っていれば写す。ISRからは呼ばない。
+void audio_diagnostics_publish_snapshot(uint32_t now_ms);
+
 // 復旧失敗時の段階。どの処理で失敗したかを診断値へ残す。
 enum
 {
@@ -415,14 +464,18 @@ void audio_diagnostics_record_rx_dma_service(uint32_t callback_event,
 // DMA処理完了時間。process_cycles=処理開始→完了、complete_cycles=callback→完了、
 // deadline_cycles=そのイベント時点のDMA half期限。complete_cycles > deadline_cyclesで
 // 完了期限超過数を加算し、complete最大値の更新時はdeadlineも同時に保存する。
+// streaming: その経路のstreaming中（serviceの記録と同じ条件）。streaming中のcompleteだけを
+// 累積カウンタ（総数、期限の半分以上の回数）に数える。最大値・期限超過はstreamingに依らない。
 void audio_diagnostics_record_tx_dma_complete(uint32_t callback_event,
                                               uint32_t process_cycles,
                                               uint32_t complete_cycles,
-                                              uint32_t deadline_cycles);
+                                              uint32_t deadline_cycles,
+                                              bool streaming);
 void audio_diagnostics_record_rx_dma_complete(uint32_t callback_event,
                                               uint32_t process_cycles,
                                               uint32_t complete_cycles,
-                                              uint32_t deadline_cycles);
+                                              uint32_t deadline_cycles,
+                                              bool streaming);
 void audio_diagnostics_record_tx_events_dropped(uint32_t last_event,
                                                 uint32_t dropped_events,
                                                 int32_t used);

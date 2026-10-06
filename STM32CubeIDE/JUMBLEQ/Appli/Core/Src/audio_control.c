@@ -401,6 +401,7 @@ void audio_control_reset_runtime_state(void)
     timecode_synth_init(s_sample_rate.requested_hz);
 
     audio_transport_reset_buffers();
+    audio_diagnostics_snapshot_reset();
 }
 
 void audio_control_register_task(void)
@@ -651,6 +652,8 @@ void audio_task(void)
     // 呼び出し頻度計測と周期診断は最も低い優先度で行う。
     s_audio_task_call_count++;
     uint32_t now = HAL_GetTick();
+    // 実機確認用の診断スナップショット（非キャッシュ領域）。約100msごとに写す。
+    audio_diagnostics_publish_snapshot(now);
     if (now - s_audio_task_last_tick >= AUDIO_TASK_STATS_PERIOD_MS)
     {
         s_audio_task_frequency_hz  = s_audio_task_call_count;

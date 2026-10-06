@@ -2327,7 +2327,8 @@ static void copy_usb_out_to_sai_dma(uint32_t sample_rate_hz)
     audio_diagnostics_record_tx_dma_complete(event.event,
                                              end_cycle - process_start_cycle,
                                              end_cycle - event.cycle,
-                                             deadline_cycles);
+                                             deadline_cycles,
+                                             streaming);
 }
 
 // ==============================
@@ -2515,7 +2516,8 @@ static void copy_sai_rx_dma_to_usb_in(uint32_t sample_rate_hz)
     audio_diagnostics_record_rx_dma_complete(event.event,
                                              end_cycle - process_start_cycle,
                                              end_cycle - event.cycle,
-                                             deadline_cycles);
+                                             deadline_cycles,
+                                             streaming);
 }
 
 // USB INエンドポイントの1転送間隔あたりのフレーム数
