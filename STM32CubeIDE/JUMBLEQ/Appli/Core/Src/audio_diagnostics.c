@@ -29,6 +29,10 @@ volatile audio_tx_diagnostics_t g_audio_tx_diagnostics = {
 
 volatile audio_rx_diagnostics_t g_audio_rx_diagnostics = {0};
 volatile audio_recovery_diagnostics_t g_audio_recovery_diagnostics = {0};
+volatile audio_window_totals_t g_audio_window_totals = {0};
+// デバッガがCPUのDキャッシュに依らずに読めるよう非キャッシュ領域に置く（NOLOADなので
+// audio_diagnostics_snapshot_reset()で0にする）。
+__attribute__((section("noncacheable_buffer"))) volatile audio_diagnostics_snapshot_t g_audio_diagnostics_snapshot;
 // state=1はAudioRateState_tのSWITCHING（初期適用確認前）を表す。
 volatile audio_rate_switch_diagnostics_t g_audio_rate_switch_diagnostics = {
     .state = 1u,
@@ -295,6 +299,7 @@ void audio_diagnostics_record_tx_event(bool streaming, uint32_t flags, int32_t u
         if ((flags & AUDIO_TX_DIAG_EVENT_UNDERRUN) != 0u)
         {
             g_audio_tx_diagnostics.underrun_events++;
+            g_audio_window_totals.tx_underrun_events++;
         }
         if ((flags & AUDIO_TX_DIAG_EVENT_PARTIAL_FILL) != 0u)
         {
@@ -465,13 +470,29 @@ void audio_diagnostics_record_rx_dma_service(uint32_t callback_event,
     }
 }
 
+// streaming中のcompleteが期限の半分以上か（50%未満の合格条件に使う）。期限なしは数えない。
+static bool audio_diagnostics_complete_reaches_half_deadline(uint32_t complete_cycles, uint32_t deadline_cycles)
+{
+    return (deadline_cycles != UINT32_MAX) && (((uint64_t) complete_cycles * 2u) >= (uint64_t) deadline_cycles);
+}
+
 // DMA処理完了時間の記録。complete最大値の更新時に、そのイベントのdeadlineも
 // 同時に保存する。deadline_cycles == UINT32_MAX（レート未確定）は期限超過に数えない。
 void audio_diagnostics_record_tx_dma_complete(uint32_t callback_event,
                                               uint32_t process_cycles,
                                               uint32_t complete_cycles,
-                                              uint32_t deadline_cycles)
+                                              uint32_t deadline_cycles,
+                                              bool streaming)
 {
+    if (streaming)
+    {
+        g_audio_window_totals.tx_streaming_complete_events++;
+        if (audio_diagnostics_complete_reaches_half_deadline(complete_cycles, deadline_cycles))
+        {
+            g_audio_window_totals.tx_streaming_complete_half_deadline_events++;
+        }
+    }
+
     if (callback_event == AUDIO_DIAG_DMA_EVENT_HALF)
     {
         if (process_cycles > g_audio_tx_diagnostics.half_process_cycles_max)
@@ -486,6 +507,7 @@ void audio_diagnostics_record_tx_dma_complete(uint32_t callback_event,
         if (complete_cycles > deadline_cycles)
         {
             g_audio_tx_diagnostics.half_complete_deadline_overruns++;
+            g_audio_window_totals.tx_half_complete_deadline_overruns++;
         }
     }
     else if (callback_event == AUDIO_DIAG_DMA_EVENT_COMPLETE)
@@ -502,6 +524,7 @@ void audio_diagnostics_record_tx_dma_complete(uint32_t callback_event,
         if (complete_cycles > deadline_cycles)
         {
             g_audio_tx_diagnostics.cplt_complete_deadline_overruns++;
+            g_audio_window_totals.tx_cplt_complete_deadline_overruns++;
         }
     }
 
@@ -513,8 +536,18 @@ void audio_diagnostics_record_tx_dma_complete(uint32_t callback_event,
 void audio_diagnostics_record_rx_dma_complete(uint32_t callback_event,
                                               uint32_t process_cycles,
                                               uint32_t complete_cycles,
-                                              uint32_t deadline_cycles)
+                                              uint32_t deadline_cycles,
+                                              bool streaming)
 {
+    if (streaming)
+    {
+        g_audio_window_totals.rx_streaming_complete_events++;
+        if (audio_diagnostics_complete_reaches_half_deadline(complete_cycles, deadline_cycles))
+        {
+            g_audio_window_totals.rx_streaming_complete_half_deadline_events++;
+        }
+    }
+
     if (callback_event == AUDIO_DIAG_DMA_EVENT_HALF)
     {
         if (process_cycles > g_audio_rx_diagnostics.rx_half_process_cycles_max)
@@ -559,6 +592,7 @@ void audio_diagnostics_record_tx_events_dropped(uint32_t last_event,
 {
     g_audio_tx_diagnostics.both_pending_events++;
     g_audio_tx_diagnostics.dma_events_dropped += dropped_events;
+    g_audio_window_totals.tx_dma_events_dropped += dropped_events;
     g_audio_tx_diagnostics.both_pending_last_callback = last_event;
     audio_diagnostics_record_tx_event(true, AUDIO_TX_DIAG_EVENT_BOTH_PENDING, used);
 }
@@ -631,6 +665,140 @@ void audio_diagnostics_record_usb_in_write_section(uint32_t cycles)
     }
 }
 
+void audio_diagnostics_record_tx_dma_ownership(uint32_t result,
+                                               uint32_t q,
+                                               uint32_t suspend_cycles,
+                                               bool over_budget,
+                                               bool stale_flag_cleared,
+                                               bool fault)
+{
+    switch (result)
+    {
+        case AUDIO_DIAG_DMA_OWN_OK:
+            if (q > g_audio_tx_diagnostics.dma_commit_entry_q_max)
+            {
+                g_audio_tx_diagnostics.dma_commit_entry_q_max = q;
+            }
+            break;
+        case AUDIO_DIAG_DMA_OWN_BUSY:
+            g_audio_tx_diagnostics.dma_commit_skips++;
+            g_audio_window_totals.tx_dma_commit_skips++;
+            break;
+        case AUDIO_DIAG_DMA_OWN_SUSPEND_TIMEOUT:
+            g_audio_tx_diagnostics.dma_suspend_timeouts++;
+            g_audio_window_totals.tx_dma_suspend_timeouts++;
+            break;
+        case AUDIO_DIAG_DMA_OWN_SUSPEND_FAULT:
+            // ラッチ中の見送りは、新たに検出した回（fault）だけを数える。
+            break;
+        default:
+            g_audio_tx_diagnostics.dma_commit_unknown_position_events++;
+            g_audio_window_totals.tx_dma_commit_unknown_position_events++;
+            break;
+    }
+
+    if (suspend_cycles > g_audio_tx_diagnostics.dma_suspend_cycles_max)
+    {
+        g_audio_tx_diagnostics.dma_suspend_cycles_max = suspend_cycles;
+    }
+    if (over_budget)
+    {
+        g_audio_tx_diagnostics.dma_suspend_over_budget_events++;
+    }
+    if (stale_flag_cleared)
+    {
+        g_audio_tx_diagnostics.dma_suspend_stale_flag_clears++;
+        g_audio_window_totals.tx_dma_suspend_stale_flag_clears++;
+    }
+    if (fault)
+    {
+        g_audio_tx_diagnostics.dma_suspend_faults++;
+        g_audio_window_totals.tx_dma_suspend_faults++;
+    }
+}
+
+void audio_diagnostics_record_rx_dma_ownership(uint32_t result,
+                                               uint32_t q,
+                                               uint32_t suspend_cycles,
+                                               bool over_budget,
+                                               bool stale_flag_cleared,
+                                               bool fault)
+{
+    switch (result)
+    {
+        case AUDIO_DIAG_DMA_OWN_OK:
+            if (q > g_audio_rx_diagnostics.rx_dma_snapshot_entry_q_max)
+            {
+                g_audio_rx_diagnostics.rx_dma_snapshot_entry_q_max = q;
+            }
+            break;
+        case AUDIO_DIAG_DMA_OWN_BUSY:
+            g_audio_rx_diagnostics.rx_dma_snapshot_rejects++;
+            break;
+        case AUDIO_DIAG_DMA_OWN_SUSPEND_TIMEOUT:
+            g_audio_rx_diagnostics.rx_dma_suspend_timeouts++;
+            break;
+        case AUDIO_DIAG_DMA_OWN_SUSPEND_FAULT:
+        case AUDIO_DIAG_DMA_OWN_NOT_READY:
+            // NOT_READYはやり直しの前の回。audio_diagnostics_record_rx_dma_not_ready()で数える。
+            break;
+        default:
+            g_audio_rx_diagnostics.rx_dma_snapshot_unknown_position_events++;
+            break;
+    }
+
+    if (suspend_cycles > g_audio_rx_diagnostics.rx_dma_suspend_cycles_max)
+    {
+        g_audio_rx_diagnostics.rx_dma_suspend_cycles_max = suspend_cycles;
+    }
+    if (over_budget)
+    {
+        g_audio_rx_diagnostics.rx_dma_suspend_over_budget_events++;
+    }
+    if (stale_flag_cleared)
+    {
+        g_audio_rx_diagnostics.rx_dma_suspend_stale_flag_clears++;
+    }
+    if (fault)
+    {
+        g_audio_rx_diagnostics.rx_dma_suspend_faults++;
+    }
+}
+
+void audio_diagnostics_record_tx_dma_stream_boundary(void)
+{
+    g_audio_tx_diagnostics.dma_commit_stream_boundary_events++;
+    g_audio_window_totals.tx_dma_commit_stream_boundary_events++;
+}
+
+void audio_diagnostics_record_rx_dma_fifo(uint32_t fifol_raw, bool fifo_valid, bool config_mismatch)
+{
+    if (fifo_valid)
+    {
+        if (fifol_raw > g_audio_rx_diagnostics.rx_dma_snapshot_fifol_max)
+        {
+            g_audio_rx_diagnostics.rx_dma_snapshot_fifol_max = fifol_raw;
+        }
+        if (fifol_raw > 2u)
+        {
+            g_audio_rx_diagnostics.rx_dma_snapshot_fifol_over_capacity_events++;
+        }
+    }
+    if (config_mismatch)
+    {
+        g_audio_rx_diagnostics.rx_dma_snapshot_config_mismatch_events++;
+    }
+}
+
+void audio_diagnostics_record_rx_dma_not_ready(uint32_t wait_cycles)
+{
+    g_audio_rx_diagnostics.rx_dma_snapshot_not_ready_events++;
+    if (wait_cycles > g_audio_rx_diagnostics.rx_dma_snapshot_wait_cycles_max)
+    {
+        g_audio_rx_diagnostics.rx_dma_snapshot_wait_cycles_max = wait_cycles;
+    }
+}
+
 void audio_diagnostics_record_dma_error(uint32_t error_code,
                                         bool tx_route,
                                         bool streaming,
@@ -639,6 +807,7 @@ void audio_diagnostics_record_dma_error(uint32_t error_code,
     if (tx_route)
     {
         g_audio_tx_diagnostics.dma_error_events++;
+        g_audio_window_totals.tx_dma_error_events++;
         g_audio_tx_diagnostics.last_dma_error_code = error_code;
         audio_diagnostics_record_tx_event(streaming, AUDIO_TX_DIAG_EVENT_DMA_ERROR, used);
     }
@@ -664,6 +833,7 @@ void audio_diagnostics_record_sai_tx_error(uint32_t error_code,
                                            int32_t used)
 {
     g_audio_tx_diagnostics.sai_error_events++;
+    g_audio_window_totals.tx_sai_error_events++;
     g_audio_tx_diagnostics.last_sai_error_code   = error_code;
     g_audio_tx_diagnostics.last_sai_status_flags = status_flags;
     audio_diagnostics_record_tx_event(streaming, AUDIO_TX_DIAG_EVENT_SAI_ERROR, used);
@@ -954,6 +1124,40 @@ static void audio_diagnostics_log_tx_out(const audio_tx_diagnostics_t* tx)
 }
 #endif
 
+#if AUDIO_DIAG_DMA_TIME_REPORT
+// DMA half所有権確認（#251）の累計。TXはOUT開始・レート変更以降、RXは起動以降の値。
+static void audio_diagnostics_log_dma_ownership(const audio_tx_diagnostics_t* tx,
+                                                const audio_rx_diagnostics_t* rx)
+{
+    SEGGER_RTT_printf(0,
+                      "[AUD][TX-DMA-OWN] skip=%lu boundary=%lu unknown=%lu q_max=%lu timeout=%lu stale=%lu fault=%lu suspend_max_us=%lu over_budget=%lu\r\n",
+                      (unsigned long) tx->dma_commit_skips,
+                      (unsigned long) tx->dma_commit_stream_boundary_events,
+                      (unsigned long) tx->dma_commit_unknown_position_events,
+                      (unsigned long) tx->dma_commit_entry_q_max,
+                      (unsigned long) tx->dma_suspend_timeouts,
+                      (unsigned long) tx->dma_suspend_stale_flag_clears,
+                      (unsigned long) tx->dma_suspend_faults,
+                      (unsigned long) audio_diagnostics_cycles_to_us(tx->dma_suspend_cycles_max),
+                      (unsigned long) tx->dma_suspend_over_budget_events);
+    SEGGER_RTT_printf(0,
+                      "[AUD][RX-DMA-OWN] reject=%lu not_ready=%lu wait_max_us=%lu unknown=%lu q_max=%lu timeout=%lu stale=%lu fault=%lu suspend_max_us=%lu over_budget=%lu fifol_max=%lu fifol_over=%lu config_mismatch=%lu\r\n",
+                      (unsigned long) rx->rx_dma_snapshot_rejects,
+                      (unsigned long) rx->rx_dma_snapshot_not_ready_events,
+                      (unsigned long) audio_diagnostics_cycles_to_us(rx->rx_dma_snapshot_wait_cycles_max),
+                      (unsigned long) rx->rx_dma_snapshot_unknown_position_events,
+                      (unsigned long) rx->rx_dma_snapshot_entry_q_max,
+                      (unsigned long) rx->rx_dma_suspend_timeouts,
+                      (unsigned long) rx->rx_dma_suspend_stale_flag_clears,
+                      (unsigned long) rx->rx_dma_suspend_faults,
+                      (unsigned long) audio_diagnostics_cycles_to_us(rx->rx_dma_suspend_cycles_max),
+                      (unsigned long) rx->rx_dma_suspend_over_budget_events,
+                      (unsigned long) rx->rx_dma_snapshot_fifol_max,
+                      (unsigned long) rx->rx_dma_snapshot_fifol_over_capacity_events,
+                      (unsigned long) rx->rx_dma_snapshot_config_mismatch_events);
+}
+#endif
+
 void audio_diagnostics_report_dma_time(void)
 {
 #if AUDIO_DIAG_DMA_TIME_REPORT
@@ -971,6 +1175,7 @@ void audio_diagnostics_report_dma_time(void)
     audio_diagnostics_log_tx_dma_time(&tx);
     audio_diagnostics_log_rx_dma_time(&rx);
     audio_diagnostics_log_tx_out(&tx);
+    audio_diagnostics_log_dma_ownership(&tx, &rx);
 #endif
 }
 
@@ -1153,4 +1358,74 @@ void audio_diagnostics_log_periodic(uint32_t sample_rate_hz,
     (void) streaming_in;
     (void) tx_used_words;
 #endif
+}
+
+// ---- 診断のスナップショット（#251 改訂2） -----------------------------------------------
+
+enum
+{
+    AUDIO_DIAGNOSTICS_SNAPSHOT_INTERVAL_MS = 100u,
+};
+
+_Static_assert((sizeof(audio_tx_diagnostics_t) % sizeof(uint32_t)) == 0u, "TX diagnostics must be word sized");
+_Static_assert((sizeof(audio_rx_diagnostics_t) % sizeof(uint32_t)) == 0u, "RX diagnostics must be word sized");
+_Static_assert((sizeof(audio_recovery_diagnostics_t) % sizeof(uint32_t)) == 0u, "recovery diagnostics must be word sized");
+_Static_assert((sizeof(audio_window_totals_t) % sizeof(uint32_t)) == 0u, "window totals must be word sized");
+
+static uint32_t s_snapshot_last_publish_ms;
+
+// 32bit単位のvolatileコピー（非キャッシュ領域への書込みを1語ずつに保つ）。
+static void audio_diagnostics_copy_words(volatile void* dst, const volatile void* src, size_t bytes)
+{
+    volatile uint32_t* d       = (volatile uint32_t*) dst;
+    const volatile uint32_t* s = (const volatile uint32_t*) src;
+    for (size_t i = 0; i < (bytes / sizeof(uint32_t)); i++)
+    {
+        d[i] = s[i];
+    }
+}
+
+void audio_diagnostics_snapshot_reset(void)
+{
+    volatile uint32_t* words = (volatile uint32_t*) &g_audio_diagnostics_snapshot;
+    for (size_t i = 0; i < (sizeof(g_audio_diagnostics_snapshot) / sizeof(uint32_t)); i++)
+    {
+        words[i] = 0u;
+    }
+    __DSB();
+    s_snapshot_last_publish_ms = 0u;
+}
+
+void audio_diagnostics_publish_snapshot(uint32_t now_ms)
+{
+    volatile audio_diagnostics_snapshot_t* snap = &g_audio_diagnostics_snapshot;
+
+    if ((snap->snapshot_count != 0u) && ((now_ms - s_snapshot_last_publish_ms) < AUDIO_DIAGNOSTICS_SNAPSHOT_INTERVAL_MS))
+    {
+        return;
+    }
+    s_snapshot_last_publish_ms = now_ms;
+
+    // 写すのはAudio Taskだけ。ISRが元の診断を途中で更新しても、各語は32bit単位で読むので
+    // 語の途中の値にはならない（構造体全体の同時性は求めない）。PRIMASKは使わない。
+    const uint32_t odd  = snap->sequence + 1u;
+    const uint32_t even = odd + 1u;
+
+    snap->sequence_end = odd;
+    __DMB();
+    snap->sequence = odd;
+    __DMB();
+
+    snap->tick_ms        = now_ms;
+    snap->snapshot_count = snap->snapshot_count + 1u;
+    audio_diagnostics_copy_words(&snap->tx, &g_audio_tx_diagnostics, sizeof(snap->tx));
+    audio_diagnostics_copy_words(&snap->rx, &g_audio_rx_diagnostics, sizeof(snap->rx));
+    audio_diagnostics_copy_words(&snap->recovery, &g_audio_recovery_diagnostics, sizeof(snap->recovery));
+    audio_diagnostics_copy_words(&snap->totals, &g_audio_window_totals, sizeof(snap->totals));
+    __DMB();
+
+    snap->sequence_end = even;
+    __DMB();
+    snap->sequence = even;
+    __DSB();
 }

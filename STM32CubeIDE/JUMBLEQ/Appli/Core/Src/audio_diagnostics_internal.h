@@ -29,6 +29,24 @@
 #define AUDIO_DIAG_DMA_TIME_REPORT 0
 #endif
 
+// 1の場合、DMA half所有権確認（#251）の試験用遅延注入とトレースを有効にする。
+// 試験ビルド専用で、製品ビルドでは0のまま（注入のコードと変数を生成しない）。
+#ifndef AUDIO_DMA_OWNERSHIP_TEST
+#define AUDIO_DMA_OWNERSHIP_TEST 0
+#endif
+
+// DMA half所有権確認（GPDMA一時停止中のcommit/snapshot）の結果。transportと共通の値。
+enum
+{
+    AUDIO_DIAG_DMA_OWN_OK = 0u,           // 所有権を確認してアクセスした
+    AUDIO_DIAG_DMA_OWN_BUSY,              // TX: DMAがhalfを読んでいる途中（skip）、RX: 書いている途中（reject）
+    AUDIO_DIAG_DMA_OWN_NOT_READY,         // RXのみ: halfの末尾がDMA FIFOに残っている可能性がある
+    AUDIO_DIAG_DMA_OWN_UNKNOWN,           // チャネル無効・エラー・不正なBNDT・停止後の状態不一致
+    AUDIO_DIAG_DMA_OWN_SUSPEND_TIMEOUT,   // 期限内にSUSPFが立たなかった
+    AUDIO_DIAG_DMA_OWN_SUSPEND_FAULT,     // 停止状態異常（ラッチ中、または解除を確かめられない）
+    AUDIO_DIAG_DMA_OWN_STREAM_BOUNDARY,   // TXのみ: 未適用のstream要求があり、旧streamの音声を書かなかった
+};
+
 // USB OUT -> SAI TX経路の軽量診断。RTT出力は行わず、デバッガから参照する。
 enum
 {
@@ -109,6 +127,16 @@ typedef struct
     uint32_t out_fifo_overflow_unknown_events;
     uint32_t out_reprime_events;               // FIFOが空になりprimingへ戻した回数
     uint32_t out_take_section_cycles_max;      // FIFO読出しPRIMASK区間の最大サイクル数
+    // DMA half所有権確認（#251）。作業バッファ→DMA halfのcommitをGPDMA一時停止中に行う。
+    uint32_t dma_commit_skips;                   // DMAがhalfを読んでいる途中で書かなかった回数
+    uint32_t dma_commit_stream_boundary_events;  // 旧streamの音声を無音へ置き換えた回数
+    uint32_t dma_commit_unknown_position_events; // 状態・位置を確かめられず書かなかった回数
+    uint32_t dma_commit_entry_q_max;             // committed時の停止位置q（相手halfの先頭から、word）の最大
+    uint32_t dma_suspend_timeouts;               // 期限内にSUSPFが立たなかった回数
+    uint32_t dma_suspend_stale_flag_clears;      // 開始前に古いSUSPFをクリアした回数
+    uint32_t dma_suspend_faults;                 // 停止状態異常（以後アクセスせず復旧を要求）
+    uint32_t dma_suspend_cycles_max;             // SUSP書込み→解除完了の最大サイクル数
+    uint32_t dma_suspend_over_budget_events;     // 停止期間がframe周期の半分を超えた回数（性能目標の超過）
 } audio_tx_diagnostics_t;
 
 extern volatile audio_tx_diagnostics_t g_audio_tx_diagnostics;
@@ -160,6 +188,22 @@ typedef struct
     uint32_t usb_in_fifo_full_drops;         // trim後も空き不足で書かなかった回数（防御処理、通常0）
     uint32_t usb_in_chunk_drop_events;       // streaming中に書かなかったチャンクの回数（全原因の合計）
     uint32_t usb_in_chunk_drop_bytes;        // streaming中に書かなかったチャンクのbyte数累計
+    // DMA half所有権確認（#251）。DMA half→作業バッファのsnapshotをGPDMA一時停止中に行う。
+    uint32_t rx_dma_snapshot_rejects;                // DMAがhalfを書いている途中で読まなかった回数
+    uint32_t rx_dma_snapshot_not_ready_events;       // 宛先書込み未完了の可能性で待ってやり直した回数
+    uint32_t rx_dma_snapshot_wait_cycles_max;        // そのやり直し前の待ちの最大サイクル数
+    uint32_t rx_dma_snapshot_unknown_position_events; // 状態・位置を確かめられず読まなかった回数
+    uint32_t rx_dma_snapshot_entry_q_max;            // 読んだ時の停止位置qの最大
+    uint32_t rx_dma_suspend_timeouts;
+    uint32_t rx_dma_suspend_stale_flag_clears;
+    uint32_t rx_dma_suspend_faults;
+    uint32_t rx_dma_suspend_cycles_max;
+    uint32_t rx_dma_suspend_over_budget_events;
+    // 停止中に読んだFIFOL（RX判定のFIFO残量）。生値の単位をRM0477（宛先データ幅）と
+    // CMSISのコメント（byte）のどちらか実機で確かめるために残す。
+    uint32_t rx_dma_snapshot_fifol_max;                // FIFOLの生値の最大
+    uint32_t rx_dma_snapshot_fifol_over_capacity_events; // FIFOLの生値がFIFO容量（2 word）を超えた回数
+    uint32_t rx_dma_snapshot_config_mismatch_events;   // CTR1のデータ幅が32bit/32bitでなくsnapshotしなかった回数
 } audio_rx_diagnostics_t;
 
 extern volatile audio_rx_diagnostics_t g_audio_rx_diagnostics;
@@ -187,6 +231,55 @@ typedef struct
 } audio_recovery_diagnostics_t;
 
 extern volatile audio_recovery_diagnostics_t g_audio_recovery_diagnostics;
+
+// 測定区間の判定用の累積カウンタ（#251 改訂2）。stream開始・レート変更・診断のリセットでは
+// 消さない（起動時の0から増えるだけ）。TXの判定項目はTX診断がOUT開始ごとにリセットされる
+// ため、ここに重ねて持つ。RX診断はもともとリセットされないので重ねない。
+typedef struct
+{
+    uint32_t tx_dma_commit_skips;
+    uint32_t tx_dma_commit_unknown_position_events;
+    uint32_t tx_dma_suspend_timeouts;
+    uint32_t tx_dma_suspend_stale_flag_clears;
+    uint32_t tx_dma_suspend_faults;
+    uint32_t tx_dma_error_events;
+    uint32_t tx_sai_error_events;
+    uint32_t tx_half_complete_deadline_overruns;
+    uint32_t tx_cplt_complete_deadline_overruns;
+    uint32_t tx_dma_events_dropped;
+    uint32_t tx_underrun_events;
+    uint32_t tx_dma_commit_stream_boundary_events;
+    // streaming中のcomplete（half/cpltの合計）。half_deadline: complete×2 ≧ 期限（50%以上）。
+    uint32_t tx_streaming_complete_events;
+    uint32_t tx_streaming_complete_half_deadline_events;
+    uint32_t rx_streaming_complete_events;
+    uint32_t rx_streaming_complete_half_deadline_events;
+} audio_window_totals_t;
+
+extern volatile audio_window_totals_t g_audio_window_totals;
+
+// 診断のスナップショット（#251 改訂2）。非キャッシュ領域に置き、Audio Taskが約100msごとに
+// TX/RX/復旧の診断と累積カウンタを写す。デバッガは「先頭sequenceの前読み → 全体 →
+// 先頭sequenceの後読み」の順に読み、前読み・先頭・末尾・後読みが同じ偶数で、
+// snapshot_count > 0 のときだけ使う。写している間は先頭も末尾も奇数になっている。
+typedef struct
+{
+    uint32_t sequence;        // 先頭。偶数: 公開済み、奇数: 書き換え中
+    uint32_t tick_ms;         // 公開した時刻（HAL_GetTick）
+    uint32_t snapshot_count;  // 公開した回数（0: 未公開）
+    audio_tx_diagnostics_t tx;
+    audio_rx_diagnostics_t rx;
+    audio_recovery_diagnostics_t recovery;
+    audio_window_totals_t totals;
+    uint32_t sequence_end;    // 末尾。公開済みなら先頭と同じ値
+} audio_diagnostics_snapshot_t;
+
+extern volatile audio_diagnostics_snapshot_t g_audio_diagnostics_snapshot;
+
+// 起動時の初期化（非キャッシュ領域はNOLOADのため0にする）。Audio Taskの初期化から呼ぶ。
+void audio_diagnostics_snapshot_reset(void);
+// Audio Taskのループから毎回呼ぶ。前回の公開から約100ms以上経っていれば写す。ISRからは呼ばない。
+void audio_diagnostics_publish_snapshot(uint32_t now_ms);
 
 // 復旧失敗時の段階。どの処理で失敗したかを診断値へ残す。
 enum
@@ -371,14 +464,18 @@ void audio_diagnostics_record_rx_dma_service(uint32_t callback_event,
 // DMA処理完了時間。process_cycles=処理開始→完了、complete_cycles=callback→完了、
 // deadline_cycles=そのイベント時点のDMA half期限。complete_cycles > deadline_cyclesで
 // 完了期限超過数を加算し、complete最大値の更新時はdeadlineも同時に保存する。
+// streaming: その経路のstreaming中（serviceの記録と同じ条件）。streaming中のcompleteだけを
+// 累積カウンタ（総数、期限の半分以上の回数）に数える。最大値・期限超過はstreamingに依らない。
 void audio_diagnostics_record_tx_dma_complete(uint32_t callback_event,
                                               uint32_t process_cycles,
                                               uint32_t complete_cycles,
-                                              uint32_t deadline_cycles);
+                                              uint32_t deadline_cycles,
+                                              bool streaming);
 void audio_diagnostics_record_rx_dma_complete(uint32_t callback_event,
                                               uint32_t process_cycles,
                                               uint32_t complete_cycles,
-                                              uint32_t deadline_cycles);
+                                              uint32_t deadline_cycles,
+                                              bool streaming);
 void audio_diagnostics_record_tx_events_dropped(uint32_t last_event,
                                                 uint32_t dropped_events,
                                                 int32_t used);
@@ -398,6 +495,30 @@ void audio_diagnostics_record_usb_in_chunk_drop(uint32_t chunk_bytes);
 // partial=false: 0を返した。partial=true: 要求量と異なる非0値を返した。
 void audio_diagnostics_record_usb_in_write_error(bool partial);
 void audio_diagnostics_record_usb_in_write_section(uint32_t cycles);
+
+// DMA half所有権確認（#251）。Audio Task context only。PRIMASK区間の外で、区間内に
+// 取得した値を渡す。result: AUDIO_DIAG_DMA_OWN_*。q: 停止位置（OKのときだけ有効）。
+// suspend_cycles: SUSP書込み→解除完了（停止を要求しなかった経路は0）。
+// over_budget: suspend_cyclesがframe周期の半分を超えた。fault: 停止状態異常を新たに検出した。
+void audio_diagnostics_record_tx_dma_ownership(uint32_t result,
+                                               uint32_t q,
+                                               uint32_t suspend_cycles,
+                                               bool over_budget,
+                                               bool stale_flag_cleared,
+                                               bool fault);
+void audio_diagnostics_record_rx_dma_ownership(uint32_t result,
+                                               uint32_t q,
+                                               uint32_t suspend_cycles,
+                                               bool over_budget,
+                                               bool stale_flag_cleared,
+                                               bool fault);
+// TX: 旧streamの音声を無音へ置き換えた。RX: not_readyで待ってやり直した（wait_cycles: 待ち時間）。
+void audio_diagnostics_record_tx_dma_stream_boundary(void);
+void audio_diagnostics_record_rx_dma_not_ready(uint32_t wait_cycles);
+// RX snapshotの停止中に読んだFIFOL。fifo_valid: 構成確認を通りFIFOLを判定に使った。
+// config_mismatch: CTR1のデータ幅が32bit/32bitでなく、snapshotしなかった。
+void audio_diagnostics_record_rx_dma_fifo(uint32_t fifol_raw, bool fifo_valid, bool config_mismatch);
+
 void audio_diagnostics_record_dma_error(uint32_t error_code,
                                         bool tx_route,
                                         bool streaming,
