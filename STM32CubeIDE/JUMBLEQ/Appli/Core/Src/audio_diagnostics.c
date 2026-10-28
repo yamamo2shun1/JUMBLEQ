@@ -9,6 +9,9 @@
  */
 
 #include "audio_diagnostics_internal.h"
+#if AUDIO_PLAYBACK_DIAGNOSTICS
+#include "audio_transport_internal.h"
+#endif
 
 #include "SEGGER_RTT.h"
 #include "stm32h7rsxx_hal.h"
@@ -30,6 +33,11 @@ volatile audio_tx_diagnostics_t g_audio_tx_diagnostics = {
 volatile audio_rx_diagnostics_t g_audio_rx_diagnostics = {0};
 volatile audio_recovery_diagnostics_t g_audio_recovery_diagnostics = {0};
 volatile audio_window_totals_t g_audio_window_totals = {0};
+#if AUDIO_PLAYBACK_DIAGNOSTICS
+__attribute__((section("noncacheable_buffer"))) volatile audio_playback_history_t g_audio_playback_history;
+static void audio_playback_diagnostics_reset(void);
+static void audio_playback_diagnostics_publish(uint32_t now_ms);
+#endif
 // デバッガがCPUのDキャッシュに依らずに読めるよう非キャッシュ領域に置く（NOLOADなので
 // audio_diagnostics_snapshot_reset()で0にする）。
 __attribute__((section("noncacheable_buffer"))) volatile audio_diagnostics_snapshot_t g_audio_diagnostics_snapshot;
@@ -142,6 +150,9 @@ static uint32_t audio_diagnostics_cycles_to_us(uint32_t cycles)
 
 void audio_diagnostics_reset_tx_locked(void)
 {
+#if AUDIO_PLAYBACK_DIAGNOSTICS
+    audio_playback_diagnostics_boundary();
+#endif
     const uint32_t reset_count = g_audio_tx_diagnostics.reset_count + 1u;
     audio_tx_diagnostics_t reset = {0};
     reset.reset_count          = reset_count;
@@ -862,6 +873,9 @@ void audio_diagnostics_record_recovery_request(uint32_t cause_mask,
                                                uint32_t sai_error_code,
                                                uint32_t sai_status_flags)
 {
+#if AUDIO_PLAYBACK_DIAGNOSTICS
+    audio_playback_diagnostics_boundary();
+#endif
     g_audio_recovery_diagnostics.request_count++;
     g_audio_recovery_diagnostics.last_cause_mask               = cause_mask;
     g_audio_recovery_diagnostics.last_request_dma_error_code   = dma_error_code;
@@ -1394,10 +1408,16 @@ void audio_diagnostics_snapshot_reset(void)
     }
     __DSB();
     s_snapshot_last_publish_ms = 0u;
+#if AUDIO_PLAYBACK_DIAGNOSTICS
+    audio_playback_diagnostics_reset();
+#endif
 }
 
 void audio_diagnostics_publish_snapshot(uint32_t now_ms)
 {
+#if AUDIO_PLAYBACK_DIAGNOSTICS
+    audio_playback_diagnostics_publish(now_ms);
+#endif
     volatile audio_diagnostics_snapshot_t* snap = &g_audio_diagnostics_snapshot;
 
     if ((snap->snapshot_count != 0u) && ((now_ms - s_snapshot_last_publish_ms) < AUDIO_DIAGNOSTICS_SNAPSHOT_INTERVAL_MS))
@@ -1429,3 +1449,238 @@ void audio_diagnostics_publish_snapshot(uint32_t now_ms)
     snap->sequence = even;
     __DSB();
 }
+
+#if AUDIO_PLAYBACK_DIAGNOSTICS
+// The Audio Task switches buffers with interrupts masked. USB ISR and Audio Task
+// own disjoint fields; neither clears a live buffer. Only the frozen buffer is copied.
+static volatile audio_playback_stats_t s_playback_stats[2];
+static volatile uint32_t s_playback_active;
+static volatile uint32_t s_playback_flags[2];
+static volatile uint32_t s_playback_epoch;
+static volatile bool s_playback_initialized;
+static bool s_playback_gap_valid;
+static uint32_t s_playback_gap_cycle;
+static uint32_t s_playback_gap_tick;
+static uint32_t s_playback_start_ms;
+static uint32_t s_playback_rate;
+static uint32_t s_playback_start_epoch;
+static uint32_t s_playback_fifo_start;
+static uint32_t s_playback_consecutive;
+static uint32_t s_playback_tx_epoch;
+static audio_window_totals_t s_playback_previous_totals;
+static uint32_t s_playback_previous_recovery;
+
+static void audio_playback_stats_reset(volatile audio_playback_stats_t* s)
+{
+    const audio_playback_stats_t empty = {
+        .packet_bytes_min = UINT32_MAX,
+        .gap_cycles_min = UINT32_MAX,
+        .fifo_packet_bytes_min = UINT32_MAX,
+        .feedback_min = UINT32_MAX,
+        .feedback_level_min = UINT32_MAX,
+        .fifo_take_bytes_min = UINT32_MAX,
+    };
+    *s = empty;
+}
+
+static void audio_playback_minmax(uint32_t value, volatile uint32_t* min, volatile uint32_t* max)
+{
+    if (value < *min) { *min = value; }
+    if (value > *max) { *max = value; }
+}
+
+void audio_playback_diagnostics_boundary(void)
+{
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    s_playback_epoch++;
+    s_playback_flags[s_playback_active] |= AUDIO_PLAYBACK_BOUNDARY;
+    s_playback_gap_valid = false;
+    __set_PRIMASK(primask);
+}
+
+void audio_playback_diagnostics_packet(uint32_t bytes, uint32_t fifo_bytes, uint32_t cycle)
+{
+    if (!s_playback_initialized) { return; }
+    const uint32_t active = s_playback_active;
+    volatile audio_playback_stats_t* s = &s_playback_stats[active];
+    const uint32_t tick = HAL_GetTick();
+    s->packet_count++;
+    s->packet_bytes += bytes;
+    if (bytes == 0u) { s->packet_zero++; }
+    if ((bytes % 16u) != 0u) { s->packet_malformed++; }
+    audio_playback_minmax(bytes, &s->packet_bytes_min, &s->packet_bytes_max);
+    audio_playback_minmax(fifo_bytes, &s->fifo_packet_bytes_min, &s->fifo_packet_bytes_max);
+
+    // DWT wraps after ~7.16s at 600MHz. Long idle gaps are not interpreted as packets.
+    if (s_playback_gap_valid && ((uint32_t) (tick - s_playback_gap_tick) < 1000u))
+    {
+        const uint32_t gap = cycle - s_playback_gap_cycle;
+        const uint32_t unit = SystemCoreClock / 16000u; // 62.5us
+        audio_playback_minmax(gap, &s->gap_cycles_min, &s->gap_cycles_max);
+        if (gap <= unit * 3u) { s->gap_le_187us++; }
+        else if (gap <= unit * 6u) { s->gap_le_375us++; }
+        else if (gap <= unit * 12u) { s->gap_le_750us++; }
+        else if (gap <= unit * 24u) { s->gap_le_1500us++; }
+        else { s->gap_gt_1500us++; }
+    }
+    else
+    {
+        s->gap_invalid++;
+        if (s_playback_gap_valid) { s_playback_flags[active] |= AUDIO_PLAYBACK_LONG_GAP; }
+    }
+    s_playback_gap_cycle = cycle;
+    s_playback_gap_tick = tick;
+    s_playback_gap_valid = true;
+}
+
+void audio_playback_diagnostics_feedback(uint32_t value, uint32_t level, uint32_t target, bool success)
+{
+    if (!s_playback_initialized) { return; }
+    volatile audio_playback_stats_t* s = &s_playback_stats[s_playback_active];
+    s->feedback_count++;
+    if (!success) { s->feedback_failed++; }
+    audio_playback_minmax(value, &s->feedback_min, &s->feedback_max);
+    audio_playback_minmax(level, &s->feedback_level_min, &s->feedback_level_max);
+    s->feedback_last = value;
+    s->feedback_target_bytes = target;
+}
+
+void audio_playback_diagnostics_tx(uint32_t requested, uint32_t consumed, uint32_t level_bytes,
+                                   uint32_t outcome, int32_t drift, uint32_t discarded_bytes)
+{
+    if (!s_playback_initialized) { return; }
+    volatile audio_playback_stats_t* s = &s_playback_stats[s_playback_active];
+    const uint32_t epoch = s_playback_epoch;
+    if (s_playback_tx_epoch != epoch)
+    {
+        s_playback_tx_epoch = epoch;
+        s_playback_consecutive = 0u;
+    }
+    s->tx_halves++;
+    s->requested_frames += requested;
+    s->consumed_frames += consumed;
+    s->discarded_bytes += discarded_bytes;
+    audio_playback_minmax(level_bytes, &s->fifo_take_bytes_min, &s->fifo_take_bytes_max);
+    if (outcome != AUDIO_PLAYBACK_TX_OK)
+    {
+        s->silent_frames += requested;
+        if (outcome == AUDIO_PLAYBACK_TX_PRIMING) { s->priming_halves++; }
+        if (outcome == AUDIO_PLAYBACK_TX_STALE) { s->stale_halves++; }
+        if (outcome == AUDIO_PLAYBACK_TX_OVERFLOW) { s->overflow_halves++; }
+    }
+    else if ((consumed < requested) && (drift == 0))
+    {
+        s->held_frames += requested - consumed;
+    }
+    if ((outcome == AUDIO_PLAYBACK_TX_EMPTY) ||
+        ((outcome == AUDIO_PLAYBACK_TX_OK) && (consumed < requested) && (drift == 0)))
+    {
+        s->underrun_halves++;
+        if (s_playback_consecutive != UINT32_MAX) { s_playback_consecutive++; }
+        if (s_playback_consecutive > s->consecutive_underrun_max)
+        {
+            s->consecutive_underrun_max = s_playback_consecutive;
+        }
+    }
+    else { s_playback_consecutive = 0u; }
+    if (drift > 0) { s->drift_up++; }
+    if (drift < 0) { s->drift_down++; }
+}
+
+static void audio_playback_diagnostics_reset(void)
+{
+    s_playback_initialized = false;
+    volatile uint32_t* words = (volatile uint32_t*) &g_audio_playback_history;
+    for (size_t i = 0u; i < sizeof(g_audio_playback_history) / sizeof(uint32_t); i++) { words[i] = 0u; }
+    audio_playback_stats_reset(&s_playback_stats[0]);
+    audio_playback_stats_reset(&s_playback_stats[1]);
+    s_playback_active = 0u;
+    s_playback_epoch = 0u;
+    s_playback_flags[0] = AUDIO_PLAYBACK_BOUNDARY;
+    s_playback_flags[1] = 0u;
+    s_playback_gap_valid = false;
+    s_playback_consecutive = 0u;
+    s_playback_tx_epoch = 0u;
+    s_playback_start_ms = HAL_GetTick();
+    s_playback_rate = 0u;
+    s_playback_start_epoch = 0u;
+    s_playback_fifo_start = 0u;
+    s_playback_previous_totals = (audio_window_totals_t) {0};
+    s_playback_previous_recovery = 0u;
+    g_audio_playback_history.magic = 0x50424431u;
+    g_audio_playback_history.version = 1u;
+    g_audio_playback_history.record_bytes = sizeof(audio_playback_window_t);
+    g_audio_playback_history.capacity = AUDIO_PLAYBACK_HISTORY_COUNT;
+    __DMB();
+    s_playback_initialized = true;
+}
+
+static void audio_playback_diagnostics_publish(uint32_t now_ms)
+{
+    if (!s_playback_initialized || ((uint32_t) (now_ms - s_playback_start_ms) < 100u)) { return; }
+    const uint32_t old = s_playback_active;
+    const uint32_t next = old ^ 1u;
+    audio_playback_stats_reset(&s_playback_stats[next]); // not live; interrupts stay enabled
+    s_playback_flags[next] = 0u;
+    audio_window_totals_t totals;
+    const uint32_t rate = g_audio_rate_switch_diagnostics.applied_valid ?
+                              g_audio_rate_switch_diagnostics.last_applied_hz : 0u;
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    const uint32_t lock_start = DWT->CYCCNT;
+    const uint32_t end_ms = HAL_GetTick();
+    const uint32_t flags = s_playback_flags[old] |
+        ((rate != s_playback_rate) ? AUDIO_PLAYBACK_BOUNDARY : 0u);
+    const uint32_t epoch = s_playback_epoch;
+    totals = g_audio_window_totals;
+    const uint32_t recovery = g_audio_recovery_diagnostics.request_count;
+    const uint32_t fifo_end = (uint32_t) audio_transport_tx_used_words() * sizeof(uint32_t);
+    __DMB();
+    s_playback_active = next;
+    const uint32_t lock_cycles = DWT->CYCCNT - lock_start;
+    __set_PRIMASK(primask);
+
+    const uint32_t ordinal = g_audio_playback_history.published + 1u;
+    volatile audio_playback_window_t* w =
+        &g_audio_playback_history.windows[(ordinal - 1u) % AUDIO_PLAYBACK_HISTORY_COUNT];
+    const uint32_t odd = w->sequence + 1u;
+    w->sequence_end = odd;
+    __DMB();
+    w->sequence = odd;
+    __DMB();
+    w->ordinal = ordinal;
+    w->start_tick_ms = s_playback_start_ms;
+    w->end_tick_ms = end_ms;
+    w->sample_rate_hz = s_playback_rate;
+    w->streaming_out = audio_transport_is_output_streaming() ? 1u : 0u;
+    w->epoch = s_playback_start_epoch;
+    w->flags = flags;
+    w->core_clock_hz = SystemCoreClock;
+    w->fifo_start_bytes = s_playback_fifo_start;
+    w->fifo_end_bytes = fifo_end;
+    w->publication_lock_cycles = lock_cycles;
+    audio_diagnostics_copy_words(&w->stats, &s_playback_stats[old], sizeof(w->stats));
+    const uint32_t* current = (const uint32_t*) &totals;
+    uint32_t* previous = (uint32_t*) &s_playback_previous_totals;
+    volatile uint32_t* delta = (volatile uint32_t*) &w->dma;
+    for (size_t i = 0u; i < sizeof(totals) / sizeof(uint32_t); i++)
+    {
+        delta[i] = current[i] - previous[i];
+        previous[i] = current[i];
+    }
+    w->recovery_requests = recovery - s_playback_previous_recovery;
+    s_playback_previous_recovery = recovery;
+    __DMB();
+    w->sequence_end = odd + 1u;
+    __DMB();
+    w->sequence = odd + 1u;
+    __DMB();
+    g_audio_playback_history.published = ordinal;
+    __DSB();
+    s_playback_start_ms = end_ms;
+    s_playback_start_epoch = epoch;
+    s_playback_fifo_start = fifo_end;
+    s_playback_rate = rate;
+}
+#endif

@@ -54,8 +54,9 @@ static volatile uint32_t s_tx_blink_interval_ms = BLINK_NOT_MOUNTED;
 static volatile uint32_t s_rx_blink_interval_ms = BLINK_NOT_MOUNTED;
 
 #if CFG_TUD_AUDIO_ENABLE_EP_OUT && CFG_TUD_AUDIO_ENABLE_FEEDBACK_EP
-// アプリ側feedback計算の状態。TinyUSBのFIFO_COUNT方式と同じ平滑化・目標水位・
-// 上下限・補正量を手書きコードで維持する。feedbackは16.16形式。
+// アプリ側feedback計算の状態。TinyUSBのFIFO_COUNT方式を基に平滑化・目標水位・
+// 上下限を維持し、High-Speedの補正感度はホストの反映遅延を考慮して調整する。
+// feedbackは16.16形式。
 typedef struct
 {
     bool     valid;            // 定数が初期化済み
@@ -391,8 +392,10 @@ void audio_usb_control_feedback_reset(uint32_t sample_rate_hz)
     if (frame_div == 8000u)
     {
         // High-SpeedはパケットサイズがMSOごとに変動し得るため感度を下げる。
-        s_feedback.rate_const[0] /= 8u;
-        s_feedback.rate_const[1] /= 8u;
+        // ホストでのfeedback反映遅延がある場合の補正過多を抑える（#265）。
+        // iPad/Mac/Windowsの48/96kHzで確認したFeedback32と同じ感度にする。
+        s_feedback.rate_const[0] /= 32u;
+        s_feedback.rate_const[1] /= 32u;
     }
     // 平滑化履歴は目標水位から開始し、切り替え後の初回補正を滑らかにする。
     s_feedback.fifo_lvl_avg = threshold << 16;
@@ -422,6 +425,10 @@ void audio_usb_control_feedback_update(void)
 
     uint32_t feedback = 0u;
     bool updated = false;
+#if AUDIO_PLAYBACK_DIAGNOSTICS
+    uint32_t diagnostic_level = 0u;
+    uint32_t diagnostic_target = 0u;
+#endif
 
     const uint32_t primask = __get_PRIMASK();
     __disable_irq();
@@ -435,6 +442,10 @@ void audio_usb_control_feedback_update(void)
 
         const uint32_t ff_lvl = lvl >> 16;
         const uint32_t ff_thr = s_feedback.fifo_threshold;
+#if AUDIO_PLAYBACK_DIAGNOSTICS
+        diagnostic_level = ff_lvl;
+        diagnostic_target = ff_thr;
+#endif
 
         if (ff_lvl < ff_thr)
         {
@@ -460,7 +471,12 @@ void audio_usb_control_feedback_update(void)
 
     if (updated)
     {
+#if AUDIO_PLAYBACK_DIAGNOSTICS
+        const bool success = tud_audio_n_fb_set(AUDIO_FUNC_ID, feedback);
+        audio_playback_diagnostics_feedback(feedback, diagnostic_level, diagnostic_target, success);
+#else
         (void) tud_audio_n_fb_set(AUDIO_FUNC_ID, feedback);
+#endif
 #if AUDIO_DIAG_LOG
         audio_diagnostics_record_usb_out_feedback(feedback);
 #endif
