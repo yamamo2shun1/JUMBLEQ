@@ -29,6 +29,11 @@
 #define AUDIO_DIAG_DMA_TIME_REPORT 0
 #endif
 
+// #265: 診断用ビルドだけでUSB再生の100ms履歴を記録する。周期RTTログとは独立。
+#ifndef AUDIO_PLAYBACK_DIAGNOSTICS
+#define AUDIO_PLAYBACK_DIAGNOSTICS 0
+#endif
+
 // 1の場合、DMA half所有権確認（#251）の試験用遅延注入とトレースを有効にする。
 // 試験ビルド専用で、製品ビルドでは0のまま（注入のコードと変数を生成しない）。
 #ifndef AUDIO_DMA_OWNERSHIP_TEST
@@ -280,6 +285,105 @@ extern volatile audio_diagnostics_snapshot_t g_audio_diagnostics_snapshot;
 void audio_diagnostics_snapshot_reset(void);
 // Audio Taskのループから毎回呼ぶ。前回の公開から約100ms以上経っていれば写す。ISRからは呼ばない。
 void audio_diagnostics_publish_snapshot(uint32_t now_ms);
+
+#if AUDIO_PLAYBACK_DIAGNOSTICS
+enum
+{
+    AUDIO_PLAYBACK_HISTORY_COUNT = 64u,
+    AUDIO_PLAYBACK_BOUNDARY = 1u,
+    AUDIO_PLAYBACK_LONG_GAP = 2u,
+    AUDIO_PLAYBACK_TX_OK = 0u,
+    AUDIO_PLAYBACK_TX_PRIMING = 1u,
+    AUDIO_PLAYBACK_TX_EMPTY = 2u,
+    AUDIO_PLAYBACK_TX_STALE = 3u,
+    AUDIO_PLAYBACK_TX_OVERFLOW = 4u,
+};
+
+// All values are uint32_t. Frame = 4 channels, 16 bytes. UINT32_MAX means no min sample.
+// packet/feedback fields: USB ISR only; TX fields: Audio Task only.
+typedef struct
+{
+    uint32_t packet_count;
+    uint32_t packet_bytes;
+    uint32_t packet_zero;
+    uint32_t packet_malformed;
+    uint32_t packet_bytes_min;
+    uint32_t packet_bytes_max;
+    uint32_t gap_cycles_min;
+    uint32_t gap_cycles_max;
+    // Upper bounds 187.5, 375, 750, 1500 us; the last bucket is >1500 us.
+    uint32_t gap_le_187us;
+    uint32_t gap_le_375us;
+    uint32_t gap_le_750us;
+    uint32_t gap_le_1500us;
+    uint32_t gap_gt_1500us;
+    uint32_t gap_invalid;
+    uint32_t fifo_packet_bytes_min;
+    uint32_t fifo_packet_bytes_max;
+    uint32_t feedback_count;
+    uint32_t feedback_failed;
+    uint32_t feedback_min;
+    uint32_t feedback_max;
+    uint32_t feedback_last;
+    uint32_t feedback_target_bytes;
+    uint32_t feedback_level_min;
+    uint32_t feedback_level_max;
+    uint32_t tx_halves;
+    uint32_t requested_frames;
+    uint32_t consumed_frames;
+    uint32_t held_frames;
+    uint32_t silent_frames;
+    uint32_t priming_halves;
+    uint32_t stale_halves;
+    uint32_t overflow_halves;
+    uint32_t discarded_bytes;
+    uint32_t underrun_halves;
+    uint32_t consecutive_underrun_max;
+    uint32_t fifo_take_bytes_min;
+    uint32_t fifo_take_bytes_max;
+    uint32_t drift_up;
+    uint32_t drift_down;
+} audio_playback_stats_t;
+
+typedef struct
+{
+    uint32_t sequence;
+    uint32_t ordinal;
+    uint32_t start_tick_ms;
+    uint32_t end_tick_ms;
+    uint32_t sample_rate_hz;
+    uint32_t streaming_out;
+    uint32_t epoch;
+    uint32_t flags;
+    uint32_t core_clock_hz;
+    uint32_t fifo_start_bytes;
+    uint32_t fifo_end_bytes;
+    uint32_t publication_lock_cycles;
+    audio_playback_stats_t stats;
+    // Deltas of persistent counters, sampled at the same publication boundary.
+    audio_window_totals_t dma;
+    uint32_t recovery_requests;
+    uint32_t sequence_end;
+} audio_playback_window_t;
+
+typedef struct
+{
+    uint32_t magic;           // 0x50424431 (PBD1)
+    uint32_t version;         // 1
+    uint32_t record_bytes;
+    uint32_t capacity;
+    uint32_t published;       // wrapping ordinal; slot = (ordinal - 1) % capacity
+    audio_playback_window_t windows[AUDIO_PLAYBACK_HISTORY_COUNT];
+} audio_playback_history_t;
+
+extern volatile audio_playback_history_t g_audio_playback_history;
+void audio_playback_diagnostics_boundary(void); // ISR or Task; nesting-safe PRIMASK
+void audio_playback_diagnostics_packet(uint32_t bytes, uint32_t fifo_bytes, uint32_t cycle);
+void audio_playback_diagnostics_feedback(uint32_t value, uint32_t level, uint32_t target, bool success);
+// TX outcome: 0 = consumed; 1 = priming; 2 = empty; 3 = stale; 4 = overflow.
+void audio_playback_diagnostics_tx(uint32_t requested, uint32_t consumed, uint32_t level_bytes,
+                                   uint32_t outcome, int32_t drift, uint32_t discarded_bytes);
+#endif
 
 // 復旧失敗時の段階。どの処理で失敗したかを診断値へ残す。
 enum

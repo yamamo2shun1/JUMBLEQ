@@ -1071,6 +1071,10 @@ void audio_transport_request_stream(audio_transport_stream_t stream, bool enable
     const uint32_t primask = __get_PRIMASK();
     __disable_irq();
 
+#if AUDIO_PLAYBACK_DIAGNOSTICS
+    if (stream == AUDIO_TRANSPORT_STREAM_OUT) { audio_playback_diagnostics_boundary(); }
+#endif
+
 #if AUDIO_DIAG_LOG
     const uint32_t previous_mask = s_stream_requested_mask;
 #endif
@@ -2029,6 +2033,10 @@ static void audio_tx_build_stage(uint32_t sample_rate_hz)
         else
         {
             audio_diagnostics_record_tx_priming_wait();
+#if AUDIO_PLAYBACK_DIAGNOSTICS
+            audio_playback_diagnostics_tx(half_words / frame_words, 0u, level_words * sizeof(int32_t),
+                                           AUDIO_PLAYBACK_TX_PRIMING, 0, 0u);
+#endif
             audio_tx_fill_silence(half_words);
             return;
         }
@@ -2051,6 +2059,9 @@ static void audio_tx_build_stage(uint32_t sample_rate_hz)
             s_tx_primed = false;
             audio_diagnostics_record_out_reprime();
             audio_diagnostics_record_tx_event(streaming, diagnostic_event_flags, 0);
+#if AUDIO_PLAYBACK_DIAGNOSTICS
+            audio_playback_diagnostics_tx(half_words / frame_words, 0u, 0u, AUDIO_PLAYBACK_TX_EMPTY, 0, 0u);
+#endif
             audio_tx_fill_silence(half_words);
             return;
         }
@@ -2101,6 +2112,10 @@ static void audio_tx_build_stage(uint32_t sample_rate_hz)
         // 次の要求適用で停止か開始境界（primingからやり直し）になる。開き直しで最終maskが
         // 有効のままでも、OUT開始世代により開始境界として適用される。
         audio_diagnostics_record_out_stale_request_skip();
+#if AUDIO_PLAYBACK_DIAGNOSTICS
+        audio_playback_diagnostics_tx(half_words / frame_words, 0u, level_words * sizeof(int32_t),
+                                       AUDIO_PLAYBACK_TX_STALE, 0, 0u);
+#endif
         audio_tx_fill_silence(half_words);
         return;
     }
@@ -2110,10 +2125,18 @@ static void audio_tx_build_stage(uint32_t sample_rate_hz)
         s_tx_primed = false;
         audio_tx_drift_history_clear();
         audio_diagnostics_record_out_fifo_overflow_recovery(outcome.raw_count_bytes, outcome.depth_bytes);
+#if AUDIO_PLAYBACK_DIAGNOSTICS
+        audio_playback_diagnostics_tx(half_words / frame_words, 0u, level_words * sizeof(int32_t),
+                                       AUDIO_PLAYBACK_TX_OVERFLOW, 0, outcome.depth_bytes);
+#endif
         audio_tx_fill_silence(half_words);
         return;
     }
 
+#if AUDIO_PLAYBACK_DIAGNOSTICS
+    audio_playback_diagnostics_tx(half_words / frame_words, consume_words / frame_words,
+                                   level_words * sizeof(int32_t), AUDIO_PLAYBACK_TX_OK, drift_direction, 0u);
+#endif
     if (drift_direction != 0)
     {
         // 実際に補正を実施した場合だけ頻度制限の時刻を更新する。
@@ -2881,6 +2904,10 @@ bool tud_audio_rx_done_isr(uint8_t rhport, uint16_t n_bytes_received, uint8_t fu
 #endif
 
     tu_fifo_t* ep_out_ff = tud_audio_n_get_ep_out_ff(AUDIO_FUNC_ID);
+#if AUDIO_PLAYBACK_DIAGNOSTICS
+    audio_playback_diagnostics_packet(n_bytes_received,
+                                       ep_out_ff != NULL ? tu_fifo_count(ep_out_ff) : 0u, DWT->CYCCNT);
+#endif
     if (ep_out_ff != NULL)
     {
 #if AUDIO_DIAG_LOG
