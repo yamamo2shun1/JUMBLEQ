@@ -20,6 +20,11 @@ const languageHref = isEnglish ? `${base}ja/` : base;
     <a href="#specs">Specs</a>
     <a href="#get-started">Get Started</a>
     <a class="language-switch" href={languageHref} lang={isEnglish ? "ja" : "en"} hreflang={isEnglish ? "ja" : "en"} aria-label={isEnglish ? "日本語版を表示" : "View this site in English"}>{isEnglish ? "JA" : "EN"}</a>
-    <a class="nav-cta" href="https://configurator.jumbleq.io/">Configurator ↗</a>
+    <a class="nav-cta nav-cta-secondary" href="https://vinyl-tracer.jumbleq.io/" aria-label={isEnglish ? "Open Vinyl Tracer" : "Vinyl Tracerを開く"}>
+      <span class="nav-label-full">Vinyl Tracer</span><span class="nav-label-short">Vinyl</span> ↗
+    </a>
+    <a class="nav-cta" href="https://configurator.jumbleq.io/" aria-label={isEnglish ? "Open JUMBLEQ Configurator" : "JUMBLEQ Configuratorを開く"}>
+      <span class="nav-label-full">Configurator</span><span class="nav-label-short">Config</span> ↗
+    </a>
   </nav>
 </header>
