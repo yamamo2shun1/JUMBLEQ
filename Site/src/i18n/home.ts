@@ -14,6 +14,9 @@ export const homeCopy = {
     conceptTitle: ["フェーダーの", "常識を、", "指先から", "変える。"],
     conceptBody: "JUMBLEQは、2本のチャンネル・フェーダーを6つの磁気スイッチで再構成した、2チャンネル・デジタルミキサー。磁気スイッチのストロークに応じた連続的な音量変化と、複数のスイッチを組み合わせた高速カットで、これまでにないプレイ体験を指先に。",
     conceptDeviceAlt: "正面から見たJUMBLEQベータプロトタイプ",
+    demoBody: "JUMBLEQとVinyl Tracerによる、37秒のショート・デモプレイ。",
+    demoVideoTitle: "JUMBLEQとVinyl Tracerのデモプレイ",
+    watchYoutube: "YouTubeで見る",
     featuresTitle: ["セッティングも、", "思いのままに。"],
     featureTitles: ["Faderless Play", "Flexible Routing", "4-in / 4-out USB Audio", "USB Class Compliant"],
     featureBodies: [
@@ -61,6 +64,9 @@ export const homeCopy = {
     conceptTitle: ["The fader,", "reimagined."],
     conceptBody: "JUMBLEQ is a 2-channel digital mixer that reimagines a pair of channel faders as six magnetic switches. Each switch responds continuously to how far it is pressed, while multi-switch combinations enable fast, precise cuts and open up entirely new ways to play.",
     conceptDeviceAlt: "Front view of the JUMBLEQ beta prototype",
+    demoBody: "See JUMBLEQ and Vinyl Tracer in action in this 37-second performance demo.",
+    demoVideoTitle: "JUMBLEQ and Vinyl Tracer performance demo",
+    watchYoutube: "Watch on YouTube",
     featuresTitle: ["Set it up,", "your way."],
     featureTitles: ["Faderless Performance", "Flexible Routing", "4-in / 4-out USB Audio", "Class-Compliant USB Audio"],
     featureBodies: [
